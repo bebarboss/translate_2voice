@@ -1,0 +1,14 @@
+# ส่วน API (พอสำหรับโหมดทดสอบ MOCK_PIPELINE=1)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+python-dotenv>=1.0
+pydantic>=2.6
+numpy>=1.26
+soundfile>=0.12
+openai>=1.30
+requests>=2.31
+# รับลิงก์คลิป (อัปเดตบ่อย: pip install -U yt-dlp)
+yt-dlp>=2025.1.1
+# อ่านรายชื่อฟอนต์บน Windows สำหรับฝังซับ
+fonttools>=4.50

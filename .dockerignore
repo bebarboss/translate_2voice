@@ -1,0 +1,12 @@
+.env
+.venv/
+data/
+web/
+notebooks/
+scripts/
+models/
+**/__pycache__/
+*.pyc
+.git/
+server.log
+cloudflared
