@@ -93,6 +93,12 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     stage("diarize", 0.25)
     turns = diarize(wav16k, job.num_speakers)
     _free_vram("diarize")
+    # ไม่ได้ระบุจำนวนคน → ตรวจผลด้วยลายเสียง แยกคนที่ถูกรวมกัน และรวมคนเดียวที่ถูกแยก
+    if not job.num_speakers and settings.diar_refine and settings.hf_token and not settings.mock_pipeline:
+        from . import voices
+        wav, wsr = sf.read(wav16k, dtype="float32")
+        turns = voices.refine_turns(turns, wav, wsr)
+        _free_vram("voices")
     export_speaker_stems(vocals, turns, d / "stems")
     save_turns(turns, d / "turns.json")
     store.update(job_id, speakers=sorted({t.speaker for t in turns}))
@@ -197,7 +203,23 @@ def _group_speaker(g: list) -> str:
     return max(g, key=lambda u: u.duration).speaker
 
 
-def run_synthesize(store: JobStore, job_id: str) -> None:
+def _library_refs(job, voice_store, target: str) -> dict[str, tuple[Path, str, float, list]]:
+    """ผู้พูด → (ไฟล์เสียงตัวอย่าง, ข้อความในเสียงนั้น, ระดับเสียง, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
+    เสียงที่ถูกลบหรือยังไม่พร้อม ใช้เสียงต้นฉบับแทน"""
+    out = {}
+    for speaker, voice_id in job.voice_map.items():
+        v = voice_store.get(voice_id) if voice_store else None
+        path = voice_store.ref_path(voice_id) if v else None
+        if v is None or v.status != "ready" or not path.exists():
+            log.warning("speaker %s: library voice %s unavailable, using original voice", speaker, voice_id)
+            continue
+        pitch = float(12 * np.log2(v.pitch_hz)) if v.pitch_hz else float("nan")
+        # เสียงในคลังเป็นภาษาไทย พากย์อังกฤษต้องเขียนข้อความเป็นอักษรละติน
+        out[speaker] = (path, tts.reference_text(v.text, "th", target), pitch, ["library", voice_id, v.text])
+    return out
+
+
+def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     *_, synthesize = _impl()
     job = store.get(job_id)
     d = store.dir(job_id)
@@ -256,27 +278,36 @@ def run_synthesize(store: JobStore, job_id: str) -> None:
         voice_map = voices.profile(utterances, orig, orig_sr)
         _free_vram("voices")
     groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map)
+    library_refs = _library_refs(job, voice_store, target)
+    if library_refs:
+        log.info("library voices: %s", {s: k[1] for s, (_, _, _, k) in library_refs.items()})
     clips, spans, redubbed, reused = [], [], 0, 0
     for i, g in enumerate(groups):
         stage("tts", 0.72 + 0.2 * i / len(groups))
         first, last = g[0], g[-1]
 
         speaker = _group_speaker(g)
-        ref = tts.choose_reference(g, by_speaker[speaker], ref_quality, ref_arousal, voice_map)
         # ฉากตื่นเต้นยอมให้พูดเร็วขึ้นได้อีก ฉากเศร้าหรือเนิบยอมให้พูดช้าลงได้อีก (ไม่เกิน 15%)
         excite = tts.mean_arousal(g, ref_arousal)
         max_speedup = round(rs.max_speedup * (1 + 0.1 * min(max(excite, 0.0), 1.5)), 2)
         max_slowdown = round(settings.max_slowdown * (1 + 0.1 * min(max(-excite, 0.0), 1.5)), 2)
-        ref_start = ref[0].start
-        ref_end = min(ref[-1].end, ref_start + settings.ref_max_sec)
-        ref_path = refs_dir / f"ref_{ref[0].id:04d}_{ref[-1].id:04d}.wav"
-        if not ref_path.exists():
-            audio.cut_clip(vocals, ref_start, ref_end, ref_path, sr)
-        ref_text = tts.reference_text(" ".join(x.source for x in ref), source_lang, target)
-        ref_pitch = float("nan")
-        if voice_map is not None:
-            ref_wav, ref_sr = sf.read(ref_path, dtype="float32")
-            ref_pitch = voices._pitch(ref_wav, ref_sr)
+        if speaker in library_refs:  # ผู้ใช้เลือกเสียงจากคลังให้ตัวละครนี้
+            ref_path, ref_text, ref_pitch, ref_key = library_refs[speaker]
+            if voice_map is None:
+                ref_pitch = float("nan")
+        else:
+            ref = tts.choose_reference(g, by_speaker[speaker], ref_quality, ref_arousal, voice_map)
+            ref_key = [ref[0].id, ref[-1].id]
+            ref_start = ref[0].start
+            ref_end = min(ref[-1].end, ref_start + settings.ref_max_sec)
+            ref_path = refs_dir / f"ref_{ref[0].id:04d}_{ref[-1].id:04d}.wav"
+            if not ref_path.exists():
+                audio.cut_clip(vocals, ref_start, ref_end, ref_path, sr)
+            ref_text = tts.reference_text(" ".join(x.source for x in ref), source_lang, target)
+            ref_pitch = float("nan")
+            if voice_map is not None:
+                ref_wav, ref_sr = sf.read(ref_path, dtype="float32")
+                ref_pitch = voices._pitch(ref_wav, ref_sr)
 
         slot = max(last.end - first.start, 0.3)
         next_start = groups[i + 1][0].start if i + 1 < len(groups) else total
@@ -294,7 +325,7 @@ def run_synthesize(store: JobStore, job_id: str) -> None:
 
         def key_for(text: str) -> str:
             return _clip_key(text=text, speaker=speaker, start=first.start, end=last.end,
-                             lines=[u.id for u in g], limit=round(limit_sec, 3), ref=[ref[0].id, ref[-1].id],
+                             lines=[u.id for u in g], limit=round(limit_sec, 3), ref=ref_key,
                              ref_text=ref_text, target=target, steps=rs.f5_steps, speed=settings.f5_speed,
                              max_speedup=max_speedup, max_slowdown=max_slowdown,
                              fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,

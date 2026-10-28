@@ -1,4 +1,4 @@
-import type { Job, JobStatus, TargetLang } from "./api";
+import type { Gender, Job, JobStatus, TargetLang } from "./api";
 
 export const LANGS: { code: string; label: string }[] = [
   { code: "zh", label: "จีน" },
@@ -113,6 +113,18 @@ export function estimateSeconds(text: string, lang: TargetLang): number {
   const base = Array.from(text).filter((ch) => !/\s/.test(ch) && !/\p{Mn}/u.test(ch)).length;
   return base / 11;
 }
+
+export const GENDER_LABEL: Record<Gender, string> = { male: "ชาย", female: "หญิง", "": "ไม่ระบุ" };
+
+export const TONES = ["ทุ้มลึก", "นุ่มนวล", "สดใส", "แหลม", "หนักแน่น", "อ่อนโยน", "แหบ", "เสียงเด็ก", "เสียงผู้สูงอายุ"];
+
+export const VOICE_STAGE_LABEL: Record<string, string> = {
+  queued: "รอคิว",
+  clean: "ทำความสะอาดเสียง",
+  transcribe: "ถอดข้อความ",
+  trim: "ตัดท่อนที่ชัดที่สุด",
+  measure: "วัดโทนเสียง",
+};
 
 export function isActive(job: Job): boolean {
   return job.status === "queued" || job.status === "running";

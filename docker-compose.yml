@@ -1,5 +1,7 @@
-# API บนเครื่อง (การ์ดจอ) + ngrok เปิดให้หน้าเว็บบน Vercel เรียกได้
-# รัน: docker compose up -d --build   ค่าทั้งหมดอ่านจาก .env (ดู .env.example หมวด Docker / ngrok)
+# API บนเครื่อง (การ์ดจอ) + Cloudflare Tunnel เปิดให้หน้าเว็บบน Vercel เรียกได้
+# รัน: docker compose up -d --build   ค่าทั้งหมดอ่านจาก .env (ดู .env.example หมวด Docker / Tunnel)
+# ดูลิงก์: docker compose logs tunnel | grep trycloudflare
+# ใช้ ngrok แทน: docker compose stop tunnel && docker compose --profile ngrok up -d ngrok
 services:
   api:
     build: .
@@ -27,8 +29,19 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Cloudflare quick tunnel ฟรี ไม่จำกัดปริมาณข้อมูล แต่ลิงก์ *.trycloudflare.com เปลี่ยนทุกครั้งที่ container เริ่มใหม่
+  # (ต้องแก้ BACKEND_URL บน Vercel ตาม) และรับ request ได้ครั้งละไม่เกิน 100 MB
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - api
+    command: ["tunnel", "--no-autoupdate", "--url", "http://api:8000"]
+
+  # ngrok แบบฟรีได้ข้อมูลแค่ราว 1 GB ต่อเดือน เต็มแล้วจะตอบ ERR_NGROK_725
   ngrok:
     image: ngrok/ngrok:latest
+    profiles: [ngrok]
     restart: unless-stopped
     depends_on:
       - api

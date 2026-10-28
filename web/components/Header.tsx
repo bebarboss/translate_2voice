@@ -7,6 +7,7 @@ import { MicIcon } from "./Icons";
 const LINKS = [
   { href: "/", label: "อัปโหลด" },
   { href: "/jobs", label: "งานทั้งหมด" },
+  { href: "/voices", label: "คลังเสียง" },
   { href: "/settings", label: "ตั้งค่า" },
 ];
 

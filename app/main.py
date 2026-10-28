@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -21,17 +22,21 @@ from fastapi.responses import FileResponse
 from . import runtime_settings
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
-from .schemas import (Job, JobCreated, JobOptionsUpdate, JobStatus, RuntimeSettings,
-                      RuntimeSettingsUpdate, Utterance, UtteranceEdit)
+from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate,
+                      RuntimeSettings, RuntimeSettingsUpdate, SpeakerVoice, Utterance, UtteranceEdit,
+                      VoiceStatus, VoiceSuggestion)
+from .voice_library import VoiceStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"} | ALLOWED_EXT
 STEM_NAME = re.compile(r"^(vocals|bgm|dub_voice|final_audio|speaker_\d{2})$")
 EDITABLE = (JobStatus.awaiting_review, JobStatus.done, JobStatus.failed, JobStatus.cancelled)
 
 store = JobStore(settings.data_dir)
-worker = Worker(store)
+voice_store = VoiceStore(settings.data_dir)
+worker = Worker(store, voice_store)
 
 
 @asynccontextmanager
@@ -85,6 +90,20 @@ def file_or_404(path: Path, media_type: str, filename: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(404, "ยังไม่มีไฟล์นี้ งานอาจยังไม่เสร็จ")
     return FileResponse(path, media_type=media_type, filename=filename)
+
+
+async def save_upload(file: UploadFile, dest: Path, owner_dir: Path) -> None:
+    """สตรีมไฟล์ลงดิสก์ทีละ 1 MB เกินขนาดที่ตั้งไว้ลบทั้งโฟลเดอร์ทิ้ง"""
+    limit = settings.max_upload_mb * 1024 * 1024
+    written = 0
+    with dest.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            written += len(chunk)
+            if written > limit:
+                out.close()
+                shutil.rmtree(owner_dir, ignore_errors=True)
+                raise HTTPException(413, f"ไฟล์ใหญ่เกิน {settings.max_upload_mb} MB")
+            out.write(chunk)
 
 
 def out_name(job: Job, ext: str) -> str:
@@ -204,16 +223,7 @@ async def create_job(
             shutil.rmtree(job_dir, ignore_errors=True)
             raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(ALLOWED_EXT))}")
         dest = job_dir / f"input{ext}"
-        limit = settings.max_upload_mb * 1024 * 1024
-        written = 0
-        with dest.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                written += len(chunk)
-                if written > limit:
-                    out.close()
-                    shutil.rmtree(job_dir, ignore_errors=True)
-                    raise HTTPException(413, f"ไฟล์ใหญ่เกิน {settings.max_upload_mb} MB")
-                out.write(chunk)
+        await save_upload(file, dest, job_dir)
         input_path, filename = str(dest), file.filename
     else:
         parsed = urlparse(url)
@@ -344,6 +354,132 @@ def synthesize(job_id: str):
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแปลเสร็จก่อน")
     worker.submit(job_id, "synthesize")
     return JobCreated(id=job_id, status=JobStatus.queued)
+
+
+# ---------------------------------------------------------------- เสียงของตัวละคร
+@app.get("/jobs/{job_id}/voices", response_model=list[SpeakerVoice], dependencies=[Depends(require_key)])
+def get_job_voices(job_id: str):
+    """เสียงที่เลือกไว้และเสียงในคลังที่แนะนำ (ใกล้ที่สุดก่อน) ของแต่ละตัวละคร
+    ครั้งแรกต้องวัดเสียงตัวละครบน CPU ใช้เวลาราวสิบวินาที หลังจากนั้นใช้ค่าที่เก็บไว้"""
+    from .pipeline import library
+
+    job = get_job_or_404(job_id)
+    utterances = store.load_transcript(job_id)
+    if not utterances:
+        raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแยกผู้พูดเสร็จก่อน")
+    profiles = library.speaker_profiles(store.dir(job_id), utterances)
+    ready = [v for v in voice_store.all() if v.status == VoiceStatus.ready]
+    embs = {v.id: voice_store.embedding(v.id) for v in ready}
+    out = []
+    for speaker in job.speakers:
+        p = profiles.get(speaker)
+        hz = round(float(2 ** (p.pitch / 12)), 1) if p is not None and math.isfinite(p.pitch) else None
+        suggestions = []
+        if p is not None:
+            suggestions = sorted((VoiceSuggestion(voice_id=v.id, score=library.closeness(p, v.pitch_hz, embs[v.id]))
+                                  for v in ready), key=lambda s: s.score, reverse=True)
+        out.append(SpeakerVoice(speaker=speaker, voice_id=job.voice_map.get(speaker), pitch_hz=hz,
+                                gender=library.guess_gender(hz), suggestions=suggestions))
+    return out
+
+
+@app.put("/jobs/{job_id}/voices", response_model=Job, dependencies=[Depends(require_key)])
+def set_job_voices(job_id: str, choice: dict[str, Optional[str]]):
+    """เลือกเสียงจากคลังให้ตัวละคร {"speaker_01": "<id เสียง>", "speaker_02": null}
+    null = กลับไปใช้เสียงต้นฉบับ ตัวละครที่ไม่ได้ส่งมาคงค่าเดิม มีผลตอนพากย์รอบถัดไป"""
+    job = get_job_or_404(job_id)
+    if job.status not in EDITABLE:
+        raise HTTPException(409, "เปลี่ยนเสียงได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
+    voice_map = dict(job.voice_map)
+    for speaker, voice_id in choice.items():
+        if speaker not in job.speakers:
+            raise HTTPException(400, f"ไม่รู้จักผู้พูด {speaker} มีแค่ {job.speakers}")
+        if voice_id is None:
+            voice_map.pop(speaker, None)
+            continue
+        v = voice_store.get(voice_id)
+        if v is None or v.status != VoiceStatus.ready:
+            raise HTTPException(400, f"เสียง {voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
+        voice_map[speaker] = voice_id
+    return store.update(job_id, voice_map=voice_map)
+
+
+# ---------------------------------------------------------------- คลังเสียง
+def get_voice_or_404(voice_id: str) -> LibraryVoice:
+    v = voice_store.get(voice_id)
+    if not v:
+        raise HTTPException(404, "ไม่พบเสียงนี้ในคลัง")
+    return v
+
+
+@app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
+def list_voices():
+    return voice_store.all()
+
+
+@app.post("/voices", response_model=LibraryVoice, status_code=202,
+          dependencies=[Depends(require_key_or_upload_token)])
+async def create_voice(
+    file: UploadFile = File(..., description="คลิปเสียงภาษาไทย (หรือวิดีโอ) ของเจ้าของเสียง ใช้แค่ 5 นาทีแรก"),
+    name: str = Form(..., min_length=1, max_length=80),
+    gender: Gender = Form("", description="male, female หรือว่างไว้ให้ระบบเดาจากระดับเสียง"),
+    tone: str = Form("", max_length=80, description="โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส"),
+):
+    """อัปโหลดเสียงเข้าคลัง ระบบจะแยกเสียงรบกวน ตัดท่อนพูดที่สะอาดที่สุด 3–10 วินาที และถอดข้อความให้"""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in AUDIO_EXT:
+        raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")
+    voice_id = voice_store.new_id()
+    d = voice_store.dir(voice_id)
+    d.mkdir(parents=True, exist_ok=True)
+    await save_upload(file, d / f"original{ext}", d)
+    v = voice_store.add(LibraryVoice(id=voice_id, name=name.strip(), gender=gender, tone=tone.strip(),
+                                     filename=file.filename or ""))
+    worker.submit_voice(voice_id)
+    return v
+
+
+@app.get("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def get_voice(voice_id: str):
+    return get_voice_or_404(voice_id)
+
+
+@app.patch("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def update_voice(voice_id: str, patch: LibraryVoiceUpdate):
+    """แก้ชื่อ เพศ โทนเสียง หรือข้อความที่พูดในเสียงตัวอย่าง (ถ้าถอดผิด แก้ให้ตรงเสียงจริงจะพากย์ได้ชัดขึ้น)
+    งานที่ใช้เสียงนี้จะพากย์ตัวละครนั้นใหม่ทุกประโยคเมื่อข้อความเปลี่ยน"""
+    get_voice_or_404(voice_id)
+    fields = {k: v.strip() if isinstance(v, str) else v for k, v in patch.model_dump(exclude_unset=True).items()}
+    return voice_store.update(voice_id, **fields)
+
+
+@app.delete("/voices/{voice_id}", status_code=204, dependencies=[Depends(require_key)])
+def delete_voice(voice_id: str):
+    """ลบเสียงออกจากคลัง ตัวละครที่เลือกเสียงนี้ไว้จะกลับไปใช้เสียงต้นฉบับ"""
+    v = get_voice_or_404(voice_id)
+    if v.status == VoiceStatus.processing and v.stage != "queued":
+        raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
+    voice_store.delete(voice_id)
+
+
+@app.post("/voices/{voice_id}/retry", response_model=LibraryVoice, status_code=202,
+          dependencies=[Depends(require_key)])
+def retry_voice(voice_id: str):
+    v = get_voice_or_404(voice_id)
+    if v.status != VoiceStatus.failed:
+        raise HTTPException(409, "ลองใหม่ได้เฉพาะเสียงที่เตรียมไม่สำเร็จ")
+    if not any(voice_store.dir(voice_id).glob("original.*")):
+        raise HTTPException(409, "ไม่พบไฟล์ต้นฉบับแล้ว ลบแล้วอัปโหลดใหม่")
+    v = voice_store.update(voice_id, status=VoiceStatus.processing, stage="queued", error=None)
+    worker.submit_voice(voice_id)
+    return v
+
+
+@app.get("/voices/{voice_id}/audio", dependencies=[Depends(require_key)])
+def get_voice_audio(voice_id: str):
+    """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
+    v = get_voice_or_404(voice_id)
+    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
 
 
 # ---------------------------------------------------------------- ไฟล์

@@ -144,12 +144,13 @@ class Worker(threading.Thread):
     """รับงานจากคิวทีละงาน
 
     phase: analyze (ดาวน์โหลด/แยกเสียง/ถอดเสียง/แปล), synthesize (พากย์และรวมวิดีโอ),
-    render (ฝังซับลงวิดีโอใหม่อย่างเดียว)
+    render (ฝังซับลงวิดีโอใหม่อย่างเดียว), voice (เตรียมเสียงในคลัง ใช้การ์ดจอเหมือนกันจึงเข้าคิวเดียวกัน)
     """
 
-    def __init__(self, store: JobStore):
+    def __init__(self, store: JobStore, voices=None):
         super().__init__(daemon=True, name="dubbing-worker")
         self.store = store
+        self.voices = voices  # VoiceStore
         self.queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
         self.current: Optional[str] = None  # งานที่กำลังรันอยู่
 
@@ -158,11 +159,17 @@ class Worker(threading.Thread):
         self.store.update(job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None)
         self.queue.put((job_id, phase))
 
+    def submit_voice(self, voice_id: str) -> None:
+        self.queue.put((voice_id, "voice"))
+
     def run(self) -> None:
-        from .pipeline import runner
+        from .pipeline import library, runner
         while True:
             job_id, phase = self.queue.get()
             try:
+                if phase == "voice":
+                    library.prepare(self.voices, job_id)
+                    continue
                 job = self.store.get(job_id)
                 if job is None or job.status != JobStatus.queued:  # ถูกลบหรือถูกยกเลิกระหว่างรอคิว
                     continue
@@ -180,7 +187,7 @@ class Worker(threading.Thread):
                                           stage="awaiting_review")
                         continue
                     self.store.update(job_id, phase="synthesize")
-                runner.run_synthesize(self.store, job_id)
+                runner.run_synthesize(self.store, job_id, self.voices)
                 self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
             except Cancelled:
                 log.info("job %s cancelled", job_id)

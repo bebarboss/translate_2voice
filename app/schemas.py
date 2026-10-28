@@ -76,6 +76,8 @@ class Job(BaseModel):
     burn_subs: bool = False
     sub_style: Optional[SubtitleStyle] = None  # None = ใช้ค่าเริ่มต้นจากหน้าตั้งค่า
     speakers: list[str] = Field(default_factory=list)
+    # ผู้พูด → id เสียงในคลังที่เลือกให้พากย์ ผู้พูดที่ไม่มีในนี้ใช้เสียงต้นฉบับของตัวเองเป็นตัวอย่าง
+    voice_map: dict[str, str] = Field(default_factory=dict)
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     error: Optional[str] = None
@@ -91,6 +93,55 @@ class JobCreated(BaseModel):
 class JobOptionsUpdate(BaseModel):
     burn_subs: Optional[bool] = None
     sub_style: Optional[SubtitleStyle] = None
+
+
+# ---------------------------------------------------------------- คลังเสียง
+Gender = Literal["male", "female", ""]  # "" = ไม่ระบุ (ระบบเดาจากระดับเสียงให้)
+
+
+class VoiceStatus(str, Enum):
+    processing = "processing"  # รอคิวหรือกำลังทำความสะอาด ตัดท่อน ถอดข้อความ
+    ready = "ready"
+    failed = "failed"
+
+
+class LibraryVoice(BaseModel):
+    """เสียงภาษาไทยในคลัง ใช้เป็นเสียงตัวอย่างให้ F5-TTS พากย์ตัวละครแทนเสียงต้นฉบับ"""
+    id: str
+    name: str
+    gender: Gender = ""
+    tone: str = ""  # โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส
+    status: VoiceStatus = VoiceStatus.processing
+    stage: str = "queued"
+    error: Optional[str] = None
+    filename: str = ""  # ชื่อไฟล์ที่อัปโหลด
+    text: str = ""  # ข้อความที่พูดในเสียงตัวอย่าง ต้องตรงกับเสียงจริง F5-TTS ถึงจะพากย์ไม่เพี้ยน
+    duration: Optional[float] = None  # ความยาวเสียงตัวอย่าง (วินาที)
+    pitch_hz: Optional[float] = None  # ระดับเสียงกลาง
+    quality: Optional[float] = None  # ความสะอาด (ประมาณ PESQ 1–4.5)
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
+
+
+class LibraryVoiceUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=80)
+    gender: Optional[Gender] = None
+    tone: Optional[str] = Field(None, max_length=80)
+    text: Optional[str] = Field(None, min_length=1)
+
+
+class VoiceSuggestion(BaseModel):
+    voice_id: str
+    score: float  # ความใกล้เคียง 0–1
+
+
+class SpeakerVoice(BaseModel):
+    """เสียงที่เลือกและเสียงแนะนำของตัวละครหนึ่งตัว"""
+    speaker: str
+    voice_id: Optional[str] = None  # None = ใช้เสียงต้นฉบับ
+    pitch_hz: Optional[float] = None
+    gender: Gender = ""  # เดาจากระดับเสียง
+    suggestions: list[VoiceSuggestion] = Field(default_factory=list)  # ใกล้ที่สุดก่อน
 
 
 class RuntimeSettings(BaseModel):

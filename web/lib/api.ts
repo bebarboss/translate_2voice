@@ -31,9 +31,43 @@ export interface Job {
   speakers: string[];
   duration: number | null;
   synth_stats: { redubbed: number; reused: number } | null;
+  voice_map: Record<string, string>;
   error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type Gender = "male" | "female" | "";
+
+export interface LibraryVoice {
+  id: string;
+  name: string;
+  gender: Gender;
+  tone: string;
+  status: "processing" | "ready" | "failed";
+  stage: string;
+  error: string | null;
+  filename: string;
+  text: string;
+  duration: number | null;
+  pitch_hz: number | null;
+  quality: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SpeakerVoice {
+  speaker: string;
+  voice_id: string | null;
+  pitch_hz: number | null;
+  gender: Gender;
+  suggestions: { voice_id: string; score: number }[];
+}
+
+export interface VoiceMeta {
+  name: string;
+  gender: Gender;
+  tone: string;
 }
 
 export interface Utterance {
@@ -148,6 +182,15 @@ export const api = {
     request<Utterance[]>(`/jobs/${id}/transcript`, json("PUT", edits)),
   synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
   listStems: (id: string) => request<string[]>(`/jobs/${id}/stems`),
+  jobVoices: (id: string) => request<SpeakerVoice[]>(`/jobs/${id}/voices`),
+  setJobVoices: (id: string, choice: Record<string, string | null>) =>
+    request<Job>(`/jobs/${id}/voices`, json("PUT", choice)),
+
+  listVoices: () => request<LibraryVoice[]>("/voices"),
+  updateVoice: (id: string, patch: Partial<Pick<LibraryVoice, "name" | "gender" | "tone" | "text">>) =>
+    request<LibraryVoice>(`/voices/${id}`, json("PATCH", patch)),
+  deleteVoice: (id: string) => request<void>(`/voices/${id}`, { method: "DELETE" }),
+  retryVoice: (id: string) => request<LibraryVoice>(`/voices/${id}/retry`, { method: "POST" }),
 
   createFromUrl: (url: string, opts: CreateOptions) => {
     const form = buildForm(opts);
@@ -162,6 +205,7 @@ export const fileUrl = {
   export: (id: string, subs = false) => `${BASE}/jobs/${id}/export${subs ? "?subs=true" : ""}`,
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
+  voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
 };
 
 /** เช็กว่าไฟล์พร้อมดาวน์โหลดไหม โดยอ่านแค่ header แล้วยกเลิก ไม่โหลดทั้งไฟล์ */
@@ -190,42 +234,65 @@ function buildForm(opts: CreateOptions): FormData {
   return form;
 }
 
+type UploadPath = "jobs" | "voices";
+
 /** ที่อัปโหลด: ตรงไปที่ API พร้อมตั๋ว (บน Vercel) หรือผ่าน proxy /api */
-async function uploadTarget(): Promise<{ url: string; token: string | null }> {
+async function uploadTarget(path: UploadPath): Promise<{ url: string; token: string | null }> {
   try {
-    const res = await fetch(`${BASE}/upload-ticket`, { cache: "no-store" });
+    const res = await fetch(`${BASE}/upload-ticket?path=${path}`, { cache: "no-store" });
     const ticket = (await res.json()) as { url: string | null; token: string | null };
     if (res.ok && ticket.url) return { url: ticket.url, token: ticket.token };
   } catch { /* ใช้ proxy แทน */ }
-  return { url: `${BASE}/jobs`, token: null };
+  return { url: `${BASE}/${path}`, token: null };
 }
 
-/** อัปโหลดด้วย XHR เพราะ fetch ยังรายงานความคืบหน้าการอัปโหลดไม่ได้ */
 export function uploadJob(
   file: File,
   opts: CreateOptions,
   onProgress: (fraction: number) => void,
 ): { promise: Promise<{ id: string }>; abort: () => void } {
-  const xhr = new XMLHttpRequest();
   const form = buildForm(opts);
   form.append("file", file);
+  return upload<{ id: string }>("jobs", form, onProgress);
+}
+
+export function uploadVoice(
+  file: File,
+  meta: VoiceMeta,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<LibraryVoice>; abort: () => void } {
+  const form = new FormData();
+  form.append("name", meta.name);
+  form.append("gender", meta.gender);
+  form.append("tone", meta.tone);
+  form.append("file", file);
+  return upload<LibraryVoice>("voices", form, onProgress);
+}
+
+/** อัปโหลดด้วย XHR เพราะ fetch ยังรายงานความคืบหน้าการอัปโหลดไม่ได้ */
+function upload<T>(
+  path: UploadPath,
+  form: FormData,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<T>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
   let aborted = false;
 
-  const promise = new Promise<{ id: string }>((resolve, reject) => {
+  const promise = new Promise<T>((resolve, reject) => {
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let body: unknown = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* ไม่ใช่ JSON */ }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body as { id: string });
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
       else reject(new ApiError(errorMessage(xhr.status, body), xhr.status));
     };
     xhr.onerror = () => reject(new ApiError("อัปโหลดไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ต", 0));
     xhr.onabort = () => reject(new ApiError("ยกเลิกการอัปโหลดแล้ว", 0));
-    uploadTarget().then(({ url, token }) => {
+    uploadTarget(path).then(({ url, token }) => {
       if (aborted) return reject(new ApiError("ยกเลิกการอัปโหลดแล้ว", 0));
       xhr.open("POST", url);
       if (token) xhr.setRequestHeader("X-Upload-Token", token);
-      if (url !== `${BASE}/jobs`) xhr.setRequestHeader("ngrok-skip-browser-warning", "1");
+      if (url !== `${BASE}/${path}`) xhr.setRequestHeader("ngrok-skip-browser-warning", "1");
       xhr.send(form);
     });
   });

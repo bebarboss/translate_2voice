@@ -5,11 +5,14 @@ F5-TTS ลอกเสียงจากเสียงตัวอย่าง 
 จึงวัดสองอย่างต่อท่อน: ลายเสียง (wespeaker ตัวเดียวกับที่ pyannote ใช้ สัญญาอนุญาต CC-BY-4.0)
 และระดับเสียง (เด็ก ผู้หญิง ผู้ชาย คนแก่ ต่างกันหลายเซมิโทน) แล้วยืมเฉพาะท่อนที่เสียงเข้ากันจริง
 """
+import logging
 from typing import NamedTuple, Optional
 
 import numpy as np
 
 from ..config import settings
+
+log = logging.getLogger("dubbing.voices")
 
 _model = None
 EMBED_MODEL = "pyannote/wespeaker-voxceleb-resnet34-LM"
@@ -164,6 +167,100 @@ def clearly_different(a: Optional[Voice], b: Optional[Voice]) -> bool:
         return True
     sim = similarity(a, b)
     return sim is not None and sim < 0.0
+
+
+def _coherence(run: list, voices: dict[int, Voice], centroid: Optional[Voice] = None) -> float:
+    """ลายเสียงของแต่ละช่วงคล้ายค่ากลางของกลุ่มแค่ไหน (มัธยฐาน) กลุ่มที่เป็นคนเดียวจริงมักได้ 0.6 ขึ้นไป"""
+    c = centroid or of_run(run, voices)
+    sims = [s for s in (similarity(voices[x.id], c) for x in run) if s is not None]
+    return float(np.median(sims)) if sims else float("nan")
+
+
+def _bisect(run: list, voices: dict[int, Voice]) -> Optional[tuple[list, list]]:
+    """แบ่งช่วงพูดของ "ผู้พูดหนึ่งคน" ที่ลายเสียงไม่เข้ากันออกเป็นสองคน คืน None ถ้าไม่มีหลักฐานพอ
+
+    จัดกลุ่มแบบ average linkage ตามลายเสียง ยอมแยกเมื่อสองกลุ่มใหญ่พอ ลายเสียงสองกลุ่มต่างกันชัด
+    และแต่ละกลุ่มเข้ากันดีขึ้นกว่าตอนรวมกันชัดเจน ช่วงสั้นที่วัดลายเสียงไม่ได้ไปอยู่กับกลุ่มที่ระดับเสียงใกล้กว่า
+    (วัดไม่ได้ทั้งคู่ ไปกับช่วงที่วัดได้ซึ่งอยู่ใกล้ที่สุดตามเวลา)"""
+    from scipy.cluster.hierarchy import fcluster, linkage
+
+    known = [x for x in run if voices[x.id].emb is not None]
+    if len(known) < 6 or sum(x.duration for x in known) < 8.0:
+        return None
+    whole = _coherence(known, voices)
+    if not whole < settings.diar_split_coherence:
+        return None
+    emb = np.stack([voices[x.id].emb for x in known])
+    labels = fcluster(linkage(emb, method="average", metric="cosine"), 2, criterion="maxclust")
+    parts = [[x for x, lab in zip(known, labels) if lab == k] for k in (1, 2)]
+    if any(len(p) < 3 or sum(x.duration for x in p) < 3.0 for p in parts):
+        return None
+    cents = [of_run(p, voices) for p in parts]
+    if (similarity(*cents) or 1.0) >= settings.diar_merge_sim - 0.25:
+        return None
+    if min(_coherence(p, voices, c) for p, c in zip(parts, cents)) < whole + 0.1:
+        return None
+    side = {x.id: k for k, p in enumerate(parts) for x in p}
+    for x in run:
+        if x.id in side:
+            continue
+        p = voices[x.id].pitch
+        if np.isfinite(p) and all(np.isfinite(c.pitch) for c in cents):
+            side[x.id] = int(abs(p - cents[1].pitch) < abs(p - cents[0].pitch))
+        else:
+            near = min(known, key=lambda k: abs((k.start + k.end) - (x.start + x.end)))
+            side[x.id] = side[near.id]
+    return [x for x in run if side[x.id] == 0], [x for x in run if side[x.id] == 1]
+
+
+def refine_turns(turns: list, audio: np.ndarray, sr: int) -> list:
+    """แก้ผลแยกผู้พูดตอนที่ไม่รู้จำนวนคน ด้วยลายเสียงของแต่ละช่วงพูด คืนรายการช่วงพูดชุดใหม่ (ชื่อผู้พูดเรียงใหม่)
+
+    1. แยกผู้พูดที่ลายเสียงในกลุ่มไม่เข้ากัน (หลายคนถูกรวมเป็นคนเดียว พบบ่อยในตัวอย่างหนังที่มีเพลงดัง) ทำซ้ำจนแยกไม่ได้
+    2. รวมผู้พูดที่ลายเสียงเหมือนกันมากและระดับเสียงใกล้กัน (คนเดียวถูกแยกเป็นสองคน)
+    """
+    from types import SimpleNamespace
+
+    from .common import Turn, rename_speakers
+
+    items = [SimpleNamespace(id=i, start=t.start, end=t.end, duration=t.end - t.start, speaker=t.speaker)
+             for i, t in enumerate(turns)]
+    voices = profile(items, audio, sr)
+    groups = {s: [x for x in items if x.speaker == s] for s in dict.fromkeys(x.speaker for x in items)}
+
+    queue, done, n = list(groups.values()), [], 0
+    while queue:
+        run = queue.pop()
+        parts = _bisect(run, voices)
+        if parts is None:
+            done.append(run)
+        else:
+            queue.extend(parts)
+            n += 1
+
+    merged = 0
+    while len(done) > 1:
+        cents = [of_run(r, voices) for r in done]
+        best = None
+        for i in range(len(done)):
+            for j in range(i + 1, len(done)):
+                a, b = cents[i], cents[j]
+                s = similarity(a, b)
+                if s is None or s < settings.diar_merge_sim:
+                    continue
+                if np.isfinite(a.pitch) and np.isfinite(b.pitch) and abs(a.pitch - b.pitch) > settings.voice_max_pitch_diff:
+                    continue
+                if best is None or s > best[0]:
+                    best = (s, i, j)
+        if best is None:
+            break
+        _, i, j = best
+        done[i] = done[i] + done.pop(j)
+        merged += 1
+
+    out = [Turn(x.start, x.end, f"cluster_{k}") for k, run in enumerate(done) for x in run]
+    log.info("refine speakers: %d -> %d (split %d, merged %d)", len(groups), len(done), n, merged)
+    return rename_speakers(sorted(out, key=lambda t: t.start))
 
 
 def split_speakers(utts: list, voices: dict[int, Voice], taken: Optional[set] = None) -> dict[str, str]:

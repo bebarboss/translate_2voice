@@ -60,7 +60,7 @@ scripts/client_example.py      ตัวอย่างเรียก API จ�
 - การ์ดจอ NVIDIA VRAM 8 GB ขึ้นไปสำหรับโมเดลจริง (แนะนำ 12 GB+) ไม่มีการ์ดจอใช้โหมดทดสอบได้
 - ถ้าจะฝังซับ ติดตั้งฟอนต์ **Noto Sans Thai** (และ Noto Sans สำหรับงานอังกฤษ) ลงเครื่องที่รัน API
 - คีย์ฟรีสองตัว
-  1. **Hugging Face token** สร้างที่ https://huggingface.co/settings/tokens แล้วกด *Agree* ที่หน้าโมเดล `pyannote/speaker-diarization-3.1` และ `pyannote/segmentation-3.0`
+  1. **Hugging Face token** สร้างที่ https://huggingface.co/settings/tokens แล้วกด *Agree* ที่หน้าโมเดล `pyannote/speaker-diarization-community-1`, `pyannote/speaker-diarization-3.1` และ `pyannote/segmentation-3.0`
   2. **Typhoon API key** สมัครที่ https://playground.opentyphoon.ai แล้วไปที่เมนู API Keys
 
 ## เริ่มเร็ว: ทดสอบทั้งระบบโดยไม่ใช้โมเดล (แนะนำให้ลองก่อน)
@@ -107,24 +107,28 @@ python run.py
 
 **ไม่มีการ์ดจอที่พอ** ใช้ `notebooks/colab_server.ipynb` บน Colab หรือเช่า GPU รายชั่วโมง แล้วตั้ง `BACKEND_URL` ใน `web/.env.local` ให้ชี้ไปที่ API นั้น
 
-## รันด้วย Docker + ngrok และหน้าเว็บบน Vercel
+## รันด้วย Docker + Cloudflare Tunnel และหน้าเว็บบน Vercel
 
-API รันบนเครื่องตัวเอง (ใช้การ์ดจอ) ผ่าน Docker แล้วเปิดออกอินเทอร์เน็ตด้วย ngrok หน้าเว็บขึ้น Vercel แล้วเรียก API ผ่านลิงก์ ngrok
+API รันบนเครื่องตัวเอง (ใช้การ์ดจอ) ผ่าน Docker แล้วเปิดออกอินเทอร์เน็ตด้วย Cloudflare quick tunnel (ฟรี ไม่จำกัดปริมาณข้อมูล ไม่ต้องมีบัญชี) หน้าเว็บขึ้น Vercel แล้วเรียก API ผ่านลิงก์ `*.trycloudflare.com`
 
 **ฝั่งเครื่อง (API)** ต้องมี Docker Desktop (WSL2) และไดรเวอร์ NVIDIA ล่าสุด
 
-1. ใน `.env` ตั้ง `API_KEY` (สุ่มยาว ๆ เพราะ API จะเปิดออกอินเทอร์เน็ต), `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` (โดเมนฟรีจาก https://dashboard.ngrok.com/domains) โมเดลเก็บใน volume `hf-cache` / `f5-cache` ของ Docker (โหลดอัตโนมัติครั้งแรก) ไม่อ่านผ่านไดรฟ์ Windows เพราะไฟล์ใหญ่หลาย GB อ่านผ่าน 9p ตอน RAM ตึงแล้วพังได้
+1. ใน `.env` ตั้ง `API_KEY` (สุ่มยาว ๆ เพราะ API จะเปิดออกอินเทอร์เน็ต) และ `MAX_UPLOAD_MB=95` เพราะ Cloudflare รับ request ได้ครั้งละไม่เกิน 100 MB โมเดลเก็บใน volume `hf-cache` / `f5-cache` ของ Docker (โหลดอัตโนมัติครั้งแรก) ไม่อ่านผ่านไดรฟ์ Windows เพราะไฟล์ใหญ่หลาย GB อ่านผ่าน 9p ตอน RAM ตึงแล้วพังได้
 2. `docker compose up -d --build` (ครั้งแรกนานเพราะติดตั้ง PyTorch และโมเดล)
-3. เช็ก: `curl https://<NGROK_DOMAIN>/health` ดูคำขอที่ผ่าน ngrok ได้ที่ http://localhost:4040 ดู log: `docker compose logs -f api`
+3. ดูลิงก์: `docker compose logs tunnel | grep trycloudflare` แล้วเช็ก `curl https://<ลิงก์>/health` ดู log: `docker compose logs -f api`
+
+ลิงก์ quick tunnel **เปลี่ยนทุกครั้งที่ container `tunnel` เริ่มใหม่** (รีสตาร์ต Docker หรือเปิดเครื่องใหม่) ต้องไปแก้ `BACKEND_URL` บน Vercel แล้ว Redeploy ทุกครั้ง
 
 ข้อมูลงานอยู่ที่ `./data` เหมือนเดิม งานเก่าที่สร้างตอนรันบน Windows เปิดต่อได้
 
 **ฝั่ง Vercel (หน้าเว็บ)** Import repo นี้ ตั้ง *Root Directory* = `web` แล้วใส่ Environment Variables
 
-- `BACKEND_URL` = `https://<NGROK_DOMAIN>`
+- `BACKEND_URL` = ลิงก์ `https://xxxx.trycloudflare.com` จากขั้นที่ 3
 - `API_KEY` = ค่าเดียวกับใน `.env` ของ API
 
-Vercel รับ body ได้ไม่เกิน 4.5 MB หน้าเว็บจึงขอตั๋วจาก `/api/upload-ticket` แล้วให้เบราว์เซอร์อัปโหลดไฟล์ตรงไปที่ ngrok (คีย์จริงไม่ออกไปที่เบราว์เซอร์) ส่วนคำขออื่นและการเล่นวิดีโอยังผ่าน proxy `/api` เหมือนเดิม ngrok แบบฟรีจำกัดปริมาณข้อมูลต่อเดือน คลิปยาวหลายตัวอาจใช้โควตาหมดเร็ว
+Vercel รับ body ได้ไม่เกิน 4.5 MB หน้าเว็บจึงขอตั๋วจาก `/api/upload-ticket` แล้วให้เบราว์เซอร์อัปโหลดไฟล์ตรงไปที่ tunnel (คีย์จริงไม่ออกไปที่เบราว์เซอร์) ส่วนคำขออื่นและการเล่นวิดีโอยังผ่าน proxy `/api` เหมือนเดิม
+
+**ใช้ ngrok แทน** ตั้ง `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` ใน `.env` แล้ว `docker compose stop tunnel && docker compose --profile ngrok up -d ngrok` ได้ลิงก์คงที่ แต่แบบฟรีได้ข้อมูลราว 1 GB ต่อเดือน เต็มแล้วจะตอบ `ERR_NGROK_725` จนขึ้นรอบเดือนใหม่
 
 ## API
 

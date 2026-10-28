@@ -1,5 +1,6 @@
 """แยกว่าใครพูดตอนไหน (pyannote) และส่งออกเลเยอร์เสียงของแต่ละคน"""
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -9,21 +10,40 @@ import soundfile as sf
 from ..config import settings
 from .common import Turn, rename_speakers
 
+log = logging.getLogger("dubbing.diarize")
+
 _pipeline = None
+FALLBACK_MODEL = "pyannote/speaker-diarization-3.1"
+
+
+def _from_pretrained(name: str):
+    from pyannote.audio import Pipeline
+
+    try:  # pyannote 4.x
+        return Pipeline.from_pretrained(name, token=settings.hf_token)
+    except TypeError:  # pyannote 3.x
+        return Pipeline.from_pretrained(name, use_auth_token=settings.hf_token)
 
 
 def _load():
     global _pipeline
     if _pipeline is None:
         import torch
-        from pyannote.audio import Pipeline
 
         if not settings.hf_token:
             raise RuntimeError("ต้องตั้งค่า HF_TOKEN และกดยอมรับเงื่อนไขโมเดล pyannote บน Hugging Face ก่อน")
-        try:  # pyannote 4.x
-            pipe = Pipeline.from_pretrained(settings.diarization_model, token=settings.hf_token)
-        except TypeError:  # pyannote 3.x
-            pipe = Pipeline.from_pretrained(settings.diarization_model, use_auth_token=settings.hf_token)
+        names = list(dict.fromkeys([settings.diarization_model, FALLBACK_MODEL]))
+        pipe = None
+        for name in names:
+            try:  # community-1 ต้องใช้ pyannote 4 และกดยอมรับเงื่อนไขของโมเดลนั้นแยกต่างหาก
+                pipe = _from_pretrained(name)
+            except Exception as exc:  # noqa: BLE001
+                if name == names[-1]:
+                    raise
+                log.warning("load %s failed (%s), trying %s", name, exc, names[-1])
+            if pipe is not None:
+                log.info("diarization model: %s", name)
+                break
         if pipe is None:
             raise RuntimeError(f"โหลด {settings.diarization_model} ไม่ได้ ตรวจว่ากดยอมรับเงื่อนไขบน Hugging Face แล้ว")
         if settings.device.startswith("cuda") and torch.cuda.is_available():

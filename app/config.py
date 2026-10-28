@@ -44,7 +44,8 @@ class Settings:
 
     # แยกผู้พูด (pyannote)
     hf_token: str = _env("HF_TOKEN")
-    diarization_model: str = _env("DIARIZATION_MODEL", "pyannote/speaker-diarization-3.1")
+    # community-1 (pyannote 4) นับจำนวนคนแม่นกว่า 3.1 มาก โดยเฉพาะคลิปที่มีเพลงประกอบ ถ้าโหลดไม่ได้จะใช้ 3.1 แทน
+    diarization_model: str = _env("DIARIZATION_MODEL", "pyannote/speaker-diarization-community-1")
 
     # ถอดเสียง (faster-whisper)
     whisper_model: str = _env("WHISPER_MODEL", "large-v3")
@@ -94,6 +95,12 @@ class Settings:
     voice_min_sim: float = _float("VOICE_MIN_SIM", 0.2)  # ลายเสียงคล้ายกันอย่างน้อยเท่านี้ (−1 ถึง 1)
     voice_max_pitch_diff: float = _float("VOICE_MAX_PITCH_DIFF", 6.0)  # ระดับเสียงต่างได้ไม่เกินกี่เซมิโทน
     voice_split_pitch: float = _float("VOICE_SPLIT_PITCH", 7.0)  # แยกผู้พูดเมื่อเสียงสองกลุ่มห่างกันเกินกี่เซมิโทน
+    # ปรับผลแยกผู้พูดเมื่อไม่ได้ระบุจำนวนคน (voices.refine_turns)
+    diar_refine: bool = _bool("DIAR_REFINE", True)
+    # ผู้พูดที่ลายเสียงในกลุ่มเข้ากันต่ำกว่านี้ (มัธยฐาน) จะลองแยกเป็นสองคน คนเดียวจริงมักได้ 0.6 ขึ้นไป
+    diar_split_coherence: float = _float("DIAR_SPLIT_COHERENCE", 0.55)
+    # ผู้พูดสองคนที่ลายเสียงคล้ายกันเกินนี้ (และระดับเสียงใกล้กัน) ถือเป็นคนเดียว คนต่างกันมักได้ไม่เกิน 0.5
+    diar_merge_sim: float = _float("DIAR_MERGE_SIM", 0.65)
     # เสียงพากย์หลุดจากเสียงตัวอย่างเกินกี่เซมิโทนให้พากย์ใหม่ และลองใหม่ได้กี่รอบ (0 = ไม่ลอง)
     voice_drift: float = _float("VOICE_DRIFT", 4.0)
     voice_retries: int = _int("VOICE_RETRIES", 1)

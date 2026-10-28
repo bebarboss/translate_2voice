@@ -7,6 +7,7 @@ import {
   TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor, speakerLabel,
 } from "@/lib/format";
 import StatusBadge from "./StatusBadge";
+import VoiceCast from "./VoiceCast";
 import { ArrowLeft, MicIcon } from "./Icons";
 
 type Draft = { target: string; speaker: string };
@@ -18,6 +19,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 }) {
   const [lines, setLines] = useState<Utterance[] | null>(null);
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
+  const [voiceDraft, setVoiceDraft] = useState<Record<string, string | null>>(job.voice_map ?? {});
   const [t, setT] = useState(0);
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
@@ -50,13 +52,17 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     const d = drafts[u.id];
     return d && (d.target !== u.target || d.speaker !== u.speaker);
   }), [lines, drafts]);
+  // ตัวละครที่เปลี่ยนเสียงพากย์แต่ยังไม่บันทึก
+  const voiceDirty = useMemo(() => job.speakers.filter(
+    (s) => (voiceDraft[s] ?? null) !== (job.voice_map?.[s] ?? null)), [job.speakers, job.voice_map, voiceDraft]);
+  const pending = dirty.length + voiceDirty.length;
 
   useEffect(() => {
-    if (!dirty.length) return;
+    if (!pending) return;
     const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty.length]);
+  }, [pending]);
 
   // เลื่อนรายการบทให้ประโยคที่กำลังพูดอยู่ในกรอบ (เลื่อนเฉพาะกล่องบท ไม่เลื่อนทั้งหน้า)
   useEffect(() => {
@@ -81,6 +87,10 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
   const save = async (): Promise<boolean> => {
     if (!lines) return false;
+    if (voiceDirty.length) {
+      await api.setJobVoices(job.id, Object.fromEntries(voiceDirty.map((s) => [s, voiceDraft[s] ?? null])));
+      onChanged();
+    }
     if (!dirty.length) return true;
     const edits: UtteranceEdit[] = dirty.map((u) => {
       const d = drafts[u.id];
@@ -100,8 +110,10 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     setMessage(null);
     try {
       const n = dirty.length;
+      const nv = voiceDirty.length;
       await save();
-      setMessage({ kind: "info", text: n ? `บันทึกบทแล้ว ${n} ประโยค` : "ไม่มีบทที่เปลี่ยน" });
+      const parts = [n && `บท ${n} ประโยค`, nv && `เสียงพากย์ ${nv} ตัวละคร`].filter(Boolean);
+      setMessage({ kind: "info", text: parts.length ? `บันทึกแล้ว: ${parts.join(" และ ")}` : "ไม่มีอะไรเปลี่ยน" });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally { setBusy(""); }
@@ -148,8 +160,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           {onCancelEdit ? <span className="badge awaiting_review">แก้บทเพื่อพากย์ใหม่</span> : <StatusBadge job={job} />}
         </div>
         <div className="row">
-          <button type="button" className="btn" onClick={onSave} disabled={!!busy || !dirty.length}>
-            {busy === "save" ? "กำลังบันทึก..." : `บันทึกบท${dirty.length ? ` (${dirty.length})` : ""}`}
+          <button type="button" className="btn" onClick={onSave} disabled={!!busy || !pending}>
+            {busy === "save" ? "กำลังบันทึก..." : `บันทึก${pending ? ` (${pending})` : ""}`}
           </button>
           <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length}>
             <MicIcon size={17} />{busy === "dub" ? "กำลังส่ง..." : onCancelEdit ? "พากย์ใหม่" : "เริ่มพากย์"}
@@ -158,7 +170,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       </div>
 
       {onCancelEdit && (
-        <div className="alert info">แก้บทหรือเปลี่ยนตัวละคร แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม</div>
+        <div className="alert info">แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม</div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
@@ -209,6 +221,9 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
               })}
             </div>
           </div>
+
+          <VoiceCast job={job} value={voiceDraft}
+            onChange={(s, id) => setVoiceDraft((d) => ({ ...d, [s]: id }))} />
         </section>
 
         <aside className="side card" aria-label="บทพากย์" style={{ padding: 0, gap: 0, overflow: "hidden" }}>
