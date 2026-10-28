@@ -113,7 +113,7 @@ API รันบนเครื่องตัวเอง (ใช้การ�
 
 **ฝั่งเครื่อง (API)** ต้องมี Docker Desktop (WSL2) และไดรเวอร์ NVIDIA ล่าสุด
 
-1. ใน `.env` ตั้ง `API_KEY` (สุ่มยาว ๆ เพราะ API จะเปิดออกอินเทอร์เน็ต), `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` (โดเมนฟรีจาก https://dashboard.ngrok.com/domains) และ `HF_CACHE_HOST` / `TORCH_CACHE_HOST` / `F5_CACHE_DIR` ให้ชี้ไปที่แคชโมเดลเดิม จะได้ไม่ต้องโหลดใหม่
+1. ใน `.env` ตั้ง `API_KEY` (สุ่มยาว ๆ เพราะ API จะเปิดออกอินเทอร์เน็ต), `NGROK_AUTHTOKEN`, `NGROK_DOMAIN` (โดเมนฟรีจาก https://dashboard.ngrok.com/domains) โมเดลเก็บใน volume `hf-cache` / `f5-cache` ของ Docker (โหลดอัตโนมัติครั้งแรก) ไม่อ่านผ่านไดรฟ์ Windows เพราะไฟล์ใหญ่หลาย GB อ่านผ่าน 9p ตอน RAM ตึงแล้วพังได้
 2. `docker compose up -d --build` (ครั้งแรกนานเพราะติดตั้ง PyTorch และโมเดล)
 3. เช็ก: `curl https://<NGROK_DOMAIN>/health` ดูคำขอที่ผ่าน ngrok ได้ที่ http://localhost:4040 ดู log: `docker compose logs -f api`
 

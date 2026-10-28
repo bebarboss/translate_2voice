@@ -14,10 +14,11 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
-      # แคชโมเดลบนเครื่อง ใช้ร่วมกับตอนรันนอก Docker ไม่ต้องโหลดซ้ำหลาย GB
-      - ${HF_CACHE_HOST:-./models/huggingface}:/root/.cache/huggingface
+      # แคชโมเดลเก็บใน volume ของ Docker (ext4) ไม่อ่านผ่านไดรฟ์ Windows
+      # เพราะโมเดล Whisper 3 GB อ่านผ่าน 9p ตอน RAM ตึงแล้วขาดกลางทาง ("model.bin is incomplete")
+      - hf-cache:/root/.cache/huggingface
+      - f5-cache:/models/f5
       - ${TORCH_CACHE_HOST:-./models/torch}:/root/.cache/torch
-      - ${F5_CACHE_DIR:-./models/f5}:/models/f5
     deploy:
       resources:
         reservations:
@@ -37,3 +38,7 @@ services:
     ports:
       # หน้าดูคำขอที่ผ่าน ngrok http://localhost:4040
       - "127.0.0.1:4040:4040"
+
+volumes:
+  hf-cache:
+  f5-cache:
