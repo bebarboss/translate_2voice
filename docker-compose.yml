@@ -11,7 +11,7 @@ services:
       F5_CACHE_DIR: /models/f5
       FONTS_DIR: ""
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       # แคชโมเดลบนเครื่อง ใช้ร่วมกับตอนรันนอก Docker ไม่ต้องโหลดซ้ำหลาย GB
@@ -32,8 +32,8 @@ services:
     depends_on:
       - api
     environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:?ใส่ NGROK_AUTHTOKEN ใน .env}
-    command: ["http", "api:8000", "--url", "${NGROK_DOMAIN:?ใส่ NGROK_DOMAIN ใน .env (โดเมนฟรีที่ dashboard.ngrok.com/domains)}"]
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command: ["http", "api:8000", "--url", "${NGROK_DOMAIN}"]
     ports:
       # หน้าดูคำขอที่ผ่าน ngrok http://localhost:4040
       - "127.0.0.1:4040:4040"

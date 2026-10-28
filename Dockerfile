@@ -18,8 +18,10 @@ WORKDIR /app
 RUN pip install torch==2.14.1 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu126 \
     && printf 'torch==2.14.1\ntorchaudio==2.11.0\n' > /tmp/constraints.txt
 
-COPY requirements.txt requirements-ml.txt ./
-RUN pip install -r requirements-ml.txt -c /tmp/constraints.txt
+# ติดตั้งทุกแพ็กเกจเท่ากับ .venv ที่ใช้งานได้จริง (pip freeze ของ requirements-ml.txt) แบบ --no-deps
+# เพราะ f5-tts-th ประกาศ numpy<=1.26.4 แต่ใช้กับ numpy 2.x ได้ pip ปกติจะแก้ dependency ไม่ผ่าน
+COPY constraints-docker.txt ./
+RUN pip install --no-deps -r constraints-docker.txt
 
 # faster-whisper (CTranslate2) หา cuDNN/cuBLAS จากแพ็กเกจ nvidia-* ที่มากับ PyTorch
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib
