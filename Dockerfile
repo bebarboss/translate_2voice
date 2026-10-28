@@ -21,7 +21,9 @@ RUN pip install torch==2.14.1 torchaudio==2.11.0 --index-url https://download.py
 # ติดตั้งทุกแพ็กเกจเท่ากับ .venv ที่ใช้งานได้จริง (pip freeze ของ requirements-ml.txt) แบบ --no-deps
 # เพราะ f5-tts-th ประกาศ numpy<=1.26.4 แต่ใช้กับ numpy 2.x ได้ pip ปกติจะแก้ dependency ไม่ผ่าน
 COPY constraints-docker.txt ./
-RUN pip install --no-deps -r constraints-docker.txt
+RUN pip install --no-deps -r constraints-docker.txt \
+    # torchcodec จาก PyPI สร้างกับ CUDA 13 (หา libnvrtc.so.13 ไม่เจอ) ต้องใช้รุ่น cu126 ให้ตรงกับ PyTorch
+    && pip install --no-deps --force-reinstall torchcodec==0.17.0 --index-url https://download.pytorch.org/whl/cu126
 
 # faster-whisper (CTranslate2) หา cuDNN/cuBLAS จากแพ็กเกจ nvidia-* ที่มากับ PyTorch
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib
