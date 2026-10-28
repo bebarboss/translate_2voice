@@ -47,7 +47,8 @@ def download(url: str, out_dir: Path, check_cancel: Callable[[], None],
     opts = {
         "quiet": True,
         "noplaylist": True,
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
+        # เลือก H.264 + AAC ก่อน มือถือเล่นได้และไม่ต้องเข้ารหัสภาพใหม่ตอนรวมเสียง
+        "format": "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
         "merge_output_format": "mp4",
         "outtmpl": str(out_dir / "input.%(ext)s"),
         "progress_hooks": [hook],

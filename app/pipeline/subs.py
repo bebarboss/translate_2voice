@@ -102,7 +102,7 @@ def burn(video: Path, utts: list[Utterance], style: SubtitleStyle, out_mp4: Path
     # รันในโฟลเดอร์งาน จะได้ไม่ต้อง escape path ของ Windows ในตัวกรอง ass
     proc = subprocess.run(
         ["ffmpeg", "-y", "-i", str(video), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
-         "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
+         "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
         capture_output=True, text=True, cwd=work)
     if proc.returncode != 0:
         raise RuntimeError(f"ฝังซับไม่สำเร็จ: {proc.stderr[-1200:]}")
