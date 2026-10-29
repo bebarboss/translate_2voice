@@ -304,7 +304,8 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
             u.target = u.target or u.source
         return
 
-    if target == "th" and lang == "en" and settings.translate_en_local:
+    # โมเดลแปลบนเครื่องต้องใช้การ์ดจอ โหมด modal จึงแปลด้วย Typhoon API เสมอ
+    if target == "th" and lang == "en" and settings.translate_en_local and settings.worker != "modal":
         for i, u in enumerate(utts):
             if check_cancel:
                 check_cancel()

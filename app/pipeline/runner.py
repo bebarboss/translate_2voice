@@ -1,13 +1,16 @@
 """ร้อยทุกขั้นเข้าด้วยกัน
 
 run_analyze    : (ดาวน์โหลดลิงก์) → ดึงเสียง → แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง → แปล → ย่อบท
-run_synthesize : พากย์ทีละประโยค (ใช้เสียงเดิมกับประโยคที่ไม่ได้แก้) → ผสมเสียง → รวมวิดีโอ → ซับ
+run_synthesize : พากย์ (ใช้เสียงเดิมกับประโยคที่ไม่ได้แก้) → ผสมเสียง → รวมวิดีโอ → ซับ
 run_render     : ฝังซับลงวิดีโอใหม่อย่างเดียว (หลังเปลี่ยนรูปแบบซับ)
+
+ขั้นที่ใช้การ์ดจอเรียกผ่าน gpu.py ซึ่งรันบนเครื่องนี้หรือบน Modal ตาม WORKER
 """
 import hashlib
 import json
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -18,39 +21,22 @@ from .. import runtime_settings
 from ..config import settings
 from ..jobs import JobStore
 from ..schemas import SynthStats
-from . import audio, mix, pauses, subs, tts
+from . import audio, gpu, mix, pauses, subs, tts
 from .diarize import export_speaker_stems, load_turns, overlap_ratio, save_turns
 
 log = logging.getLogger("dubbing.runner")
 
 
 def _impl():
-    """คืนชุดฟังก์ชันจริง หรือชุดทดสอบเมื่อเปิด MOCK_PIPELINE"""
+    """คืนฟังก์ชันแปลจริง หรือชุดทดสอบเมื่อเปิด MOCK_PIPELINE (ขั้นที่ใช้การ์ดจออยู่ใน gpu.py)"""
     if settings.mock_pipeline:
         from . import mock
-        return mock.separate_vocals, mock.diarize, mock.transcribe, \
-            mock.translate_utterances, mock.fit_lengths, mock.synthesize
-    from . import diarize, transcribe, translate
-    return audio.separate_vocals, diarize.diarize, transcribe.transcribe, \
-        translate.translate_utterances, translate.fit_lengths, tts.synthesize
+        return mock.translate_utterances, mock.fit_lengths
+    from . import translate
+    return translate.translate_utterances, translate.fit_lengths
 
 
-def _free_vram(*names: str) -> None:
-    """โหมด LOW_VRAM: ปล่อยโมเดลที่ใช้เสร็จแล้วออกจากการ์ดจอ ก่อนโหลดตัวถัดไป"""
-    if not settings.low_vram or settings.mock_pipeline:
-        return
-    import gc
-    import importlib
-
-    for name in names:
-        importlib.import_module(f"{__package__}.{name}").unload()
-    gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except ImportError:
-        pass
+_free_vram = gpu.release
 
 
 def _stage(store: JobStore, job_id: str):
@@ -62,9 +48,7 @@ def _stage(store: JobStore, job_id: str):
 
 # ---------------------------------------------------------------- analyze
 def run_analyze(store: JobStore, job_id: str) -> None:
-    from .transcribe import assign_speakers
-
-    separate, diarize, transcribe, translate, fit_lengths, _ = _impl()
+    translate, fit_lengths = _impl()
     job = store.get(job_id)
     d = store.dir(job_id)
     stage = _stage(store, job_id)
@@ -85,47 +69,14 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     stage("extract_audio", 0.06)
     mixed = audio.extract_audio(video, d / "audio.wav")
 
-    stage("separate_vocals", 0.1)
-    _free_vram("tts")  # เผื่อโมเดลพากย์จากงานก่อนยังค้างอยู่
-    vocals, _bgm = separate(mixed, d, settings.demucs_model, settings.device)
-    wav16k = audio.to_mono(vocals, d / "vocals16k.wav", 16000)
-
-    stage("diarize", 0.25)
-    turns = diarize(wav16k, job.num_speakers)
-    _free_vram("diarize")
-    # ไม่ได้ระบุจำนวนคน → ตรวจผลด้วยลายเสียง แยกคนที่ถูกรวมกัน และรวมคนเดียวที่ถูกแยก
-    if not job.num_speakers and settings.diar_refine and settings.hf_token and not settings.mock_pipeline:
-        from . import voices
-        wav, wsr = sf.read(wav16k, dtype="float32")
-        turns = voices.refine_turns(turns, wav, wsr)
-        _free_vram("voices")
-    export_speaker_stems(vocals, turns, d / "stems")
+    # แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง (บนเครื่องนี้หรือ Modal ตาม WORKER)
+    res = gpu.analyze(mixed, d, job.source_lang, job.num_speakers, stage, cancel)
+    turns, words, lang, utterances = res["turns"], res["words"], res["lang"], res["utterances"]
+    export_speaker_stems(res["vocals"], turns, d / "stems")
     save_turns(turns, d / "turns.json")
-    store.update(job_id, speakers=sorted({t.speaker for t in turns}))
-
-    stage("transcribe", 0.4)
-    words, lang = transcribe(wav16k, job.source_lang)
-    _free_vram("transcribe")
-    if not words:
-        raise RuntimeError("ไม่พบคำพูดในคลิป")
+    store.update(job_id, speakers=res["speakers"])
     # เก็บเวลาของแต่ละคำไว้ เผื่อแบ่งท่อนใหม่ภายหลัง
     (d / "words.json").write_text(json.dumps([w.__dict__ for w in words], ensure_ascii=False), encoding="utf-8")
-    utterances = assign_speakers(words, turns, lang=lang)
-    if settings.voice_match and settings.hf_token and not settings.mock_pipeline:
-        from . import voices
-        wav, wsr = sf.read(wav16k, dtype="float32")
-        # ท่อนเดียวที่มีหลายคนพูดต่อกัน (pyannote จับไม่ทัน) → แบ่งตรงจุดจบประโยคย่อยที่เสียงต่างกันชัด
-        before = len(utterances)
-        utterances = voices.split_lines(utterances, words, wav, wsr)
-        if len(utterances) != before:
-            log.info("split %d lines with more than one voice", len(utterances) - before)
-        # ระบบแยกผู้พูดรวมเด็กกับผู้ใหญ่ (หรือชายกับหญิง) เป็นคนเดียว → แยกตามระดับเสียงและลายเสียง
-        renamed = voices.split_speakers(utterances, voices.profile(utterances, wav, wsr),
-                                         taken={t.speaker for t in turns})
-        _free_vram("voices")
-        if renamed:
-            log.info("split speakers by voice: %s", renamed)
-            store.update(job_id, speakers=sorted({u.speaker for u in utterances}))
     store.update(job_id, detected_lang=lang)
     store.save_transcript(job_id, utterances)
 
@@ -203,8 +154,8 @@ def _group_speaker(g: list) -> str:
     return max(g, key=lambda u: u.duration).speaker
 
 
-def _library_refs(job, voice_store, target: str) -> dict[str, tuple[Path, str, float, list]]:
-    """ผู้พูด → (ไฟล์เสียงตัวอย่าง, ข้อความในเสียงนั้น, ระดับเสียง, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
+def _library_refs(job, voice_store, target: str) -> dict[str, tuple[str, Path, str, list]]:
+    """ผู้พูด → (id เสียง, ไฟล์เสียงตัวอย่าง, ข้อความในเสียงนั้น, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
     เสียงที่ถูกลบหรือยังไม่พร้อม ใช้เสียงต้นฉบับแทน"""
     out = {}
     for speaker, voice_id in job.voice_map.items():
@@ -213,17 +164,36 @@ def _library_refs(job, voice_store, target: str) -> dict[str, tuple[Path, str, f
         if v is None or v.status != "ready" or not path.exists():
             log.warning("speaker %s: library voice %s unavailable, using original voice", speaker, voice_id)
             continue
-        pitch = float(12 * np.log2(v.pitch_hz)) if v.pitch_hz else float("nan")
         # เสียงในคลังเป็นภาษาไทย พากย์อังกฤษต้องเขียนข้อความเป็นอักษรละติน
-        out[speaker] = (path, tts.reference_text(v.text, "th", target), pitch, ["library", voice_id, v.text])
+        out[speaker] = (voice_id, path, tts.reference_text(v.text, "th", target), ["library", voice_id, v.text])
     return out
 
 
+@dataclass
+class _Plan:
+    """ประโยคหนึ่ง (ท่อนที่พูดต่อกันของคนเดียว) ที่ต้องพากย์"""
+    i: int  # ลำดับในกลุ่มประโยคทั้งหมด
+    g: list
+    speaker: str
+    slot: float
+    limit_sec: float
+    max_speedup: float
+    max_slowdown: float
+    ref: dict  # {"ref": id เสียงในคลัง} หรือ {"ref_start", "ref_end"} ช่วงที่ตัดจาก vocals
+    ref_text: str
+    ref_key: list
+    chunks: list = field(default_factory=list)
+    voice: Optional[np.ndarray] = None
+
+    def text(self) -> str:
+        return " ".join(u.target.strip() for u in self.g)
+
+
 def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
-    *_, synthesize = _impl()
     job = store.get(job_id)
     d = store.dir(job_id)
     stage = _stage(store, job_id)
+    cancel = lambda: store.check_cancel(job_id)  # noqa: E731
     rs = runtime_settings.get()
     target = job.target_lang
     source_lang = job.detected_lang or job.source_lang or ""
@@ -254,15 +224,12 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     ref_quality = None
     turns = load_turns(d)  # ช่วงพูดของแต่ละคน ใช้หาช่วงที่พูดซ้อนกัน
     if settings.ref_min_quality > 0 and not settings.mock_pipeline:
-        from . import quality
-        ref_quality = {u.id: round(quality.score(orig[int(u.start * orig_sr): int(u.end * orig_sr)], orig_sr), 2)
-                       for u in utterances}
-        _free_vram("quality")
+        ref_quality = gpu.ref_quality(d, utterances, orig, orig_sr)
         # ท่อนที่มีคนอื่นพูดซ้อน ใช้เป็นเสียงตัวอย่างแล้ว F5-TTS จะได้เสียงผสมสองคน → หักคะแนน
-        if turns:
+        if ref_quality and turns:
             for u in utterances:
                 ov = overlap_ratio(u.start, u.end, turns)
-                if ov > 0.05:
+                if ov > 0.05 and u.id in ref_quality:
                     ref_quality[u.id] = round(ref_quality[u.id] - 3 * ov, 2)
         log.info("ref quality: %s", ref_quality)
     # ความตื่นเต้นของแต่ละท่อนเทียบกับเสียงปกติของตัวละครนั้น ใช้เลือกเสียงตัวอย่างและขีดเร่ง/ยืด
@@ -273,41 +240,45 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         log.info("arousal: %s", ref_arousal)
     # ลายเสียงของแต่ละท่อน กันยืมเสียงตัวอย่างข้ามคน (เด็กได้เสียงผู้ใหญ่) และกันรวมประโยคของคนละคน
     voice_map = None
-    if settings.voice_match and settings.hf_token and not settings.mock_pipeline:
-        from . import voices
-        voice_map = voices.profile(utterances, orig, orig_sr)
-        _free_vram("voices")
+    if settings.voice_match and gpu.voice_tools():
+        voice_map = gpu.voice_profiles(d, utterances, orig, orig_sr)
     groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map)
     library_refs = _library_refs(job, voice_store, target)
     if library_refs:
-        log.info("library voices: %s", {s: k[1] for s, (_, _, _, k) in library_refs.items()})
-    clips, spans, redubbed, reused = [], [], 0, 0
-    for i, g in enumerate(groups):
-        stage("tts", 0.72 + 0.2 * i / len(groups))
-        first, last = g[0], g[-1]
+        log.info("library voices: %s", {s: k[0] for s, k in library_refs.items()})
+    library_paths = {voice_id: path for voice_id, path, _, _ in library_refs.values()}
 
+    def key_for(p: _Plan, text: str) -> str:
+        return _clip_key(text=text, speaker=p.speaker, start=p.g[0].start, end=p.g[-1].end,
+                         lines=[u.id for u in p.g], limit=round(p.limit_sec, 3), ref=p.ref_key,
+                         ref_text=p.ref_text, target=target, steps=rs.f5_steps, speed=settings.f5_speed,
+                         max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
+                         fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
+                         prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
+                         pauses=[settings.pause_match, settings.min_pause_sec],
+                         voice=[voice_map is not None, settings.voice_drift, settings.voice_retries])
+
+    # ---- วางแผนทุกประโยค: เสียงตัวอย่าง ช่วงเวลา และใช้เสียงเดิมได้ไหม
+    stage("tts", 0.72)
+    plans: list[_Plan] = []
+    done: dict[int, np.ndarray] = {}  # ลำดับกลุ่ม → เสียงพากย์ที่เสร็จแล้ว
+    reused = 0
+    for i, g in enumerate(groups):
+        first, last = g[0], g[-1]
         speaker = _group_speaker(g)
         # ฉากตื่นเต้นยอมให้พูดเร็วขึ้นได้อีก ฉากเศร้าหรือเนิบยอมให้พูดช้าลงได้อีก (ไม่เกิน 15%)
         excite = tts.mean_arousal(g, ref_arousal)
         max_speedup = round(rs.max_speedup * (1 + 0.1 * min(max(excite, 0.0), 1.5)), 2)
         max_slowdown = round(settings.max_slowdown * (1 + 0.1 * min(max(-excite, 0.0), 1.5)), 2)
         if speaker in library_refs:  # ผู้ใช้เลือกเสียงจากคลังให้ตัวละครนี้
-            ref_path, ref_text, ref_pitch, ref_key = library_refs[speaker]
-            if voice_map is None:
-                ref_pitch = float("nan")
+            voice_id, _, ref_text, ref_key = library_refs[speaker]
+            ref = {"ref": voice_id}
         else:
-            ref = tts.choose_reference(g, by_speaker[speaker], ref_quality, ref_arousal, voice_map)
-            ref_key = [ref[0].id, ref[-1].id]
-            ref_start = ref[0].start
-            ref_end = min(ref[-1].end, ref_start + settings.ref_max_sec)
-            ref_path = refs_dir / f"ref_{ref[0].id:04d}_{ref[-1].id:04d}.wav"
-            if not ref_path.exists():
-                audio.cut_clip(vocals, ref_start, ref_end, ref_path, sr)
-            ref_text = tts.reference_text(" ".join(x.source for x in ref), source_lang, target)
-            ref_pitch = float("nan")
-            if voice_map is not None:
-                ref_wav, ref_sr = sf.read(ref_path, dtype="float32")
-                ref_pitch = voices._pitch(ref_wav, ref_sr)
+            r = tts.choose_reference(g, by_speaker[speaker], ref_quality, ref_arousal, voice_map)
+            ref_key = [r[0].id, r[-1].id]
+            ref_start = r[0].start
+            ref = {"ref_start": ref_start, "ref_end": min(r[-1].end, ref_start + settings.ref_max_sec)}
+            ref_text = tts.reference_text(" ".join(x.source for x in r), source_lang, target)
 
         slot = max(last.end - first.start, 0.3)
         next_start = groups[i + 1][0].start if i + 1 < len(groups) else total
@@ -321,90 +292,80 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                     log.info("line %d: overlaps next speaker, may run %.1fs past the cut", first.id,
                              until - first.start - limit_sec)
                     limit_sec = until - first.start
-        text_of = lambda: " ".join(u.target.strip() for u in g)  # noqa: E731
 
-        def key_for(text: str) -> str:
-            return _clip_key(text=text, speaker=speaker, start=first.start, end=last.end,
-                             lines=[u.id for u in g], limit=round(limit_sec, 3), ref=ref_key,
-                             ref_text=ref_text, target=target, steps=rs.f5_steps, speed=settings.f5_speed,
-                             max_speedup=max_speedup, max_slowdown=max_slowdown,
-                             fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
-                             prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                             pauses=[settings.pause_match, settings.min_pause_sec],
-                             voice=[voice_map is not None, settings.voice_drift, settings.voice_retries])
-
+        p = _Plan(i, g, speaker, slot, limit_sec, max_speedup, max_slowdown, ref, ref_text, ref_key)
         # ประโยคที่บท ตัวละคร และเวลาเหมือนรอบก่อน → ใช้เสียงเดิม ไม่ต้องพากย์ใหม่
-        cached = _load_cached(tts_dir, first.id, key_for(text_of()))
+        cached = _load_cached(tts_dir, first.id, key_for(p, p.text()))
         if cached is not None:
-            clips.append((first.start, cached))
-            spans.append((first.start, last.end))
+            done[i] = cached
             reused += len(g)
-            continue
+        else:
+            plans.append(p)
 
-        def speak_chunk(text: str, start: float, end: float):
-            # โมเดลปรับจังหวะพูดให้พอดีฉากเองตอนสร้างเสียง ไม่ต้องเร่งความเร็วทีหลัง
-            # F5-TTS สุ่มได้เสียงเงียบเป็นครั้งคราว → สร้างใหม่ (สูงสุด 3 รอบ)
-            def once():
-                for _ in range(3):
-                    v = synthesize(ref_path, ref_text, text, settings.f5_speed, rs.f5_steps, target,
-                                   slot=max(end - start, 0.3), max_speedup=max_speedup,
-                                   max_slowdown=max_slowdown)
-                    if len(v) and np.isfinite(v).all() and np.abs(v).max() > 0.02:
-                        break
-                    log.warning("line %d: silent TTS output, retrying", first.id)
-                return np.nan_to_num(v)
-
-            voice = once()
-            # บางรอบ F5-TTS พูดหลุดจากเสียงตัวอย่าง (ผู้หญิงกลายเป็นเสียงต่ำ เด็กกลายเป็นผู้ใหญ่)
-            # → วัดระดับเสียงเทียบเสียงตัวอย่าง ห่างเกินเกณฑ์ก็พากย์ใหม่ แล้วเลือกรอบที่ใกล้ที่สุด
-            if np.isfinite(ref_pitch):
-                gap = lambda v: abs(voices._pitch(v, sr) - ref_pitch)  # noqa: E731  (nan → ไม่ลองใหม่)
-                tries = [(gap(voice), voice)]
-                for _ in range(settings.voice_retries):
-                    if not tries[-1][0] > settings.voice_drift:
-                        break
-                    log.info("line %d: voice drifted %.1f st from reference, retrying", first.id, tries[-1][0])
-                    v = once()
-                    tries.append((gap(v), v))
-                voice = min(tries, key=lambda x: x[0] if np.isfinite(x[0]) else 99)[1]
-            if match_prosody:
-                seg = orig[int(start * orig_sr): int(end * orig_sr)]
-                voice = prosody.match(voice, sr, seg, orig_sr, settings.prosody_max_shift, settings.prosody_max_range)
-            return audio.trim_silence(voice, sr)
-
-        def speak():
+    def render(batch: list[_Plan], lo: float, hi: float) -> None:
+        """พากย์ทั้งชุดผ่าน gpu.synthesize_lines แล้วต่อช่วงย่อยของแต่ละประโยคเป็นเสียงเดียว"""
+        lines = []
+        for p in batch:
             if not settings.pause_match or settings.mock_pipeline:
-                return speak_chunk(text_of(), first.start, last.end)
-            # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
-            chunks = pauses.plan(g, orig, orig_sr, settings.min_pause_sec)
+                p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, p.text())]
+            else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
+                p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec)
+            lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
+                       "target_lang": target, "slot": max(c.end - c.start, 0.3), "max_speedup": p.max_speedup,
+                       "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None}
+                      for k, c in enumerate(p.chunks)]
+        progress = (lambda f: stage("tts", lo + (hi - lo) * f)) if gpu.remote() else None
+        voices_ = gpu.synthesize_lines(vocals, lines, rs.f5_steps, settings.f5_speed, library_paths, refs_dir,
+                                       progress, cancel)
+        for p in batch:
+            first = p.g[0]
             out, cursor = np.zeros(0, dtype=np.float32), 0
-            for c in chunks:
-                v = speak_chunk(c.text, c.start, c.end)
+            for k, c in enumerate(p.chunks):
+                v = voices_[f"{first.id}:{k}"]
+                if match_prosody:
+                    seg = orig[int(c.start * orig_sr): int(c.end * orig_sr)]
+                    v = prosody.match(v, sr, seg, orig_sr, settings.prosody_max_shift, settings.prosody_max_range)
+                v = audio.trim_silence(v, sr)
+                # วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
                 at = max(int((c.start - first.start) * sr), cursor + (int(0.08 * sr) if cursor else 0))
                 out = np.concatenate([out, np.zeros(max(0, at - len(out)), dtype=np.float32), v])
                 cursor = len(out)
-            if len(chunks) > 1:
-                log.info("line %d: %d chunks %s", first.id, len(chunks),
-                         [(round(c.start, 1), round(c.end, 1)) for c in chunks])
-            return out
+            if len(p.chunks) > 1:
+                log.info("line %d: %d chunks %s", first.id, len(p.chunks),
+                         [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
+            p.voice = out
 
-        voice = speak()
-        # พูดเร็วสุดที่ยอมได้แล้วยังยาวเกินฉาก → ให้ Typhoon ย่อบทแล้วพากย์ใหม่หนึ่งรอบ
-        if can_shorten and len(voice) / sr > slot * 1.05:
-            from .translate import shorten
-            before = text_of()
-            shorten(g, target, target_ratio=0.9)
-            if text_of() != before:
-                voice = speak()
+    # ---- พากย์: บนเครื่องนี้ทีละประโยค (เสร็จแล้วเก็บแคชทันที) บน Modal ส่งทุกประโยคเป็นชุดพร้อมกัน
+    batches = ([plans] if plans else []) if gpu.remote() else [[p] for p in plans]
+    for batch in batches:
+        if not gpu.remote():
+            stage("tts", 0.72 + 0.2 * batch[0].i / len(groups))
+        render(batch, 0.72, 0.88)
+        # พูดเร็วสุดที่ยอมได้แล้วยังยาวเกินฉาก → ให้ Typhoon ย่อบทแล้วพากย์ใหม่หนึ่งรอบ (ส่งเฉพาะประโยคนั้น)
+        again = []
+        for p in batch:
+            if can_shorten and len(p.voice) / sr > p.slot * 1.05:
+                from .translate import shorten
+                cancel()
+                before = p.text()
+                shorten(p.g, target, target_ratio=0.9)
+                if p.text() != before:
+                    again.append(p)
+        if again:
+            if gpu.remote():
+                log.info("re-dub %d shortened lines", len(again))
+            render(again, 0.88, 0.92)
+        for p in batch:
+            # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
+            voice = audio.fade(p.voice[: int(p.limit_sec * sr)], sr)
+            first = p.g[0]
+            sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
+            (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key_for(p, p.text())}), encoding="utf-8")
+            done[p.i] = voice
 
-        # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
-        voice = audio.fade(voice[: int(limit_sec * sr)], sr)
-
-        sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
-        (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key_for(text_of())}), encoding="utf-8")
-        clips.append((first.start, voice))
-        spans.append((first.start, last.end))
-        redubbed += len(g)
+    clips = [(g[0].start, done[i]) for i, g in enumerate(groups)]
+    spans = [(g[0].start, g[-1].end) for g in groups]
+    redubbed = sum(len(p.g) for p in plans)
 
     store.save_transcript(job_id, utterances)
     _free_vram("tts")
@@ -420,15 +381,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         speech = [(u.start, u.end) for u in utterances] + [(s, s + len(v) / sr) for s, v in clips]
         is_speech = None
         if not settings.mock_pipeline:
-            import librosa
-
-            from .transcribe import words_in
-
-            def is_speech(seg: np.ndarray, seg_sr: int) -> bool:
-                words = words_in(librosa.resample(seg, orig_sr=seg_sr, target_sr=16000), source_lang or None)
-                if words:
-                    log.info("skip untranscribed speech in original vocals: %r", words)
-                return bool(words)
+            known, is_speech = gpu.speech_filter(d, source_lang)
+            speech += known
         bed = mix.nonspeech(orig, orig_sr, speech, total, sr, is_speech) * settings.nonspeech_gain
         _free_vram("transcribe")
     mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60)

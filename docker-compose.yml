@@ -1,5 +1,7 @@
-# API บนเครื่อง (การ์ดจอ) + Cloudflare Tunnel เปิดให้หน้าเว็บบน Vercel เรียกได้
+# API บนเครื่อง + Cloudflare Tunnel เปิดให้หน้าเว็บบน Vercel เรียกได้
+# ขั้นที่ใช้การ์ดจอรันบน Modal (WORKER=modal ต้อง modal deploy modal_app.py ก่อน และใส่ MODAL_TOKEN_ID/SECRET ใน .env)
 # รัน: docker compose up -d --build   ค่าทั้งหมดอ่านจาก .env (ดู .env.example หมวด Docker / Tunnel)
+# รันโมเดลบนการ์ดจอเครื่องนี้แทน: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 # ดูลิงก์: docker compose logs tunnel | grep trycloudflare
 # ใช้ ngrok แทน: docker compose stop tunnel && docker compose --profile ngrok up -d ngrok
 services:
@@ -10,24 +12,12 @@ services:
     env_file: .env
     environment:
       DATA_DIR: /app/data
-      F5_CACHE_DIR: /models/f5
       FONTS_DIR: ""
+      WORKER: modal
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
-      # แคชโมเดลเก็บใน volume ของ Docker (ext4) ไม่อ่านผ่านไดรฟ์ Windows
-      # เพราะโมเดล Whisper 3 GB อ่านผ่าน 9p ตอน RAM ตึงแล้วขาดกลางทาง ("model.bin is incomplete")
-      - hf-cache:/root/.cache/huggingface
-      - f5-cache:/models/f5
-      - ${TORCH_CACHE_HOST:-./models/torch}:/root/.cache/torch
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   # Cloudflare quick tunnel ฟรี ไม่จำกัดปริมาณข้อมูล แต่ลิงก์ *.trycloudflare.com เปลี่ยนทุกครั้งที่ container เริ่มใหม่
   # (ต้องแก้ BACKEND_URL บน Vercel ตาม) และรับ request ได้ครั้งละไม่เกิน 100 MB
@@ -51,7 +41,3 @@ services:
     ports:
       # หน้าดูคำขอที่ผ่าน ngrok http://localhost:4040
       - "127.0.0.1:4040:4040"
-
-volumes:
-  hf-cache:
-  f5-cache:

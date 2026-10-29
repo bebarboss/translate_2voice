@@ -19,7 +19,7 @@ import soundfile as sf
 from ..config import settings
 from ..schemas import Utterance, VoiceStatus
 from ..voice_library import VoiceStore
-from . import audio
+from . import audio, gpu
 from .voices import EMBED_MODEL, Voice, _pitch
 
 log = logging.getLogger("dubbing.library")
@@ -37,7 +37,8 @@ def _embed(seg: np.ndarray, sr: int) -> Optional[np.ndarray]:
     """ลายเสียง (normalized) ด้วยโมเดลเดียวกับ voices.py แต่รันบน CPU
     เรียกจากคำขอของหน้าเว็บได้ระหว่างที่งานพากย์ใช้การ์ดจออยู่ โมเดลเล็ก (ราว 25 MB) ไม่เปลือง RAM"""
     global _embedder
-    if not settings.hf_token or settings.mock_pipeline or len(seg) < sr:
+    # โหมด modal เครื่องนี้ไม่มี torch ใช้ลายเสียงที่ Modal วัดไว้แทน (speaker_profiles, prepare)
+    if not settings.hf_token or settings.mock_pipeline or gpu.remote() or len(seg) < sr:
         return None
     import librosa
     import torch
@@ -99,9 +100,8 @@ def _pick(words: list, vocals: np.ndarray, sr: int) -> tuple[float, float, str]:
     cands = sorted(cands, key=span, reverse=True)[:6]
     if len(cands) > 1 and not settings.mock_pipeline:
         from . import quality
-        from .runner import _free_vram
         q = {c: quality.score(vocals[int(words[c[0]].start * sr): int(words[c[1]].end * sr)], sr) for c in cands}
-        _free_vram("quality")
+        gpu.release("quality")
         log.info("voice windows: %s", {(round(words[i].start, 1), round(span((i, j)), 1)): round(s, 2)
                                        for (i, j), s in q.items()})
         # ความสะอาดมาก่อน ความยาวช่วยเล็กน้อย (ยาวกว่า 1 วินาที เท่ากับสะอาดกว่า 0.1)
@@ -127,65 +127,73 @@ def _normalize(wav: np.ndarray, target_db: float = -20.0, peak: float = 0.95) ->
     return (wav * gain).astype(np.float32)
 
 
+def clean_voice(raw: Path, work: Path, stage) -> dict:
+    """ส่วนที่ใช้การ์ดจอของ prepare (โหมด modal รันบน Modal ผ่าน gpu.prepare_voice)
+    คืน wav (เสียงตัวอย่างที่ปรับความดังแล้ว), sr, text, pitch_hz, quality, emb"""
+    from . import tts
+
+    if settings.mock_pipeline:
+        vocals = raw
+    else:
+        gpu.release("tts")
+        vocals, _ = audio.separate_vocals(raw, work, settings.demucs_model, settings.device)
+
+    stage("transcribe", 0.0)
+    wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
+    clean, sr = sf.read(wav16k, dtype="float32")
+    if settings.mock_pipeline:
+        from .common import Word
+        dur = len(clean) / sr
+        words = [Word(0.0, min(dur, 8.0), "สวัสดีครับ นี่คือเสียงตัวอย่างสำหรับทดสอบ", 0)]
+    else:
+        from .transcribe import transcribe
+        words, _ = transcribe(wav16k, "th")
+        gpu.release("transcribe")
+    if not words:
+        raise RuntimeError("ไม่พบเสียงพูดในคลิปนี้")
+
+    stage("trim", 0.0)
+    start, end, text = _pick(words, clean, sr)
+    ref = work / "ref_cut.wav"  # ไม่ใช่ ref.wav ซึ่งเป็นไฟล์จริงของเสียงในคลัง (VoiceStore.ref_path)
+    audio.cut_clip(vocals, start, end, ref, tts.SAMPLE_RATE)
+    wav, rsr = sf.read(ref, dtype="float32")
+    wav = _normalize(wav)
+
+    stage("measure", 0.0)
+    q = None
+    if not settings.mock_pipeline:
+        from . import quality
+        q = round(quality.score(wav, rsr), 2)
+        gpu.release("quality")
+    return {"wav": wav, "sr": rsr, "text": text, "pitch_hz": _hz(_pitch(wav, rsr)), "quality": q,
+            "emb": _embed(wav, rsr)}
+
+
 def prepare(store: VoiceStore, voice_id: str) -> None:
     """ทำความสะอาด ตัดท่อน ถอดข้อความ วัดเสียง สถานะผิดพลาดบันทึกลงเสียงนั้นเอง ไม่โยนต่อ"""
-    from . import tts
-    from .runner import _free_vram
-
     v = store.get(voice_id)
     if v is None:  # ถูกลบระหว่างรอคิว
         return
     d = store.dir(voice_id)
-    tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav"]
+    tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav", d / "ref_cut.wav"]
     try:
         src = next(d.glob("original.*"))
         store.update(voice_id, stage="clean")
         raw = tmp[0]
         audio.run(["ffmpeg", "-y", "-i", src, "-vn", "-t", MAX_INPUT_SEC, "-ac", "2", "-ar", 44100,
                    "-c:a", "pcm_s16le", raw])
-        if settings.mock_pipeline:
-            vocals = raw
-        else:
-            _free_vram("tts")
-            vocals, _ = audio.separate_vocals(raw, d, settings.demucs_model, settings.device)
-
-        store.update(voice_id, stage="transcribe")
-        wav16k = audio.to_mono(vocals, tmp[3], 16000)
-        clean, sr = sf.read(wav16k, dtype="float32")
-        if settings.mock_pipeline:
-            from .common import Word
-            dur = len(clean) / sr
-            words = [Word(0.0, min(dur, 8.0), "สวัสดีครับ นี่คือเสียงตัวอย่างสำหรับทดสอบ", 0)]
-        else:
-            from .transcribe import transcribe
-            words, _ = transcribe(wav16k, "th")
-            _free_vram("transcribe")
-        if not words:
-            raise RuntimeError("ไม่พบเสียงพูดในคลิปนี้")
-
-        store.update(voice_id, stage="trim")
-        start, end, text = _pick(words, clean, sr)
-        ref = store.ref_path(voice_id)
-        audio.cut_clip(vocals, start, end, ref, tts.SAMPLE_RATE)
-        wav, rsr = sf.read(ref, dtype="float32")
-        wav = _normalize(wav)
-        sf.write(ref, wav, rsr)
-
-        store.update(voice_id, stage="measure")
-        pitch_hz = _hz(_pitch(wav, rsr))
-        q = None
-        if not settings.mock_pipeline:
-            from . import quality
-            q = round(quality.score(wav, rsr), 2)
-            _free_vram("quality")
-        store.save_embedding(voice_id, _embed(wav, rsr))
+        r = gpu.prepare_voice(raw, d, lambda name, _progress: store.update(voice_id, stage=name))
+        wav, rsr = r["wav"], r["sr"]
+        sf.write(store.ref_path(voice_id), wav, rsr)
+        store.save_embedding(voice_id, r["emb"])
         v = store.get(voice_id)
         if v is None:
             return
-        store.update(voice_id, status=VoiceStatus.ready, stage="ready", text=text,
-                     duration=round(len(wav) / rsr, 2), pitch_hz=pitch_hz, quality=q,
-                     gender=v.gender or guess_gender(pitch_hz), error=None)
-        log.info("voice %s ready: %.1fs pitch=%s quality=%s text=%r", voice_id, len(wav) / rsr, pitch_hz, q, text)
+        store.update(voice_id, status=VoiceStatus.ready, stage="ready", text=r["text"],
+                     duration=round(len(wav) / rsr, 2), pitch_hz=r["pitch_hz"], quality=r["quality"],
+                     gender=v.gender or guess_gender(r["pitch_hz"]), error=None)
+        log.info("voice %s ready: %.1fs pitch=%s quality=%s text=%r",
+                 voice_id, len(wav) / rsr, r["pitch_hz"], r["quality"], r["text"])
     except Exception as exc:  # noqa: BLE001
         log.exception("voice %s failed", voice_id)
         store.update(voice_id, status=VoiceStatus.failed, error=str(exc)[:500])
@@ -217,19 +225,25 @@ def speaker_profiles(job_dir: Path, utterances: list[Utterance], per_speaker: in
         if not vocals.exists():
             return {}
         sr = sf.info(vocals).samplerate
+        # โหมด modal: ลายเสียงต่อท่อนที่ Modal วัดไว้ตอนวิเคราะห์ (เครื่องนี้ไม่มี torch)
+        saved = (gpu.saved_lines(job_dir, utterances) or {}) if gpu.remote() else {}
         out: dict[str, Voice] = {}
         for speaker in sorted({u.speaker for u in utterances}):
             lines = sorted((u for u in utterances if u.speaker == speaker and u.duration >= 1.0),
                            key=lambda u: u.duration, reverse=True)[:per_speaker]
             embs, pitches = [], []
             for u in lines:
-                # อ่านเฉพาะช่วงนั้น คลิปยาวทั้งเรื่องโหลดเข้า RAM ทั้งไฟล์ไม่ไหว
-                seg, _ = sf.read(vocals, start=int(u.start * sr), stop=int(u.end * sr), dtype="float32")
-                seg = seg.mean(axis=1) if seg.ndim > 1 else seg
-                e = _embed(seg, sr)
+                x = saved.get(u.id)
+                if x and "emb" in x:
+                    e = None if x["emb"] is None else np.asarray(x["emb"], dtype=np.float32)
+                    p = float("nan") if x["pitch"] is None else x["pitch"]
+                else:
+                    # อ่านเฉพาะช่วงนั้น คลิปยาวทั้งเรื่องโหลดเข้า RAM ทั้งไฟล์ไม่ไหว
+                    seg, _ = sf.read(vocals, start=int(u.start * sr), stop=int(u.end * sr), dtype="float32")
+                    seg = seg.mean(axis=1) if seg.ndim > 1 else seg
+                    e, p = _embed(seg, sr), _pitch(seg, sr)
                 if e is not None:
                     embs.append(e * u.duration)
-                p = _pitch(seg, sr)
                 if np.isfinite(p):
                     pitches.append(p)
             emb = None

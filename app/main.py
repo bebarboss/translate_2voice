@@ -132,6 +132,8 @@ def health():
 
 
 def _gpu_name() -> Optional[str]:
+    if settings.worker == "modal" and not settings.mock_pipeline:
+        return "Modal L4 (24 GB)"
     try:
         import torch
         if torch.cuda.is_available():

@@ -39,6 +39,12 @@ class Settings:
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")  # การ์ดจอเล็ก: ปล่อยโมเดลทิ้งหลังใช้แต่ละขั้น ไม่โหลดค้างพร้อมกัน
 
+    # ที่รันขั้นที่ใช้การ์ดจอ (pipeline/gpu.py): local = เครื่องนี้, modal = Modal GPU L4 (ไฟล์งานยังอยู่ใน data/)
+    worker: str = _env("WORKER", "local").lower()
+    modal_app: str = _env("MODAL_APP", "dubbing-gpu")  # ชื่อแอปที่ modal deploy ไว้ (ตรงกับ modal_app.py)
+    modal_max_jobs: int = _int("MODAL_MAX_JOBS", 4)  # จำนวนงานที่ส่ง Modal พร้อมกันได้
+    modal_tts_batch: int = _int("MODAL_TTS_BATCH", 40)  # ประโยคต่อชุดที่ส่งพากย์ (หลายชุดรันพร้อมกันคนละ GPU)
+
     # แยกเสียงพูดกับเพลง (Demucs)
     demucs_model: str = _env("DEMUCS_MODEL", "htdemucs")
 

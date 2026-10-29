@@ -1,4 +1,4 @@
-"""เก็บสถานะงาน และคิวงานที่รันทีละงาน (การ์ดจอใบเดียวรันพร้อมกันหลายงานไม่ไหว)"""
+"""เก็บสถานะงาน และคิวงาน (การ์ดจอใบเดียวรันทีละงาน โหมด modal รันพร้อมกันได้หลายงาน)"""
 import json
 import logging
 import queue
@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path, PureWindowsPath
 from typing import Optional
 
+from .config import settings
 from .schemas import Job, JobStatus, Utterance, now
 
 log = logging.getLogger("dubbing.jobs")
@@ -140,19 +141,30 @@ class JobStore:
         return [Utterance.model_validate(u) for u in json.loads(path.read_text(encoding="utf-8"))]
 
 
-class Worker(threading.Thread):
-    """รับงานจากคิวทีละงาน
+class Worker:
+    """รับงานจากคิว
 
     phase: analyze (ดาวน์โหลด/แยกเสียง/ถอดเสียง/แปล), synthesize (พากย์และรวมวิดีโอ),
     render (ฝังซับลงวิดีโอใหม่อย่างเดียว), voice (เตรียมเสียงในคลัง ใช้การ์ดจอเหมือนกันจึงเข้าคิวเดียวกัน)
+    WORKER=local รันทีละงาน (การ์ดจอใบเดียว) WORKER=modal รันพร้อมกันได้ MODAL_MAX_JOBS งาน แต่ละงานได้ GPU ของตัวเอง
     """
 
-    def __init__(self, store: JobStore, voices=None):
-        super().__init__(daemon=True, name="dubbing-worker")
+    def __init__(self, store: JobStore, voices=None, threads: Optional[int] = None):
         self.store = store
         self.voices = voices  # VoiceStore
         self.queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
-        self.current: Optional[str] = None  # งานที่กำลังรันอยู่
+        remote = settings.worker == "modal" and not settings.mock_pipeline
+        self.threads = threads or (max(1, settings.modal_max_jobs) if remote else 1)
+        self._running: dict[str, str] = {}  # ชื่อเธรด → งานที่กำลังรัน
+
+    @property
+    def current(self) -> Optional[str]:
+        """งานที่กำลังรันอยู่ (ถ้ารันหลายงาน คืนงานแรก)"""
+        return next(iter(self._running.values()), None)
+
+    def start(self) -> None:
+        for n in range(self.threads):
+            threading.Thread(target=self.run, daemon=True, name=f"dubbing-worker-{n}").start()
 
     def submit(self, job_id: str, phase: str) -> None:
         self.store.clear_cancel(job_id)
@@ -173,7 +185,7 @@ class Worker(threading.Thread):
                 job = self.store.get(job_id)
                 if job is None or job.status != JobStatus.queued:  # ถูกลบหรือถูกยกเลิกระหว่างรอคิว
                     continue
-                self.current = job_id
+                self._running[threading.current_thread().name] = job_id
                 self.store.update(job_id, status=JobStatus.running)
                 if phase == "render":
                     runner.run_render(self.store, job_id)
@@ -198,6 +210,6 @@ class Worker(threading.Thread):
                 if self.store.get(job_id):
                     self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
             finally:
-                self.current = None
+                self._running.pop(threading.current_thread().name, None)
                 self.store.clear_cancel(job_id)
                 self.queue.task_done()

@@ -1,4 +1,4 @@
-# โมเดล AI (ติดตั้งบนเครื่องที่มีการ์ดจอ NVIDIA หรือ Google Colab)
+# โมเดล AI (ติดตั้งบนเครื่องที่มีการ์ดจอ NVIDIA, Google Colab หรือ image ของ Modal ใน modal_app.py)
 # ติดตั้ง PyTorch ที่ตรงกับ CUDA ของเครื่องก่อน: https://pytorch.org/get-started/locally/
 -r requirements.txt
 demucs>=4.0
@@ -6,13 +6,8 @@ pyannote.audio>=3.1
 faster-whisper>=1.0
 # พากย์ไทย
 f5-tts-th
-# ทำคำอ่านเสียงตัวอย่างให้ F5-TTS (tts.romanize)
-pypinyin>=0.50
-Unidecode>=1.3
-praat-parselmouth>=0.4.4
 # พากย์อังกฤษ (F5-TTS รุ่นหลัก)
 f5-tts
-librosa>=0.10
 # ใช้เฉพาะเมื่อ TRANSLATE_EN_LOCAL=true
 transformers>=4.51
 accelerate>=0.30

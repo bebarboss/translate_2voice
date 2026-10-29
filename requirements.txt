@@ -1,4 +1,4 @@
-# ส่วน API (พอสำหรับโหมดทดสอบ MOCK_PIPELINE=1)
+# ส่วน API (พอสำหรับโหมดทดสอบ MOCK_PIPELINE=1 และ WORKER=modal ซึ่งต้องเพิ่ม pip install modal)
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
@@ -12,3 +12,11 @@ requests>=2.31
 yt-dlp>=2025.1.1
 # อ่านรายชื่อฟอนต์บน Windows สำหรับฝังซับ
 fonttools>=4.50
+# งานเสียงบน CPU: วัดอารมณ์/ระดับเสียง ผสมเสียง เสียงก้อง (ไม่ต้องใช้ PyTorch)
+scipy>=1.11
+librosa>=0.10
+praat-parselmouth>=0.4.4
+# ทำคำอ่านเสียงตัวอย่างให้ F5-TTS (tts.romanize)
+pypinyin>=0.50
+Unidecode>=1.3
+pythainlp>=5.0
