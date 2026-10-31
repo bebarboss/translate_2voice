@@ -1,13 +1,65 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, fileUrl, uploadVoice, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceMood } from "@/lib/api";
-import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, fileUrl, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceMood } from "@/lib/api";
+import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
 
 const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
+const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
+
+/** รูปของเสียง ไม่มีรูปแสดงตัวอักษรแรกของชื่อ */
+function VoiceAvatar({ name, url, size = 56 }: { name: string; url: string; size?: number }) {
+  return url ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img className="avatar" src={url} alt="" width={size} height={size} />
+  ) : (
+    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4 }} aria-hidden="true">
+      {name.trim().replace(/^[เแโใไ]/, "").charAt(0) || "?"}
+    </span>
+  );
+}
+
+/** เลือกหมวดหมู่ได้หลายหมวด: หมวดตั้งต้น หมวดที่ใช้อยู่ในคลัง และพิมพ์หมวดใหม่เองได้ */
+function CategoryPicker({ value, onChange, known, id }: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  known: string[];
+  id: string;
+}) {
+  const [custom, setCustom] = useState("");
+  const options = [...new Set([...VOICE_CATEGORIES, ...known, ...value])];
+  const toggle = (c: string) => onChange(value.includes(c) ? value.filter((x) => x !== c) : [...value, c]);
+  const addCustom = () => {
+    const c = custom.trim().replace(/\s+/g, " ").slice(0, 30);
+    if (c && !value.includes(c) && value.length < 10) onChange([...value, c]);
+    setCustom("");
+  };
+  return (
+    <div className="chips" role="group" aria-labelledby={id}>
+      {options.map((c) => (
+        <button key={c} type="button" className="chip" aria-pressed={value.includes(c)} onClick={() => toggle(c)}>{c}</button>
+      ))}
+      <input className="chip-input" maxLength={30} placeholder="+ หมวดใหม่" aria-label="เพิ่มหมวดหมู่ใหม่" value={custom}
+        onChange={(e) => setCustom(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
+        onBlur={addCustom} />
+    </div>
+  );
+}
+
+/** ปุ่มเลือกรูป (input file ซ่อนอยู่ในปุ่ม) */
+function ImagePickButton({ label, onPick, disabled }: { label: string; onPick: (f: File) => void; disabled?: boolean }) {
+  return (
+    <label className={`btn small${disabled ? " disabled" : ""}`} style={{ cursor: disabled ? "default" : "pointer" }}>
+      {label}
+      <input type="file" accept={IMAGE_ACCEPT} className="sr-only" disabled={disabled}
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onPick(f); }} />
+    </label>
+  );
+}
 
 function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g: Gender) => void; label: string }) {
   return (
@@ -21,12 +73,16 @@ function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g:
   );
 }
 
-function UploadCard({ onUploaded }: { onUploaded: () => void }) {
+function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: string[] }) {
   const [file, setFile] = useState<File | null>(null);
   const [drag, setDrag] = useState(false);
   const [name, setName] = useState("");
   const [gender, setGender] = useState<Gender>("");
   const [tone, setTone] = useState("");
+  const [description, setDescription] = useState("");
+  const [categories, setCategories] = useState<string[]>([]);
+  const [image, setImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
   const [rights, setRights] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -46,18 +102,34 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
 
   const ready = !!file && !!name.trim() && rights && progress === null;
 
+  useEffect(() => {
+    if (!image) { setImagePreview(""); return; }
+    const url = URL.createObjectURL(image);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [image]);
+
   const submit = async () => {
     if (!ready || !file) return;
     setError("");
     setProgress(0);
     try {
-      const up = uploadVoice(file, { name: name.trim(), gender, tone: tone.trim() }, setProgress);
+      const meta = { name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories };
+      const up = uploadVoice(file, meta, setProgress);
       abortRef.current = up.abort;
-      await up.promise;
+      const v = await up.promise;
+      let imageError = "";
+      if (image) {
+        await uploadVoiceImage(v.id, image).catch((e) => { imageError = `เพิ่มเสียงแล้ว แต่ตั้งรูปไม่สำเร็จ: ${(e as Error).message}`; });
+      }
       setFile(null);
       setName("");
       setTone("");
       setGender("");
+      setDescription("");
+      setCategories([]);
+      setImage(null);
+      setError(imageError);
       onUploaded();
     } catch (e) {
       setError((e as Error).message);
@@ -108,7 +180,27 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
               value={tone} onChange={(e) => setTone(e.target.value)} />
             <datalist id="tones">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
           </div>
+          <div className="field">
+            <span className="label">รูป (ไม่ใส่ก็ได้)</span>
+            <div className="row" style={{ gap: 10 }}>
+              <VoiceAvatar name={name} url={imagePreview} />
+              <ImagePickButton label={image ? "เปลี่ยนรูป" : "เลือกรูป"} onPick={setImage} disabled={progress !== null} />
+              {image && <button type="button" className="btn small" onClick={() => setImage(null)} disabled={progress !== null}>เอารูปออก</button>}
+            </div>
+          </div>
         </div>
+      </div>
+
+      <div className="field">
+        <span className="label" id="v-cat">หมวดหมู่ (เลือกได้หลายหมวด)</span>
+        <CategoryPicker id="v-cat" value={categories} onChange={setCategories} known={known} />
+      </div>
+
+      <div className="field">
+        <label htmlFor="v-desc">รายละเอียด (ไม่ใส่ก็ได้)</label>
+        <textarea id="v-desc" className="textarea" rows={3} maxLength={1000}
+          placeholder="เช่น คนพากย์ บทที่เหมาะ อายุตัวละคร สไตล์การพูด"
+          value={description} onChange={(e) => setDescription(e.target.value)} />
       </div>
 
       <label className="check" style={{ justifyContent: "flex-start" }}>
@@ -226,22 +318,26 @@ function MoodSection({ v, preview, run }: {
   );
 }
 
-function VoiceCard({ v, preview, onChanged }: {
+function VoiceCard({ v, preview, onChanged, known }: {
   v: LibraryVoice;
   preview: ReturnType<typeof usePreview>;
   onChanged: () => void;
+  known: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(v.name);
   const [gender, setGender] = useState<Gender>(v.gender);
   const [tone, setTone] = useState(v.tone);
+  const [description, setDescription] = useState(v.description ?? "");
+  const [categories, setCategories] = useState<string[]>(v.categories ?? []);
   const [text, setText] = useState(v.text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (editing) return;
-    setName(v.name); setGender(v.gender); setTone(v.tone); setText(v.text);
+    setName(v.name); setGender(v.gender); setTone(v.tone); setDescription(v.description ?? ""); setCategories(v.categories ?? []);
+    setText(v.text);
   }, [v, editing]);
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -258,8 +354,13 @@ function VoiceCard({ v, preview, onChanged }: {
   };
 
   const save = async () => {
-    if (!name.trim() || !text.trim()) return setError("ชื่อและข้อความในเสียงต้องไม่ว่าง");
-    const ok = await run(() => api.updateVoice(v.id, { name: name.trim(), gender, tone: tone.trim(), text: text.trim() }));
+    // ข้อความในเสียงตัวอย่างมีเฉพาะเสียงที่เตรียมเสร็จ เสียงที่ยังไม่เสร็จแก้ได้แค่ข้อมูลอื่น
+    const ready = v.status === "ready";
+    if (!name.trim() || (ready && !text.trim())) return setError("ชื่อและข้อความในเสียงต้องไม่ว่าง");
+    const ok = await run(() => api.updateVoice(v.id, {
+      name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories,
+      ...(ready ? { text: text.trim() } : {}),
+    }));
     if (ok) setEditing(false);
   };
 
@@ -270,10 +371,12 @@ function VoiceCard({ v, preview, onChanged }: {
   const audioUrl = fileUrl.voice(v.id, v.updated_at);
   return (
     <article className="card" style={{ gap: 12 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "nowrap" }}>
+        <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, flex: 1 }}>
           <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-word" }}>{v.name}</span>
           <div className="row" style={{ gap: 6 }}>
+            {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
             {v.gender && <span className="badge queued">{GENDER_LABEL[v.gender]}</span>}
             {v.tone && <span className="badge awaiting_review">{v.tone}</span>}
             {v.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>}
@@ -285,9 +388,23 @@ function VoiceCard({ v, preview, onChanged }: {
       </div>
 
       {v.status === "failed" && v.error && <div className="alert error">{v.error}</div>}
+      {!editing && v.description && (
+        <p className="muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{v.description}</p>
+      )}
 
       {editing ? (
         <>
+          <div className="field">
+            <span className="label">รูป</span>
+            <div className="row" style={{ gap: 10 }}>
+              <ImagePickButton label={v.image ? "เปลี่ยนรูป" : "เพิ่มรูป"} disabled={busy}
+                onPick={(f) => run(() => uploadVoiceImage(v.id, f))} />
+              {v.image && (
+                <button type="button" className="btn small" disabled={busy}
+                  onClick={() => run(() => api.deleteVoiceImage(v.id))}>ลบรูป</button>
+              )}
+            </div>
+          </div>
           <div className="field">
             <label htmlFor={`n-${v.id}`}>ชื่อเสียง</label>
             <input id={`n-${v.id}`} className="input" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
@@ -304,6 +421,15 @@ function VoiceCard({ v, preview, onChanged }: {
             <label htmlFor={`t-${v.id}`}>โทนเสียง</label>
             <input id={`t-${v.id}`} className="input" list="tones-edit" maxLength={80} value={tone} onChange={(e) => setTone(e.target.value)} />
             <datalist id="tones-edit">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
+          </div>
+          <div className="field">
+            <span className="label" id={`c-${v.id}`}>หมวดหมู่</span>
+            <CategoryPicker id={`c-${v.id}`} value={categories} onChange={setCategories} known={known} />
+          </div>
+          <div className="field">
+            <label htmlFor={`d-${v.id}`}>รายละเอียด</label>
+            <textarea id={`d-${v.id}`} className="textarea" rows={3} maxLength={1000} value={description}
+              onChange={(e) => setDescription(e.target.value)} />
           </div>
           {v.status === "ready" && (
             <div className="field">
@@ -349,7 +475,16 @@ function VoiceCard({ v, preview, onChanged }: {
 export default function VoicesPage() {
   const [voices, setVoices] = useState<LibraryVoice[] | null>(null);
   const [error, setError] = useState("");
+  const [filter, setFilter] = useState(""); // "" = ทุกหมวด
   const preview = usePreview();
+  // หมวดที่ใช้อยู่ในคลัง (เรียงตามจำนวนเสียงมากไปน้อย) ใช้ทำปุ่มกรองและเป็นตัวเลือกตอนตั้งหมวด
+  const known = useMemo(() => {
+    const count = new Map<string, number>();
+    voices?.forEach((v) => (v.categories ?? []).forEach((c) => count.set(c, (count.get(c) ?? 0) + 1)));
+    return [...count.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+  }, [voices]);
+  const shown = voices?.filter((v) => !filter || (v.categories ?? []).includes(filter)) ?? null;
+  useEffect(() => { if (filter && voices && !known.includes(filter)) setFilter(""); }, [filter, known, voices]);
 
   const refresh = useCallback(() => {
     api.listVoices().then((v) => { setVoices(v); setError(""); }).catch((e) => setError(e.message));
@@ -374,16 +509,26 @@ export default function VoicesPage() {
         </p>
       </div>
 
-      <UploadCard onUploaded={refresh} />
+      <UploadCard onUploaded={refresh} known={known} />
 
       {error && <div className="alert error" role="alert">{error}</div>}
       <section aria-label="เสียงในคลัง" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>เสียงในคลัง {voices?.length ? `(${voices.length})` : ""}</h2>
-        {voices === null ? <div className="empty">กำลังโหลด...</div>
-          : voices.length === 0 ? <div className="empty">ยังไม่มีเสียงในคลัง</div>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>
+          เสียงในคลัง {shown?.length ? `(${shown.length}${filter ? ` จาก ${voices?.length}` : ""})` : ""}
+        </h2>
+        {known.length > 0 && (
+          <div className="chips" role="group" aria-label="กรองตามหมวดหมู่">
+            <button type="button" className="chip" aria-pressed={!filter} onClick={() => setFilter("")}>ทั้งหมด</button>
+            {known.map((c) => (
+              <button key={c} type="button" className="chip" aria-pressed={filter === c} onClick={() => setFilter(c)}>{c}</button>
+            ))}
+          </div>
+        )}
+        {shown === null ? <div className="empty">กำลังโหลด...</div>
+          : voices?.length === 0 ? <div className="empty">ยังไม่มีเสียงในคลัง</div>
           : (
             <div className="grid-2">
-              {voices.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} />)}
+              {shown.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} known={known} />)}
             </div>
           )}
       </section>

@@ -67,6 +67,9 @@ export interface LibraryVoice {
   name: string;
   gender: Gender;
   tone: string;
+  description: string;
+  categories: string[]; // หมวดหมู่ เช่น ละคร หนัง การ์ตูน
+  image: string; // "" = ไม่มีรูป
   status: "processing" | "ready" | "failed";
   stage: string;
   error: string | null;
@@ -92,6 +95,8 @@ export interface VoiceMeta {
   name: string;
   gender: Gender;
   tone: string;
+  description: string;
+  categories: string[];
 }
 
 export interface Utterance {
@@ -243,9 +248,10 @@ export const api = {
     request<Job>(`/jobs/${id}/voices`, json("PUT", choice)),
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
-  updateVoice: (id: string, patch: Partial<Pick<LibraryVoice, "name" | "gender" | "tone" | "text">>) =>
+  updateVoice: (id: string, patch: Partial<Pick<LibraryVoice, "name" | "gender" | "tone" | "description" | "categories" | "text">>) =>
     request<LibraryVoice>(`/voices/${id}`, json("PATCH", patch)),
   deleteVoice: (id: string) => request<void>(`/voices/${id}`, { method: "DELETE" }),
+  deleteVoiceImage: (id: string) => request<LibraryVoice>(`/voices/${id}/image`, { method: "DELETE" }),
   retryVoice: (id: string) => request<LibraryVoice>(`/voices/${id}/retry`, { method: "POST" }),
   updateVoiceMood: (id: string, mood: Mood, text: string) =>
     request<LibraryVoice>(`/voices/${id}/moods/${mood}`, json("PATCH", { text })),
@@ -266,6 +272,7 @@ export const fileUrl = {
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
+  voiceImage: (id: string, version = "") => `${BASE}/voices/${id}/image${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceMood: (id: string, mood: Mood, version = "") =>
     `${BASE}/voices/${id}/moods/${mood}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
 };
@@ -296,7 +303,7 @@ function buildForm(opts: CreateOptions): FormData {
   return form;
 }
 
-type UploadPath = "jobs" | "voices" | `voices/${string}/moods`;
+type UploadPath = "jobs" | "voices" | `voices/${string}/moods` | `voices/${string}/image`;
 
 /** ที่อัปโหลด: ตรงไปที่ API พร้อมตั๋ว (บน Vercel) หรือผ่าน proxy /api */
 async function uploadTarget(path: UploadPath): Promise<{ url: string; token: string | null }> {
@@ -327,6 +334,8 @@ export function uploadVoice(
   form.append("name", meta.name);
   form.append("gender", meta.gender);
   form.append("tone", meta.tone);
+  form.append("description", meta.description);
+  meta.categories.forEach((c) => form.append("categories", c));
   form.append("file", file);
   return upload<LibraryVoice>("voices", form, onProgress);
 }
@@ -341,6 +350,30 @@ export function uploadVoiceMood(
   form.append("mood", mood);
   form.append("file", file);
   return upload<LibraryVoice>(`voices/${voiceId}/moods`, form, onProgress);
+}
+
+/** ตั้งรูปของเสียงในคลัง ย่อในเบราว์เซอร์ให้ด้านยาวไม่เกิน 512 px ก่อนส่ง ไฟล์จึงเล็กพอผ่าน proxy ได้ */
+export async function uploadVoiceImage(voiceId: string, file: File): Promise<LibraryVoice> {
+  const form = new FormData();
+  form.append("file", await shrinkImage(file, 512), "image.jpg");
+  return upload<LibraryVoice>(`voices/${voiceId}/image`, form, () => undefined).promise;
+}
+
+async function shrinkImage(file: File, max: number): Promise<Blob> {
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new ApiError("เปิดรูปนี้ไม่ได้ ใช้ไฟล์ JPG, PNG หรือ WEBP", 400);
+  }
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve, reject) => canvas.toBlob(
+    (b) => (b ? resolve(b) : reject(new ApiError("ย่อรูปไม่สำเร็จ", 400))), "image/jpeg", 0.86));
 }
 
 /** อัปโหลดด้วย XHR เพราะ fetch ยังรายงานความคืบหน้าการอัปโหลดไม่ได้ */

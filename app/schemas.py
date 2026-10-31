@@ -143,6 +143,9 @@ class LibraryVoice(BaseModel):
     name: str
     gender: Gender = ""
     tone: str = ""  # โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส
+    description: str = ""  # รายละเอียด เช่น ประวัติคนพากย์ บทที่เหมาะ
+    categories: list[str] = Field(default_factory=list)  # หมวดหมู่ เช่น ละคร หนัง การ์ตูน (ใช้กรองในหน้าคลัง)
+    image: str = ""  # ชื่อไฟล์รูปในโฟลเดอร์ของเสียง (image.jpg ฯลฯ) ว่าง = ไม่มีรูป
     status: VoiceStatus = VoiceStatus.processing
     stage: str = "queued"
     error: Optional[str] = None
@@ -160,6 +163,8 @@ class LibraryVoiceUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=80)
     gender: Optional[Gender] = None
     tone: Optional[str] = Field(None, max_length=80)
+    description: Optional[str] = Field(None, max_length=1000)
+    categories: Optional[list[str]] = Field(None, max_length=10)
     text: Optional[str] = Field(None, min_length=1)
 
 

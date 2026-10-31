@@ -127,6 +127,9 @@ export const MOODS = Object.keys(MOOD_LABEL) as Mood[];
 export const fmtBaht = (satang: number) =>
   `${(satang / 100).toLocaleString("th-TH", { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 })} บาท`;
 
+/** หมวดหมู่เสียงที่เลือกได้ทันที (เพิ่มหมวดเองได้ในหน้าคลังเสียง) */
+export const VOICE_CATEGORIES = ["ละคร", "หนัง", "การ์ตูน", "อนิเมะ", "สารคดี", "โฆษณา"];
+
 export const TONES = ["ทุ้มลึก", "นุ่มนวล", "สดใส", "แหลม", "หนักแน่น", "อ่อนโยน", "แหบ", "เสียงเด็ก", "เสียงผู้สูงอายุ"];
 
 export const VOICE_STAGE_LABEL: Record<string, string> = {

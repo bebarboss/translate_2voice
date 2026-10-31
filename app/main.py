@@ -595,6 +595,16 @@ def get_voice_or_404(voice_id: str) -> LibraryVoice:
     return v
 
 
+def _clean_categories(values: list[str]) -> list[str]:
+    """ตัดช่องว่าง ตัดซ้ำ (คงลำดับ) ไม่เกิน 10 หมวด หมวดละไม่เกิน 30 ตัว"""
+    out: list[str] = []
+    for v in values:
+        v = " ".join(v.split())[:30]
+        if v and v not in out:
+            out.append(v)
+    return out[:10]
+
+
 @app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
 def list_voices():
     return voice_store.all()
@@ -607,6 +617,8 @@ async def create_voice(
     name: str = Form(..., min_length=1, max_length=80),
     gender: Gender = Form("", description="male, female หรือว่างไว้ให้ระบบเดาจากระดับเสียง"),
     tone: str = Form("", max_length=80, description="โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส"),
+    description: str = Form("", max_length=1000, description="รายละเอียด เช่น ประวัติคนพากย์ บทที่เหมาะ"),
+    categories: list[str] = Form([], description="หมวดหมู่ ส่งได้หลายค่า เช่น ละคร หนัง การ์ตูน"),
 ):
     """อัปโหลดเสียงเข้าคลัง ระบบจะแยกเสียงรบกวน ตัดท่อนพูดที่สะอาดที่สุด 3–10 วินาที และถอดข้อความให้"""
     ext = Path(file.filename or "").suffix.lower()
@@ -617,6 +629,7 @@ async def create_voice(
     d.mkdir(parents=True, exist_ok=True)
     await save_upload(file, d / f"original{ext}", d)
     v = voice_store.add(LibraryVoice(id=voice_id, name=name.strip(), gender=gender, tone=tone.strip(),
+                                     description=description.strip(), categories=_clean_categories(categories),
                                      filename=file.filename or ""))
     worker.submit_voice(voice_id)
     return v
@@ -633,6 +646,8 @@ def update_voice(voice_id: str, patch: LibraryVoiceUpdate):
     งานที่ใช้เสียงนี้จะพากย์ตัวละครนั้นใหม่ทุกประโยคเมื่อข้อความเปลี่ยน"""
     get_voice_or_404(voice_id)
     fields = {k: v.strip() if isinstance(v, str) else v for k, v in patch.model_dump(exclude_unset=True).items()}
+    if fields.get("categories") is not None:
+        fields["categories"] = _clean_categories(fields["categories"])
     return voice_store.update(voice_id, **fields)
 
 
@@ -663,6 +678,53 @@ def get_voice_audio(voice_id: str):
     """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
     v = get_voice_or_404(voice_id)
     return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
+
+
+IMAGE_TYPES = {b"\xff\xd8\xff": (".jpg", "image/jpeg"), b"\x89PNG\r\n\x1a\n": (".png", "image/png")}
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+def _image_type(head: bytes) -> Optional[tuple[str, str]]:
+    """ดูชนิดรูปจากไบต์แรกของไฟล์ (ไม่เชื่อชื่อไฟล์หรือ content-type ที่ส่งมา)"""
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp", "image/webp"
+    return next((t for magic, t in IMAGE_TYPES.items() if head.startswith(magic)), None)
+
+
+@app.post("/voices/{voice_id}/image", response_model=LibraryVoice, dependencies=[Depends(require_key_or_upload_token)])
+async def set_voice_image(voice_id: str, file: UploadFile = File(..., description="รูป JPG, PNG หรือ WEBP ไม่เกิน 2 MB")):
+    """ตั้งรูปของเสียง (แทนรูปเดิม) หน้าเว็บย่อรูปให้เหลือไม่เกิน 512 px ก่อนส่ง"""
+    get_voice_or_404(voice_id)
+    data = await file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "รูปใหญ่เกิน 2 MB")
+    kind = _image_type(data[:16])
+    if kind is None:
+        raise HTTPException(400, "รองรับเฉพาะรูป JPG, PNG หรือ WEBP")
+    d = voice_store.dir(voice_id)
+    for old in d.glob("image.*"):
+        old.unlink(missing_ok=True)
+    (d / f"image{kind[0]}").write_bytes(data)
+    return voice_store.update(voice_id, image=f"image{kind[0]}")
+
+
+@app.delete("/voices/{voice_id}/image", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def delete_voice_image(voice_id: str):
+    get_voice_or_404(voice_id)
+    for old in voice_store.dir(voice_id).glob("image.*"):
+        old.unlink(missing_ok=True)
+    return voice_store.update(voice_id, image="")
+
+
+@app.get("/voices/{voice_id}/image", dependencies=[Depends(require_key)])
+def get_voice_image(voice_id: str):
+    v = get_voice_or_404(voice_id)
+    path = voice_store.dir(voice_id) / v.image if v.image else None
+    if path is None or not path.exists():
+        raise HTTPException(404, "เสียงนี้ยังไม่มีรูป")
+    media = next(t[1] for t in [*IMAGE_TYPES.values(), (".webp", "image/webp")] if t[0] == path.suffix)
+    return FileResponse(path, media_type=media, headers={"X-Content-Type-Options": "nosniff",
+                                                         "Cache-Control": "private, max-age=86400"})
 
 
 def get_mood_or_404(voice_id: str, mood: str) -> tuple[LibraryVoice, VoiceMood]:

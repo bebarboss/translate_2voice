@@ -11,8 +11,8 @@ const API_KEY = process.env.API_KEY ?? "";
 // บน Vercel อัปโหลดตรงเสมอ บนเครื่องตัวเองผ่าน proxy ได้ (ตั้ง DIRECT_UPLOAD=1/0 เพื่อบังคับ)
 const DIRECT = (process.env.DIRECT_UPLOAD ?? (process.env.VERCEL ? "1" : "0")) === "1";
 const TTL_SEC = 15 * 60;
-// ปลายทางที่รับไฟล์อัปโหลดได้ (งาน เสียงในคลัง และเสียงอารมณ์ของเสียงในคลัง)
-const PATHS = /^(jobs|voices|voices\/[0-9a-f]{12}\/moods)$/;
+// ปลายทางที่รับไฟล์อัปโหลดได้ (งาน เสียงในคลัง เสียงอารมณ์ และรูปของเสียงในคลัง)
+const PATHS = /^(jobs|voices|voices\/[0-9a-f]{12}\/(moods|image))$/;
 
 /** id ผู้ใช้ของคุกกี้นี้ (ระบบบัญชีปิดอยู่หรือยังไม่ล็อกอิน = "") ใส่ในตั๋วให้ API รู้ว่างานเป็นของใคร */
 async function userId(req: Request): Promise<string> {

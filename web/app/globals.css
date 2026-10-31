@@ -190,3 +190,14 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .ledger th { text-align: left; font-weight: 500; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .ledger td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
 @media (max-width: 640px) { .ledger th:nth-child(3), .ledger td:nth-child(3) { display: none; } }
+
+/* รูปของเสียงในคลัง */
+.avatar { flex: none; width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; }
+.btn.disabled { opacity: .5; pointer-events: none; }
+
+/* หมวดหมู่ของเสียงในคลัง */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
+.chip-input { height: 30px; width: 110px; padding: 0 12px; border-radius: 999px; border: 1px dashed var(--border-2); background: transparent; color: inherit; font: inherit; font-size: 13px; }
+.badge.category { background: rgba(255, 138, 76, .14); color: var(--accent); }
