@@ -1,11 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { api, checkFile, fileUrl, type Fonts, type Job, type RuntimeSettings, type SubtitleStyle } from "@/lib/api";
-import { TARGET_LABEL, fmtDuration, langName, speakerColor, speakerLabel } from "@/lib/format";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  api, checkFile, fileUrl, type Fonts, type Job, type RuntimeSettings, type SubtitleStyle, type Utterance,
+} from "@/lib/api";
+import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor, speakerLabel } from "@/lib/format";
+import { useTranscript } from "@/lib/useTranscript";
+import LineCard from "./LineCard";
+import SpeakerLanes from "./SpeakerLanes";
 import SubtitleStylePanel from "./SubtitleStylePanel";
-import { CheckIcon, DownloadIcon } from "./Icons";
+import { ArrowLeft, ArrowRight, CheckIcon, DownloadIcon, MicIcon, PlayIcon } from "./Icons";
 
 function defaultStyle(s: RuntimeSettings | null, lang: Job["target_lang"]): SubtitleStyle {
   return {
@@ -37,6 +42,83 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const videoRef = useRef<HTMLVideoElement>(null);
   const resume = useRef<{ time: number; playing: boolean } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tr = useTranscript(job, onChanged, () => videoRef.current?.currentTime ?? 0);
+  const { sorted, dirty } = tr;
+  const [t, setT] = useState(0);
+  const [duration, setDuration] = useState(job.duration ?? 0);
+  const [picked, setPicked] = useState<number | null>(null); // ประโยคที่คลิกเลือก (null = ตามวิดีโอ)
+  const stopAt = useRef<number | null>(null); // เล่นเฉพาะช่วงของประโยค หยุดเมื่อถึงเวลานี้
+
+  const total = duration || (sorted.length ? sorted[sorted.length - 1].end + 1 : 1);
+  const active = useMemo(() => {
+    let cur: Utterance | null = null;
+    for (const u of sorted) if (t >= u.start) cur = u;
+    return cur;
+  }, [sorted, t]);
+  const current = sorted.find((u) => u.id === picked) ?? active ?? sorted[0] ?? null;
+  const idx = current ? sorted.indexOf(current) : -1;
+  // แก้บทหลังพากย์แล้ว ต้องพากย์ใหม่เสียงถึงจะเปลี่ยน
+  const needsDub = dirty.length > 0 || tr.saved > 0;
+
+  useEffect(() => {
+    if (!dirty.length) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty.length]);
+
+  const seek = (sec: number) => {
+    const v = videoRef.current;
+    if (v) v.currentTime = sec + 0.01;
+    setT(sec + 0.01);
+  };
+  const pick = (u: Utterance) => {
+    setPicked(u.id);
+    seek(u.start);
+  };
+  const playLine = (u: Utterance) => {
+    const v = videoRef.current;
+    if (!v) return;
+    setPicked(u.id);
+    v.currentTime = u.start;
+    stopAt.current = u.end + 0.15;
+    v.play().catch(() => {});
+  };
+  const onTime = (v: HTMLVideoElement) => {
+    setT(v.currentTime);
+    if (stopAt.current !== null && v.currentTime >= stopAt.current) {
+      stopAt.current = null;
+      v.pause();
+    }
+  };
+
+  const saveEdits = async () => {
+    tr.setBusy("save");
+    tr.setMessage(null);
+    try {
+      await tr.saveLines();
+      tr.setMessage({ kind: "info", text: "บันทึกบทแล้ว กดพากย์ใหม่เพื่อฟังเสียงที่แก้" });
+    } catch (e) {
+      tr.setMessage({ kind: "error", text: (e as Error).message });
+    } finally { tr.setBusy(""); }
+  };
+  const redub = async () => {
+    tr.setBusy("dub");
+    tr.setMessage(null);
+    try {
+      await tr.saveLines();
+      await api.synthesize(job.id);
+      onChanged();
+    } catch (e) {
+      tr.setMessage({ kind: "error", text: (e as Error).message });
+      tr.setBusy("");
+    }
+  };
+  const tooLong = (u: Utterance) => {
+    const text = tr.draftOf(u).target;
+    const limit = Math.max(0.3, u.end - u.start) * (settings?.max_speedup ?? 1.35);
+    return !!text.trim() && estimateSeconds(text, job.target_lang) > limit;
+  };
 
   useEffect(() => {
     api.getSettings().then(setSettings).catch(() => {});
@@ -113,7 +195,12 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
           <span className="badge done"><CheckIcon size={14} />พากย์{TARGET_LABEL[job.target_lang]}เสร็จแล้ว</span>
         </div>
         <div className="row">
-          <button type="button" className="btn" onClick={onEdit}>แก้บทแล้วพากย์ใหม่</button>
+          {needsDub && (
+            <button type="button" className="btn primary" onClick={redub} disabled={!!tr.busy}>
+              <MicIcon size={17} />{tr.busy === "dub" ? "กำลังส่ง..." : "พากย์ใหม่ช่วงที่แก้"}
+            </button>
+          )}
+          <button type="button" className="btn" onClick={onEdit}>แก้บททั้งหมด</button>
           <Link href="/" className="btn">ส่งคลิปถัดไป</Link>
         </div>
       </div>
@@ -124,20 +211,55 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
         </span>
       )}
       {message && <div className={`alert ${message.kind}`} role="alert">{message.text}</div>}
+      {tr.message && <div className={`alert ${tr.message.kind}`} role={tr.message.kind === "error" ? "alert" : "status"}>{tr.message.text}</div>}
 
       <div className="split">
         <section className="main" aria-label="วิดีโอที่พากย์แล้ว">
           <div className="video-box">
             <video ref={videoRef} key={audio} src={audio === "dub" ? fileUrl.result(job.id) : fileUrl.source(job.id)}
-              controls preload="metadata" playsInline onLoadedMetadata={onLoaded} />
+              controls preload="metadata" playsInline
+              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); onLoaded(); }}
+              onTimeUpdate={(e) => onTime(e.currentTarget)} onSeeked={(e) => setT(e.currentTarget.currentTime)}
+              onPlay={() => { if (stopAt.current === null) setPicked(null); }} />
           </div>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div className="seg" role="group" aria-label="เสียงที่เล่น">
               <button type="button" aria-pressed={audio === "dub"} onClick={() => switchAudio("dub")}>เสียงพากย์{TARGET_LABEL[job.target_lang]}</button>
               <button type="button" aria-pressed={audio === "orig"} onClick={() => switchAudio("orig")}>เสียงต้นฉบับ</button>
             </div>
-            <span className="dim">ตัวอย่างนี้ยังไม่ฝังซับ ซับจะฝังตอนดาวน์โหลด</span>
+            <span className="dim">ตัวอย่างนี้ยังไม่ฝังซับ ซับจะฝังตอนดาวน์โหลด · <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span></span>
           </div>
+
+          {sorted.length > 0 && (
+            <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={current?.id ?? null} onPick={pick}
+              stemLabel="เสียงต้นฉบับ" />
+          )}
+          {current && (
+            <section className="card tight" aria-label="แก้ช่วงที่เลือก">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2 style={{ fontSize: 15 }}>ประโยคที่ {idx + 1} / {sorted.length}</h2>
+                <div className="row" style={{ gap: 6 }}>
+                  {needsDub && <span className="dim">{dirty.length ? `ยังไม่บันทึก ${dirty.length} ประโยค` : "บันทึกแล้ว รอพากย์ใหม่"}</span>}
+                  <button type="button" className="btn small" onClick={saveEdits} disabled={!!tr.busy || !dirty.length}>
+                    {tr.busy === "save" ? "กำลังบันทึก..." : "บันทึก"}
+                  </button>
+                </div>
+              </div>
+              <LineCard u={current} tr={tr} isLast={idx === sorted.length - 1} tooLong={tooLong(current)}
+                onSeek={seek} onFocusText={() => { videoRef.current?.pause(); setPicked(current.id); }}
+                tools={<>
+                  <button type="button" className="icon-btn" disabled={idx <= 0} onClick={() => pick(sorted[idx - 1])}
+                    aria-label="ประโยคก่อนหน้า"><ArrowLeft size={14} /></button>
+                  <button type="button" className="icon-btn" onClick={() => playLine(current)}>
+                    <PlayIcon size={12} />เล่นช่วงนี้
+                  </button>
+                  <button type="button" className="icon-btn" disabled={idx >= sorted.length - 1}
+                    onClick={() => pick(sorted[idx + 1])} aria-label="ประโยคถัดไป"><ArrowRight size={14} /></button>
+                  <span style={{ flex: 1 }} />
+                </>} />
+              <span className="dim">เสียงในวิดีโอยังเป็นเสียงพากย์รอบก่อน แก้บท ตัวละคร หรือแยก/รวมประโยค แล้วกด &ldquo;พากย์ใหม่ช่วงที่แก้&rdquo; ระบบพากย์เฉพาะประโยคที่เปลี่ยน</span>
+            </section>
+          )}
 
           <div className="card">
             <div className="row" style={{ justifyContent: "space-between" }}>
@@ -185,7 +307,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
             <div className="kv"><span>ภาษาต้นฉบับ</span><span>{langName(job.detected_lang ?? job.source_lang)}</span></div>
             <div className="kv"><span>ภาษาพากย์</span><span>{TARGET_LABEL[job.target_lang]}</span></div>
             <div className="kv"><span>ความยาวคลิป</span><span className="mono">{fmtDuration(job.duration)}</span></div>
-            <div className="kv"><span>ตัวละคร</span><span>{job.speakers.length}</span></div>
+            <div className="kv"><span>ตัวละคร</span><span>{tr.speakers.length}</span></div>
             {job.source_url && <div className="kv"><span>ที่มา</span><a href={job.source_url} target="_blank" rel="noreferrer">เปิดลิงก์</a></div>}
           </section>
 
