@@ -6,7 +6,7 @@ import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_L
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
 
-const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.opus,.wma,.mp4,.mov,.mkv,.webm";
+const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 
@@ -93,7 +93,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
     if (!f) return;
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPT.split(",").includes(ext)) {
-      setError("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG หรือวิดีโอ MP4, MOV, MKV, WEBM");
+      setError("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG, OGA หรือวิดีโอ MP4, MOV, MKV, WEBM");
       return;
     }
     setFile(f);
