@@ -51,7 +51,12 @@ class Settings:
     modal_max_jobs: int = _int("MODAL_MAX_JOBS", 4)  # จำนวนงานที่ส่ง Modal พร้อมกันได้
     modal_tts_batch: int = _int("MODAL_TTS_BATCH", 40)  # ประโยคต่อชุดที่ส่งพากย์ (หลายชุดรันพร้อมกันคนละ GPU)
 
-    # แยกเสียงพูดกับเพลง (Demucs)
+    # แยกเสียงพูดกับเพลง: roformer (BS-RoFormer ผ่าน audio-separator ได้เสียงพูดสะอาดกว่ามาก) หรือ demucs
+    # roformer โหลดไม่ได้หรือแยกไม่สำเร็จ จะใช้ Demucs แทนอัตโนมัติ
+    separator: str = _env("SEPARATOR", "roformer")
+    separator_model: str = _env("SEPARATOR_MODEL", "model_bs_roformer_ep_317_sdr_12.9755.ckpt")
+    # จำนวนหน้าต่างที่ซ้อนกันตอนแยก (ค่าเริ่มต้นของไลบรารีคือ 8 ช้ามาก 2 เร็วกว่าราว 4 เท่า คุณภาพต่างกันน้อยมาก)
+    separator_overlap: int = _int("SEPARATOR_OVERLAP", 2)
     demucs_model: str = _env("DEMUCS_MODEL", "htdemucs")
 
     # แยกผู้พูด (pyannote)
@@ -113,10 +118,8 @@ class Settings:
     voice_min_sim: float = _float("VOICE_MIN_SIM", 0.2)  # ลายเสียงคล้ายกันอย่างน้อยเท่านี้ (−1 ถึง 1)
     voice_max_pitch_diff: float = _float("VOICE_MAX_PITCH_DIFF", 6.0)  # ระดับเสียงต่างได้ไม่เกินกี่เซมิโทน
     voice_split_pitch: float = _float("VOICE_SPLIT_PITCH", 7.0)  # แยกผู้พูดเมื่อเสียงสองกลุ่มห่างกันเกินกี่เซมิโทน
-    # ปรับผลแยกผู้พูดเมื่อไม่ได้ระบุจำนวนคน (voices.refine_turns)
+    # ไม่ได้ระบุจำนวนคน → จัดกลุ่มผู้พูดใหม่ทีละประโยคจากลายเสียง หาจำนวนคนเอง (voices.cluster_lines)
     diar_refine: bool = _bool("DIAR_REFINE", True)
-    # ผู้พูดที่ลายเสียงในกลุ่มเข้ากันต่ำกว่านี้ (มัธยฐาน) จะลองแยกเป็นสองคน คนเดียวจริงมักได้ 0.6 ขึ้นไป
-    diar_split_coherence: float = _float("DIAR_SPLIT_COHERENCE", 0.55)
     # ผู้พูดสองคนที่ลายเสียงคล้ายกันเกินนี้ (และระดับเสียงใกล้กัน) ถือเป็นคนเดียว คนต่างกันมักได้ไม่เกิน 0.5
     diar_merge_sim: float = _float("DIAR_MERGE_SIM", 0.65)
     # เสียงพากย์หลุดจากเสียงตัวอย่างเกินกี่เซมิโทนให้พากย์ใหม่ และลองใหม่ได้กี่รอบ (0 = ไม่ลอง)

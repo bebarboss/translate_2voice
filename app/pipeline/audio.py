@@ -1,10 +1,13 @@
-"""งานเสียงพื้นฐาน: ดึงเสียงจากวิดีโอ แยกเสียงพูดด้วย Demucs ตัดคลิป ยืดหดเวลา"""
+"""งานเสียงพื้นฐาน: ดึงเสียงจากวิดีโอ แยกเสียงพูด (BS-RoFormer หรือ Demucs) ตัดคลิป ยืดหดเวลา"""
+import logging
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
+
+log = logging.getLogger("dubbing.audio")
 
 
 def run(cmd: list, cwd=None) -> str:
@@ -39,7 +42,63 @@ def to_mono(in_wav: Path, out_wav: Path, sr: int = 16000) -> Path:
 
 
 def separate_vocals(audio_wav: Path, work_dir: Path, model: str, device: str) -> tuple[Path, Path]:
-    """แยกเป็น vocals.wav (เสียงพูด) กับ bgm.wav (เพลงและเสียงประกอบ)"""
+    """แยกเป็น vocals.wav (เสียงพูด) กับ bgm.wav (เพลงและเสียงประกอบ)
+    ใช้ BS-RoFormer ถ้าตั้ง SEPARATOR=roformer (เสียงพูดสะอาดกว่า Demucs มาก ลายเสียงและการถอดเสียงแม่นขึ้นตาม)
+    แยกไม่สำเร็จด้วยเหตุใดก็ตาม ใช้ Demucs แทน งานไม่ล้ม"""
+    from ..config import settings
+
+    if settings.separator == "roformer":
+        try:
+            return _separate_roformer(audio_wav, work_dir, settings.separator_model)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("roformer separation failed (%s), using demucs", exc)
+    return _separate_demucs(audio_wav, work_dir, model, device)
+
+
+_separator = None
+
+
+def _separate_roformer(audio_wav: Path, work_dir: Path, model: str) -> tuple[Path, Path]:
+    global _separator
+    import os
+
+    from audio_separator.separator import Separator
+
+    from ..config import settings
+
+    out_dir = work_dir / "_roformer"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    key = (model, settings.separator_overlap)
+    if _separator is None or getattr(_separator, "dub_key", None) != key:
+        cache = os.path.join(os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache")), "audio-separator")
+        # use_autocast: คำนวณแบบ fp16 บนการ์ดจอ เร็วขึ้นราวเท่าตัว
+        sep = Separator(model_file_dir=cache, output_dir=str(out_dir), output_format="WAV", sample_rate=44100,
+                        use_autocast=True,
+                        mdxc_params={"segment_size": 256, "override_model_segment_size": False, "batch_size": 1,
+                                     "overlap": settings.separator_overlap, "pitch_shift": 0})
+        sep.load_model(model_filename=model)
+        sep.dub_key = key
+        _separator = sep
+    _separator.output_dir = str(out_dir)
+    if getattr(_separator, "model_instance", None) is not None:
+        _separator.model_instance.output_dir = str(out_dir)
+    files = _separator.separate(str(audio_wav), custom_output_names={"Vocals": "vocals", "Instrumental": "bgm"})
+    found = {Path(f).stem.lower(): out_dir / Path(f).name for f in files}
+    if "vocals" not in found or "bgm" not in found:
+        raise RuntimeError(f"ไม่พบไฟล์ที่แยกได้: {files}")
+    vocals, bgm = work_dir / "vocals.wav", work_dir / "bgm.wav"
+    shutil.move(str(found["vocals"]), vocals)
+    shutil.move(str(found["bgm"]), bgm)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    return vocals, bgm
+
+
+def unload() -> None:
+    global _separator
+    _separator = None
+
+
+def _separate_demucs(audio_wav: Path, work_dir: Path, model: str, device: str) -> tuple[Path, Path]:
     out_root = work_dir / "_demucs"
     run([sys.executable, "-m", "demucs", "--two-stems=vocals", "-n", model,
          "-d", device, "-o", out_root, audio_wav])

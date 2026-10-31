@@ -112,6 +112,17 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
     restructure(() => api.splitLine(job.id, u.id, at), "แยกประโยคแล้ว เปลี่ยนตัวละครของท่อนหลังได้เลย");
   };
 
+  /** ตัดประโยคที่เวลา sec (เครื่องมือตัดบนเส้นเวลา) แต่ละท่อนต้องยาวอย่างน้อย 0.2 วินาที */
+  const splitAt = (u: Utterance, sec: number) => {
+    const d = draftOf(u);
+    if (sec <= d.start + 0.2 || sec >= d.end - 0.2) {
+      setMessage({ kind: "error", text: "ตัดใกล้หัวหรือท้ายประโยคเกินไป แต่ละท่อนต้องยาวอย่างน้อย 0.2 วินาที" });
+      return;
+    }
+    restructure(() => api.splitLine(job.id, u.id, { at: Math.round(sec * 100) / 100 }),
+      "ตัดประโยคแล้ว ลากท่อนไปเลเยอร์ตัวละครอื่นได้เลย");
+  };
+
   const merge = (u: Utterance) => restructure(() => api.mergeLine(job.id, u.id), "รวมกับประโยคถัดไปแล้ว");
 
   const changeSpeaker = async (u: Utterance, value: string) => {
@@ -143,7 +154,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
-    saveLines, split, merge, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
+    saveLines, split, splitAt, merge, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
   };
 }
 

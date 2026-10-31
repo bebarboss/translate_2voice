@@ -2,6 +2,8 @@
 # ติดตั้ง PyTorch ที่ตรงกับ CUDA ของเครื่องก่อน: https://pytorch.org/get-started/locally/
 -r requirements.txt
 demucs>=4.0
+# แยกเสียงพูดด้วย BS-RoFormer (SEPARATOR=roformer)
+audio-separator>=0.48
 pyannote.audio>=3.1
 faster-whisper>=1.0
 # พากย์ไทย

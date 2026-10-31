@@ -169,98 +169,96 @@ def clearly_different(a: Optional[Voice], b: Optional[Voice]) -> bool:
     return sim is not None and sim < 0.0
 
 
-def _coherence(run: list, voices: dict[int, Voice], centroid: Optional[Voice] = None) -> float:
-    """ลายเสียงของแต่ละช่วงคล้ายค่ากลางของกลุ่มแค่ไหน (มัธยฐาน) กลุ่มที่เป็นคนเดียวจริงมักได้ 0.6 ขึ้นไป"""
-    c = centroid or of_run(run, voices)
-    sims = [s for s in (similarity(voices[x.id], c) for x in run) if s is not None]
-    return float(np.median(sims)) if sims else float("nan")
+def _eigen_count(affinity: np.ndarray, max_speakers: int) -> tuple[int, np.ndarray]:
+    """ประมาณจำนวนผู้พูดจากช่องว่างของค่าลักษณะเฉพาะ (eigengap) ของกราฟความคล้ายที่ตัดเหลือเพื่อนบ้านใกล้สุด p ตัว
+    ลองหลายค่า p แล้วเลือกค่าที่ช่องว่างเด่นที่สุดเทียบกับ p (แนวทาง NME-SC) คืน (จำนวน, เวกเตอร์ลักษณะเฉพาะ)"""
+    n = len(affinity)
+    best = None
+    for p in range(2, max(3, min(n - 1, n // 3 + 2)) + 1):
+        pruned = np.zeros_like(affinity)
+        for i in range(n):
+            top = np.argsort(affinity[i])[-p:]
+            pruned[i, top] = affinity[i, top]
+        pruned = (pruned + pruned.T) / 2
+        d = pruned.sum(1)
+        inv = 1 / np.sqrt(np.maximum(d, 1e-9))
+        lap = np.eye(n) - pruned * np.outer(inv, inv)
+        values, vectors = np.linalg.eigh(lap)
+        gaps = np.diff(values[: max_speakers + 1])
+        k = int(np.argmax(gaps)) + 1
+        ratio = p / (gaps.max() + 1e-9)
+        if best is None or ratio < best[0]:
+            best = (ratio, k, vectors)
+    return best[1], best[2]
 
 
-def _bisect(run: list, voices: dict[int, Voice]) -> Optional[tuple[list, list]]:
-    """แบ่งช่วงพูดของ "ผู้พูดหนึ่งคน" ที่ลายเสียงไม่เข้ากันออกเป็นสองคน คืน None ถ้าไม่มีหลักฐานพอ
+def _spectral(vectors: np.ndarray, k: int, seed: int = 0) -> np.ndarray:
+    """จัดกลุ่มด้วย k-means บนเวกเตอร์ลักษณะเฉพาะ k ตัวแรก (ลองหลายจุดเริ่มแล้วเลือกผลที่แน่นที่สุด)"""
+    from scipy.cluster.vq import kmeans2
 
-    จัดกลุ่มแบบ average linkage ตามลายเสียง ยอมแยกเมื่อสองกลุ่มใหญ่พอ ลายเสียงสองกลุ่มต่างกันชัด
-    และแต่ละกลุ่มเข้ากันดีขึ้นกว่าตอนรวมกันชัดเจน ช่วงสั้นที่วัดลายเสียงไม่ได้ไปอยู่กับกลุ่มที่ระดับเสียงใกล้กว่า
-    (วัดไม่ได้ทั้งคู่ ไปกับช่วงที่วัดได้ซึ่งอยู่ใกล้ที่สุดตามเวลา)"""
-    from scipy.cluster.hierarchy import fcluster, linkage
+    x = vectors[:, :k]
+    x = x / np.maximum(np.linalg.norm(x, axis=1, keepdims=True), 1e-9)
+    best = None
+    for s in range(8):
+        cent, labels = kmeans2(x, k, minit="++", seed=seed + s)
+        inertia = float(((x - cent[labels]) ** 2).sum())
+        if len(set(labels)) == k and (best is None or inertia < best[0]):
+            best = (inertia, labels)
+    return best[1] if best else np.zeros(len(x), dtype=int)
 
-    known = [x for x in run if voices[x.id].emb is not None]
-    if len(known) < 6 or sum(x.duration for x in known) < 8.0:
+
+def cluster_lines(utts: list, voices: dict[int, Voice], max_speakers: int = 20) -> Optional[dict[int, str]]:
+    """จัดกลุ่มผู้พูดใหม่ทีละประโยคจากลายเสียง โดยไม่ต้องรู้จำนวนคน คืน {id ประโยค: ชื่อกลุ่ม} หรือ None ถ้าข้อมูลไม่พอ
+
+    ระบบแยกผู้พูดทำงานบนช่วงพูดยาว ๆ ที่มักมีหลายคนปน และมักรวมคนที่เสียงคล้ายกัน (นักพากย์การ์ตูน ตัวอย่างหนังที่มีเพลงดัง)
+    ที่นี่จัดกลุ่มประโยคที่ยาวพอวัดลายเสียงได้ด้วย spectral clustering ซึ่งหาจำนวนคนเองจาก eigengap
+    ตั้งใจให้เอียงไปทางแยกเกิน (ไม่น้อยกว่าจำนวนที่ระบบแยกผู้พูดหาได้) เพราะรวมตัวละครในหน้าตรวจบทกดครั้งเดียว
+    แต่ถ้ารวมคนผิดต้องไล่เปลี่ยนทีละประโยค แล้วรวมเฉพาะกลุ่มที่ลายเสียงเหมือนกันมากจริง ๆ
+    ประโยคสั้นที่วัดไม่ได้ไปอยู่กลุ่มเดียวกับประโยคที่วัดได้ซึ่งอยู่ใกล้ที่สุดตามเวลาและเดิมเป็นผู้พูดคนเดียวกัน"""
+    known = [u for u in utts if u.id in voices and voices[u.id].emb is not None and u.duration >= 1.0]
+    if len(known) < 4:
         return None
-    whole = _coherence(known, voices)
-    if not whole < settings.diar_split_coherence:
-        return None
-    emb = np.stack([voices[x.id].emb for x in known])
-    labels = fcluster(linkage(emb, method="average", metric="cosine"), 2, criterion="maxclust")
-    parts = [[x for x, lab in zip(known, labels) if lab == k] for k in (1, 2)]
-    if any(len(p) < 3 or sum(x.duration for x in p) < 3.0 for p in parts):
-        return None
-    cents = [of_run(p, voices) for p in parts]
-    if (similarity(*cents) or 1.0) >= settings.diar_merge_sim - 0.25:
-        return None
-    if min(_coherence(p, voices, c) for p, c in zip(parts, cents)) < whole + 0.1:
-        return None
-    side = {x.id: k for k, p in enumerate(parts) for x in p}
-    for x in run:
-        if x.id in side:
-            continue
-        p = voices[x.id].pitch
-        if np.isfinite(p) and all(np.isfinite(c.pitch) for c in cents):
-            side[x.id] = int(abs(p - cents[1].pitch) < abs(p - cents[0].pitch))
-        else:
-            near = min(known, key=lambda k: abs((k.start + k.end) - (x.start + x.end)))
-            side[x.id] = side[near.id]
-    return [x for x in run if side[x.id] == 0], [x for x in run if side[x.id] == 1]
+    emb = np.stack([voices[u.id].emb for u in known])
+    affinity = np.clip(emb @ emb.T, 0.0, None)
+    np.fill_diagonal(affinity, 0.0)
+    k, vectors = _eigen_count(affinity, min(max_speakers, len(known) - 1))
+    k = min(max(k, len({u.speaker for u in utts})), len(known) - 1, max_speakers)
+    labels = _spectral(vectors, k) if k > 1 else np.zeros(len(known), dtype=int)
+    groups = [[u for u, lab in zip(known, labels) if lab == c] for c in sorted(set(labels))]
 
-
-def refine_turns(turns: list, audio: np.ndarray, sr: int) -> list:
-    """แก้ผลแยกผู้พูดตอนที่ไม่รู้จำนวนคน ด้วยลายเสียงของแต่ละช่วงพูด คืนรายการช่วงพูดชุดใหม่ (ชื่อผู้พูดเรียงใหม่)
-
-    1. แยกผู้พูดที่ลายเสียงในกลุ่มไม่เข้ากัน (หลายคนถูกรวมเป็นคนเดียว พบบ่อยในตัวอย่างหนังที่มีเพลงดัง) ทำซ้ำจนแยกไม่ได้
-    2. รวมผู้พูดที่ลายเสียงเหมือนกันมากและระดับเสียงใกล้กัน (คนเดียวถูกแยกเป็นสองคน)
-    """
-    from types import SimpleNamespace
-
-    from .common import Turn, rename_speakers
-
-    items = [SimpleNamespace(id=i, start=t.start, end=t.end, duration=t.end - t.start, speaker=t.speaker)
-             for i, t in enumerate(turns)]
-    voices = profile(items, audio, sr)
-    groups = {s: [x for x in items if x.speaker == s] for s in dict.fromkeys(x.speaker for x in items)}
-
-    queue, done, n = list(groups.values()), [], 0
-    while queue:
-        run = queue.pop()
-        parts = _bisect(run, voices)
-        if parts is None:
-            done.append(run)
-        else:
-            queue.extend(parts)
-            n += 1
-
-    merged = 0
-    while len(done) > 1:
-        cents = [of_run(r, voices) for r in done]
+    # รวมกลุ่มที่ลายเสียงเหมือนกันมากและระดับเสียงใกล้กัน และกลุ่มที่มีประโยคเดียว (มักเป็นเสียงรบกวน) เข้ากลุ่มที่ใกล้สุด
+    while len(groups) > 1:
+        cents = [of_run(g, voices) for g in groups]
         best = None
-        for i in range(len(done)):
-            for j in range(i + 1, len(done)):
-                a, b = cents[i], cents[j]
-                s = similarity(a, b)
-                if s is None or s < settings.diar_merge_sim:
+        for i in range(len(groups)):
+            for j in range(len(groups)):
+                if i == j:
                     continue
-                if np.isfinite(a.pitch) and np.isfinite(b.pitch) and abs(a.pitch - b.pitch) > settings.voice_max_pitch_diff:
+                s = similarity(cents[i], cents[j])
+                if s is None:
                     continue
-                if best is None or s > best[0]:
-                    best = (s, i, j)
+                close_pitch = not (np.isfinite(cents[i].pitch) and np.isfinite(cents[j].pitch)
+                                   and abs(cents[i].pitch - cents[j].pitch) > settings.voice_max_pitch_diff)
+                lonely = len(groups[i]) == 1 and s >= settings.voice_min_sim
+                if (i < j and s >= settings.diar_merge_sim and close_pitch) or lonely:
+                    if best is None or s > best[0]:
+                        best = (s, i, j)
         if best is None:
             break
         _, i, j = best
-        done[i] = done[i] + done.pop(j)
-        merged += 1
+        groups[j] = groups[j] + groups[i]
+        groups.pop(i)
 
-    out = [Turn(x.start, x.end, f"cluster_{k}") for k, run in enumerate(done) for x in run]
-    log.info("refine speakers: %d -> %d (split %d, merged %d)", len(groups), len(done), n, merged)
-    return rename_speakers(sorted(out, key=lambda t: t.start))
+    side = {u.id: c for c, g in enumerate(groups) for u in g}
+    for u in utts:
+        if u.id in side:
+            continue
+        mid = u.start + u.end
+        pool = [x for x in known if x.speaker == u.speaker] or known
+        side[u.id] = side[min(pool, key=lambda x: abs(x.start + x.end - mid)).id]
+    log.info("cluster lines: %d speakers -> %d (eigengap %d) from %d measured lines",
+             len({u.speaker for u in utts}), len(groups), k, len(known))
+    return {i: f"cluster_{c}" for i, c in side.items()}
 
 
 def split_speakers(utts: list, voices: dict[int, Voice], taken: Optional[set] = None) -> dict[str, str]:

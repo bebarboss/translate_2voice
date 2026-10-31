@@ -2,7 +2,7 @@
 
 deploy: modal deploy modal_app.py   (ขั้นตอนเต็มอยู่ใน README หัวข้อ "ส่งขั้นที่ใช้การ์ดจอไปรันบน Modal")
 
-- analyze_audio    : แยกเสียงพูด/เพลง (Demucs) → แยกผู้พูด (pyannote) → ถอดเสียง (faster-whisper)
+- analyze_audio    : แยกเสียงพูด/เพลง (BS-RoFormer หรือ Demucs) → แยกผู้พูด (pyannote) → ถอดเสียง (faster-whisper)
 - synthesize_lines : พากย์ทีละช่วง (F5-TTS ไทย/อังกฤษ) โดยตัดเสียงตัวอย่างจาก vocals ที่ส่งมา
 ทั้งสองตัวเรียก app/pipeline/gpu.py ชุดเดียวกับโหมด local รับส่งข้อมูลเป็น bytes (FLAC) และ JSON
 ไฟล์ระหว่างทางอยู่ในโฟลเดอร์ชั่วคราวของ container เท่านั้น Volume "dubbing-models" เก็บแคชโมเดลอย่างเดียว
@@ -21,7 +21,7 @@ TORCH_INDEX = "https://download.pytorch.org/whl/cu126"
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "libsndfile1", "git", "build-essential")
+    .apt_install("ffmpeg", "libsndfile1", "libsamplerate0", "git", "build-essential")
     # PyTorch รุ่นเดียวกับ Dockerfile (CUDA 12.6)
     .pip_install("torch==2.14.1", "torchaudio==2.11.0", index_url=TORCH_INDEX)
     # แพ็กเกจของ requirements-ml.txt ตามรุ่นที่ล็อกไว้ใน constraints-docker.txt (pip freeze ของชุดที่ใช้ได้จริง)
@@ -31,6 +31,10 @@ image = (
         "pip install --no-deps -r /tmp/constraints.txt",
         # torchcodec จาก PyPI สร้างกับ CUDA 13 ต้องใช้รุ่น cu126 ให้ตรงกับ PyTorch
         f"pip install --no-deps --force-reinstall torchcodec==0.17.0 --index-url {TORCH_INDEX}",
+        # BS-RoFormer แยกเสียงพูด (audio.separate_vocals) ล็อกแพ็กเกจที่มีอยู่แล้วไว้ ให้ติดตั้งเฉพาะที่ขาด
+        "pip install audio-separator==0.48.0 -c /tmp/constraints.txt",
+        # audio-separator ดึง torchvision จาก PyPI (CUDA คนละรุ่นกับ torch) ทำให้ pyannote พัง ต้องใช้รุ่น cu126 ที่คู่กับ torch 2.14.1
+        f"pip install --no-deps --force-reinstall torchvision==0.29.1 --index-url {TORCH_INDEX}",
     )
     .env({
         "PYTHONIOENCODING": "utf-8",

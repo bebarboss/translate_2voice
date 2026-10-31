@@ -37,10 +37,10 @@ REF_SR = 24000  # เสียงตัวอย่างของ F5-TTS (tts.S
 # ค่าตั้งค่าที่ส่งไปใช้บน Modal ทุกครั้งที่เรียก ไม่ต้อง deploy ใหม่เมื่อแก้ .env
 # ไม่ส่งค่าเฉพาะเครื่อง (DEVICE, LOW_VRAM, F5_FP32, WHISPER_COMPUTE_TYPE, F5_CACHE_DIR) และ HF_TOKEN (อยู่ใน Secret)
 REMOTE_FIELDS = (
-    "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
+    "separator", "separator_model", "separator_overlap", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
-    "diar_refine", "diar_split_coherence", "diar_merge_sim", "voice_drift", "voice_retries",
+    "diar_refine", "diar_merge_sim", "voice_drift", "voice_retries",
 )
 
 
@@ -103,17 +103,12 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     stage("separate_vocals", 0.1)
     release("tts")  # เผื่อโมเดลพากย์จากงานก่อนยังค้างอยู่
     vocals, bgm = separate(mixed, work, settings.demucs_model, settings.device)
+    release("audio")
     wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
 
     stage("diarize", 0.25)
     turns = diarize(wav16k, num_speakers)
     release("diarize")
-    # ไม่ได้ระบุจำนวนคน → ตรวจผลด้วยลายเสียง แยกคนที่ถูกรวมกัน และรวมคนเดียวที่ถูกแยก
-    if not num_speakers and settings.diar_refine and voice_ok:
-        from . import voices
-        wav, wsr = sf.read(wav16k, dtype="float32")
-        turns = voices.refine_turns(turns, wav, wsr)
-        release("voices")
     speakers = sorted({t.speaker for t in turns})
 
     stage("transcribe", 0.4)
@@ -133,13 +128,23 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
         utterances = voices.split_lines(utterances, words, wav, wsr)
         if len(utterances) != before:
             log.info("split %d lines with more than one voice", len(utterances) - before)
-        # ระบบแยกผู้พูดรวมเด็กกับผู้ใหญ่ (หรือชายกับหญิง) เป็นคนเดียว → แยกตามระดับเสียงและลายเสียง
-        renamed = voices.split_speakers(utterances, voices.profile(utterances, wav, wsr),
-                                         taken={t.speaker for t in turns})
+        profiles = voices.profile(utterances, wav, wsr)
         release("voices")
-        if renamed:
-            log.info("split speakers by voice: %s", renamed)
-            speakers = sorted({u.speaker for u in utterances})
+        # ไม่ได้ระบุจำนวนคน → จัดกลุ่มผู้พูดใหม่ทีละประโยคจากลายเสียง (ระบบแยกผู้พูดมักรวมคนเสียงคล้ายกัน)
+        labels = voices.cluster_lines(utterances, profiles) if not num_speakers and settings.diar_refine else None
+        if labels:
+            names: dict[str, str] = {}
+            for u in sorted(utterances, key=lambda u: u.start):
+                u.speaker = names.setdefault(labels[u.id], f"speaker_{len(names) + 1:02d}")
+            from .diarize import relabel_turns
+            turns = relabel_turns(turns, utterances)
+            speakers = sorted(names.values())
+        else:
+            # ระบบแยกผู้พูดรวมเด็กกับผู้ใหญ่ (หรือชายกับหญิง) เป็นคนเดียว → แยกตามระดับเสียงและลายเสียง
+            renamed = voices.split_speakers(utterances, profiles, taken={t.speaker for t in turns})
+            if renamed:
+                log.info("split speakers by voice: %s", renamed)
+                speakers = sorted({u.speaker for u in utterances})
     return {"vocals": vocals, "bgm": bgm, "turns": turns, "words": words, "lang": lang,
             "utterances": utterances, "speakers": speakers}
 

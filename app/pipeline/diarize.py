@@ -75,6 +75,30 @@ def diarize(wav16k: Path, num_speakers: Optional[int] = None) -> list[Turn]:
     return rename_speakers(turns)
 
 
+def relabel_turns(turns: list[Turn], utts: list) -> list[Turn]:
+    """ตั้งชื่อผู้พูดของช่วงพูดตามประโยคที่จัดกลุ่มใหม่ (voices.cluster_lines)
+    ช่วงพูดที่คร่อมหลายประโยคต่างคนกันถูกตัดตรงรอยต่อประโยค ช่วงที่ไม่มีประโยคทับเลยใช้ประโยคที่ใกล้ที่สุด"""
+    if not utts:
+        return turns
+    out = []
+    for t in turns:
+        inside = sorted((u for u in utts if min(t.end, u.end) - max(t.start, u.start) > 0), key=lambda u: u.start)
+        if not inside:
+            near = min(utts, key=lambda u: abs((u.start + u.end) - (t.start + t.end)))
+            out.append(Turn(t.start, t.end, near.speaker))
+            continue
+        cur = t.start
+        for k, u in enumerate(inside):
+            end = t.end if k == len(inside) - 1 else max(cur, min(t.end, inside[k + 1].start))
+            if end > cur:
+                if out and out[-1].speaker == u.speaker and abs(out[-1].end - cur) < 1e-6:
+                    out[-1] = Turn(out[-1].start, end, u.speaker)
+                else:
+                    out.append(Turn(round(cur, 3), round(end, 3), u.speaker))
+            cur = end
+    return out
+
+
 def save_turns(turns: list[Turn], path: Path) -> None:
     path.write_text(json.dumps([t.__dict__ for t in turns]), encoding="utf-8")
 
