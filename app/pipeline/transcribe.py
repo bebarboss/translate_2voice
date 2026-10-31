@@ -1,4 +1,5 @@
 """ถอดเสียงพร้อมตรวจภาษาอัตโนมัติ (faster-whisper) แล้วจับคู่แต่ละคำกับผู้พูด"""
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,13 @@ def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word]
         elif seg.text.strip():
             words.append(Word(seg.start, seg.end, seg.text, i))
     return words, info.language
+
+
+def clip_text(audio16k, language: Optional[str] = None) -> str:
+    """ข้อความทั้งหมดที่พูดในคลิปสั้น ๆ (ไม่ตัดเสียงอุทาน) ใช้เป็นข้อความกำกับเสียงตัวอย่าง"""
+    segments, _ = _load().transcribe(audio16k, language=language, vad_filter=False, beam_size=5,
+                                     condition_on_previous_text=False)
+    return " ".join(" ".join(s.text.strip() for s in segments).split())
 
 
 # เสียงอุทานที่ไม่ต้องแปล (เทียบหลังยุบตัวอักษรซ้ำ เช่น aaahhh → ah)
@@ -119,8 +127,11 @@ _tokenizers: dict = {}
 
 
 def _tokenize(text: str, lang: str) -> Optional[list[str]]:
-    """ตัดคำภาษาที่ไม่เว้นวรรค (ญี่ปุ่น: Janome, จีน: jieba) ไม่มีไลบรารีก็คืน None"""
+    """ตัดคำภาษาที่ไม่เว้นวรรค (ญี่ปุ่น: Janome, จีน: jieba, ไทย: PyThaiNLP) ไม่มีไลบรารีก็คืน None"""
     try:
+        if lang == "th":
+            from pythainlp.tokenize import word_tokenize
+            return word_tokenize(text, engine="newmm", keep_whitespace=True)
         if lang == "ja":
             if "ja" not in _tokenizers:
                 from janome.tokenizer import Tokenizer
@@ -225,7 +236,35 @@ def smooth_speakers(words: list[Word], labels: list[str], lang: str = "", min_se
         else:
             break
     labels = _snap_changes(words, labels)
-    return _snap_to_words(words, labels, lang) if lang in ("ja", "zh", "yue") else labels
+    if lang in ("ja", "zh", "yue", "th"):
+        labels = _snap_to_words(words, labels, lang)
+    return _keep_thai_clusters(words, labels) if lang == "th" else labels
+
+
+THAI_LEADING = tuple("เแโใไ")  # สระหน้า ต้องอยู่กับพยัญชนะตัวถัดไป
+THAI_FOLLOWING = set("ะาำๅๆ")  # สระหลังและเครื่องหมายที่ขึ้นต้นพยางค์เองไม่ได้
+
+
+def _cluster_start(words: list[Word], i: int) -> bool:
+    """ตัดก่อนคำที่ i ได้โดยไม่ทำให้พยางค์ไทยแตก (เช่น "ย|ัง", "ข|ึ้น", "แ|ห่")"""
+    head, prev = words[i].text.lstrip(), words[i - 1].text.rstrip()
+    if not head or not prev:
+        return True
+    return not (unicodedata.category(head[0]) == "Mn" or head[0] in THAI_FOLLOWING or prev.endswith(THAI_LEADING))
+
+
+def _keep_thai_clusters(words: list[Word], labels: list[str]) -> list[str]:
+    """Whisper ให้เวลาภาษาไทยทีละตัวอักษร ถ้าจุดเปลี่ยนผู้พูดยังตกกลางพยางค์ ยกทั้งพยางค์ให้คนถัดไป
+    ตัวตัดคำแก้ได้เกือบหมดแล้ว อันนี้กันกรณีที่ตัดคำไม่ออก (ชื่อเฉพาะ คำที่ถอดเสียงผิด)"""
+    labels = list(labels)
+    for i in range(1, len(words)):
+        if labels[i] == labels[i - 1] or _cluster_start(words, i):
+            continue
+        k = i
+        while k > 1 and not _cluster_start(words, k) and i - k < 4:
+            k -= 1
+        labels[k:i] = [labels[i]] * (i - k)
+    return labels
 
 
 def assign_speakers(words: list[Word], turns: list[Turn], max_len: Optional[float] = None,
@@ -254,7 +293,10 @@ def assign_speakers(words: list[Word], turns: list[Turn], max_len: Optional[floa
             boundary = w.segment != group[-1].segment or group[-1].text.strip().endswith(SENTENCE_END)
             long_enough = group[-1].end - group[0].start >= soft_len
             too_long = w.end - group[0].start > max_len
-            if spk != speaker or w.start - group[-1].end > 1.0 or too_long or (boundary and long_enough):
+            split = spk != speaker or w.start - group[-1].end > 1.0 or too_long or (boundary and long_enough)
+            if split and lang == "th" and spk == speaker and not _cluster_start([group[-1], w], 1):
+                split = False  # ตัดเพราะยาวหรือจบท่อน Whisper แต่ตกกลางพยางค์ไทย → ต่อไปอีกตัว
+            if split:
                 # หางสั้น ๆ หลังจุดจบประโยค (เช่น "I'm a witch. If") เป็นหัวประโยคถัดไปของคนเดิม → ยกไปด้วย
                 carry: list[Word] = []
                 if spk == speaker and not group[-1].text.strip().endswith(SENTENCE_END):

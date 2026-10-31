@@ -96,6 +96,7 @@ class Settings:
     min_pause_sec: float = _float("MIN_PAUSE_SEC", 0.3)  # ช่วงเงียบสั้นกว่านี้ไม่นับเป็นจังหวะหยุด
     # ความดังของเสียงร้อง กรี๊ด อุทานจากต้นฉบับในช่วงที่ไม่มีบท (0 = ตัดทิ้ง)
     nonspeech_gain: float = _float("NONSPEECH_GAIN", 1.0)
+    breath_keep: bool = _bool("BREATH_KEEP", True)  # ใส่เสียงหายใจของนักแสดงในช่วงหยุดกลางประโยค
     # กันเสียงพากย์ผิดคน (voices.py): ยืมเสียงตัวอย่างและรวมประโยคเฉพาะท่อนที่เสียงเข้ากัน
     voice_match: bool = _bool("VOICE_MATCH", True)
     voice_min_sim: float = _float("VOICE_MIN_SIM", 0.2)  # ลายเสียงคล้ายกันอย่างน้อยเท่านี้ (−1 ถึง 1)
@@ -120,7 +121,9 @@ class Settings:
     # เสียงก้องของห้องให้เสียงพากย์ (TTS แห้งเกินไป ฟังลอยไม่เข้ากับฉาก) 0 = ไม่ใส่
     room_reverb: float = _float("ROOM_REVERB", 0.2)
     room_rt60: float = _float("ROOM_RT60", 0.4)  # วินาทีที่เสียงก้องจางหาย ห้องเล็ก 0.3 ห้องโถง 1.0+
-    max_slowdown: float = _float("MAX_SLOWDOWN", 1.2)  # ยืดเสียงพากย์ให้เต็มฉากได้ช้าสุดกี่เท่าของความเร็วปกติ
+    # ยืดเสียงพากย์ให้เต็มฉากได้ช้าสุดกี่เท่าของความเร็วปกติ ยืดมากแล้วเสียงยานหรือพูดคำซ้ำ บทสั้นปล่อยเงียบท้ายดีกว่า
+    max_slowdown: float = _float("MAX_SLOWDOWN", 1.05)
+    thai_syllables_per_sec: float = _float("THAI_SYLLABLES_PER_SEC", 5.5)  # ความเร็วพูดปกติของเสียงพากย์ไทย
     # ปรับระดับและการขึ้นลงของเสียงพากย์ตามต้นฉบับ (prosody.py) ปิดไว้ก่อน: PSOLA ทำให้เสียงแตก
     # และคลิปที่มีเพลงปนวัดระดับเสียงต้นฉบับผิด (ทดสอบแล้ว PESQ ตกจาก 3.2 เหลือ 2.6)
     prosody_match: bool = _bool("PROSODY_MATCH")

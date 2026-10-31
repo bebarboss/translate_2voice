@@ -8,9 +8,11 @@ import {
 } from "@/lib/format";
 import StatusBadge from "./StatusBadge";
 import VoiceCast from "./VoiceCast";
-import { ArrowLeft, MicIcon } from "./Icons";
+import { ArrowLeft, MergeIcon, MicIcon, ScissorsIcon, XIcon } from "./Icons";
 
 type Draft = { target: string; speaker: string };
+
+const NEW_SPEAKER = "__new__";
 
 export default function ReviewView({ job, onChanged, onCancelEdit }: {
   job: Job;
@@ -24,17 +26,25 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
   const [maxSpeedup, setMaxSpeedup] = useState(1.35);
-  const [busy, setBusy] = useState<"" | "save" | "dub">("");
+  const [busy, setBusy] = useState<"" | "save" | "dub" | "edit">("");
+  // ตัวละครทั้งหมด (เพิ่มตัวละครแล้วใช้ได้ทันที ไม่ต้องรอโหลดงานใหม่)
+  const [speakers, setSpeakers] = useState<string[]>(job.speakers);
+  const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const cursors = useRef<Record<number, number>>({}); // ตำแหน่งเคอร์เซอร์ล่าสุดในบทของแต่ละประโยค ใช้เป็นจุดแยก
+
+  useEffect(() => { setSpeakers(job.speakers); }, [job.speakers]);
+
+  const applyLines = (u: Utterance[]) => {
+    setLines(u);
+    setDrafts(Object.fromEntries(u.map((x) => [x.id, { target: x.target, speaker: x.speaker }])));
+  };
 
   useEffect(() => {
-    api.getTranscript(job.id).then((u) => {
-      setLines(u);
-      setDrafts(Object.fromEntries(u.map((x) => [x.id, { target: x.target, speaker: x.speaker }])));
-    }).catch((e) => setMessage({ kind: "error", text: e.message }));
+    api.getTranscript(job.id).then(applyLines).catch((e) => setMessage({ kind: "error", text: e.message }));
     api.getSettings().then((s) => setMaxSpeedup(s.max_speedup)).catch(() => {});
   }, [job.id]);
 
@@ -53,8 +63,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     return d && (d.target !== u.target || d.speaker !== u.speaker);
   }), [lines, drafts]);
   // ตัวละครที่เปลี่ยนเสียงพากย์แต่ยังไม่บันทึก
-  const voiceDirty = useMemo(() => job.speakers.filter(
-    (s) => (voiceDraft[s] ?? null) !== (job.voice_map?.[s] ?? null)), [job.speakers, job.voice_map, voiceDraft]);
+  const voiceDirty = useMemo(() => speakers.filter(
+    (s) => (voiceDraft[s] ?? null) !== (job.voice_map?.[s] ?? null)), [speakers, job.voice_map, voiceDraft]);
   const pending = dirty.length + voiceDirty.length;
 
   useEffect(() => {
@@ -99,10 +109,58 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       if (d.speaker !== u.speaker) e.speaker = d.speaker;
       return e;
     });
-    const updated = await api.saveTranscript(job.id, edits);
-    setLines(updated);
-    setDrafts(Object.fromEntries(updated.map((x) => [x.id, { target: x.target, speaker: x.speaker }])));
+    applyLines(await api.saveTranscript(job.id, edits));
     return true;
+  };
+
+  // แยก/รวมประโยค และเพิ่มลบตัวละคร ทำบนเซิร์ฟเวอร์ บันทึกที่แก้ค้างไว้ก่อน แล้วโหลดบทใหม่
+  const restructure = async (op: () => Promise<unknown>, done: string) => {
+    setBusy("edit");
+    setMessage(null);
+    try {
+      await save();
+      await op();
+      applyLines(await api.getTranscript(job.id));
+      onChanged();
+      setMessage({ kind: "info", text: done });
+    } catch (e) {
+      setMessage({ kind: "error", text: (e as Error).message });
+    } finally { setBusy(""); }
+  };
+
+  const onSplit = (u: Utterance) => {
+    const draft = drafts[u.id]?.target ?? u.target;
+    // เซิร์ฟเวอร์ตัดช่องว่างหัวท้ายบท เลื่อนตำแหน่งเคอร์เซอร์ตาม
+    const pos = (cursors.current[u.id] ?? 0) - (draft.length - draft.trimStart().length);
+    const at: { at?: number; pos?: number } = {};
+    if (pos > 0 && pos < draft.trim().length) at.pos = pos;
+    else if (t > u.start + 0.2 && t < u.end - 0.2) at.at = t;
+    else {
+      setMessage({ kind: "error", text: "วางเคอร์เซอร์ในบทตรงที่จะแยก หรือเล่นวิดีโอไปหยุดตรงที่คนที่สองเริ่มพูด แล้วกดแยกอีกครั้ง" });
+      return;
+    }
+    restructure(() => api.splitLine(job.id, u.id, at), "แยกประโยคแล้ว เปลี่ยนตัวละครของท่อนหลังได้เลย");
+  };
+
+  const onMerge = (u: Utterance) => restructure(() => api.mergeLine(job.id, u.id), "รวมกับประโยคถัดไปแล้ว");
+
+  const onSpeakerChange = async (u: Utterance, value: string) => {
+    if (value !== NEW_SPEAKER) { setDraft(u.id, { speaker: value }); return; }
+    setBusy("edit");
+    try {
+      const j = await api.addSpeaker(job.id);
+      setSpeakers(j.speakers);
+      setDraft(u.id, { speaker: j.speakers[j.speakers.length - 1] });
+      onChanged();
+    } catch (e) {
+      setMessage({ kind: "error", text: (e as Error).message });
+    } finally { setBusy(""); }
+  };
+
+  const onRemoveSpeaker = (speaker: string, into: string) => {
+    setRemoving(null);
+    restructure(async () => setSpeakers((await api.removeSpeaker(job.id, speaker, into || undefined)).speakers),
+      into ? `ลบ${speakerLabel(speaker)} ย้ายประโยคไปให้${speakerLabel(into)}แล้ว` : `ลบ${speakerLabel(speaker)}แล้ว`);
   };
 
   const onSave = async () => {
@@ -154,7 +212,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>{job.filename}</span>
             <span className="dim">
-              {langName(job.detected_lang ?? job.source_lang)} → {TARGET_LABEL[job.target_lang]} · {job.speakers.length} ตัวละคร · {sorted.length} ประโยค · {fmtDuration(job.duration)}
+              {langName(job.detected_lang ?? job.source_lang)} → {TARGET_LABEL[job.target_lang]} · {speakers.length} ตัวละคร · {sorted.length} ประโยค · {fmtDuration(job.duration)}
             </span>
           </div>
           {onCancelEdit ? <span className="badge awaiting_review">แก้บทเพื่อพากย์ใหม่</span> : <StatusBadge job={job} />}
@@ -196,10 +254,12 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
               <span className="dim">คลิกบล็อกเพื่อกระโดดไปประโยคนั้น</span>
             </div>
             <div className="lanes">
-              {job.speakers.map((s) => {
-                const color = speakerColor(s, job.speakers);
+              {speakers.map((s) => {
+                const color = speakerColor(s, speakers);
+                const count = sorted.filter((u) => (drafts[u.id]?.speaker ?? u.speaker) === s).length;
                 return (
-                  <div className="lane" key={s}>
+                  <div key={s} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div className="lane">
                     <div className="who"><span className="swatch" style={{ background: color }} />{speakerLabel(s)}</div>
                     <div className="track">
                       {sorted.filter((u) => (drafts[u.id]?.speaker ?? u.speaker) === s).map((u) => (
@@ -216,13 +276,33 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                       <div className="playhead" style={{ left: playheadPct }} />
                     </div>
                     <a href={fileUrl.stem(job.id, s)} target="_blank" rel="noreferrer" className="dim" style={{ flex: "none", color: "var(--accent)" }}>ฟังเสียงแยก</a>
+                    <button type="button" className="icon-btn" aria-label={`ลบ${speakerLabel(s)}`} title="ลบตัวละครนี้"
+                      disabled={!!busy || speakers.length < 2}
+                      onClick={() => count ? setRemoving({ speaker: s, into: speakers.find((x) => x !== s) ?? "" })
+                        : onRemoveSpeaker(s, "")}>
+                      <XIcon />
+                    </button>
+                  </div>
+                  {removing?.speaker === s && (
+                    <div className="lane-remove">
+                      <span>ลบ{speakerLabel(s)} ย้าย {count} ประโยคไปให้</span>
+                      <label className="sr-only" htmlFor={`into-${s}`}>ตัวละครที่รับประโยคไป</label>
+                      <select id={`into-${s}`} className="spk-select" value={removing.into}
+                        onChange={(e) => setRemoving({ speaker: s, into: e.target.value })}>
+                        {speakers.filter((x) => x !== s).map((x) => <option key={x} value={x}>{speakerLabel(x)}</option>)}
+                      </select>
+                      <button type="button" className="btn small danger" onClick={() => onRemoveSpeaker(s, removing.into)}>ลบ</button>
+                      <button type="button" className="btn small" onClick={() => setRemoving(null)}>ยกเลิก</button>
+                    </div>
+                  )}
                   </div>
                 );
               })}
             </div>
+            <span className="dim">แยกเสียงผิด? คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวมเข้าตัวอื่น · สองคนถูกรวมเป็นตัวเดียว เลือก “+ ตัวละครใหม่” ในช่องตัวละครของประโยค · สองคนพูดในประโยคเดียว กด “แยกประโยค”</span>
           </div>
 
-          <VoiceCast job={job} value={voiceDraft}
+          <VoiceCast job={{ ...job, speakers }} value={voiceDraft}
             onChange={(s, id) => setVoiceDraft((d) => ({ ...d, [s]: id }))} />
         </section>
 
@@ -238,7 +318,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <div className="lines" ref={listRef}>
             {lines === null ? <div className="empty">กำลังโหลดบท...</div>
               : sorted.length === 0 ? <div className="empty">ไม่พบบทพูดในคลิปนี้</div>
-              : sorted.map((u) => {
+              : sorted.map((u, idx) => {
                 const d = drafts[u.id] ?? { target: u.target, speaker: u.speaker };
                 const isActiveLine = active?.id === u.id;
                 const changed = d.target !== u.target || d.speaker !== u.speaker;
@@ -249,11 +329,12 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                       <button type="button" className="time-btn" onClick={() => seek(u.start)} aria-label={`ไปที่ ${fmtTime(u.start)}`}>
                         {fmtTime(u.start)}
                       </button>
-                      <span className="swatch" style={{ background: speakerColor(d.speaker, job.speakers) }} />
+                      <span className="swatch" style={{ background: speakerColor(d.speaker, speakers) }} />
                       <label className="sr-only" htmlFor={`spk-${u.id}`}>ตัวละครของประโยคที่ {u.id}</label>
-                      <select id={`spk-${u.id}`} className="spk-select" value={d.speaker}
-                        onChange={(e) => setDraft(u.id, { speaker: e.target.value })}>
-                        {job.speakers.map((s) => <option key={s} value={s}>{speakerLabel(s)}</option>)}
+                      <select id={`spk-${u.id}`} className="spk-select" value={d.speaker} disabled={busy === "edit"}
+                        onChange={(e) => onSpeakerChange(u, e.target.value)}>
+                        {speakers.map((s) => <option key={s} value={s}>{speakerLabel(s)}</option>)}
+                        <option value={NEW_SPEAKER}>+ ตัวละครใหม่</option>
                       </select>
                       <span style={{ marginLeft: "auto" }} className="row">
                         {changed && <span className="badge awaiting_review">แก้แล้ว</span>}
@@ -264,7 +345,18 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                     <label className="sr-only" htmlFor={`tg-${u.id}`}>บทพากย์ประโยคที่ {u.id}</label>
                     <textarea id={`tg-${u.id}`} className="textarea" rows={2} value={d.target}
                       onChange={(e) => setDraft(u.id, { target: e.target.value })}
+                      onSelect={(e) => { cursors.current[u.id] = e.currentTarget.selectionStart; }}
                       onFocus={() => { if (videoRef.current?.paused) seek(u.start); }} />
+                    <div className="line-tools">
+                      <button type="button" className="icon-btn" onClick={() => onSplit(u)} disabled={!!busy}
+                        title="แยกตรงเคอร์เซอร์ในบท หรือตรงเวลาที่หยุดวิดีโอไว้">
+                        <ScissorsIcon />แยกประโยค
+                      </button>
+                      <button type="button" className="icon-btn" onClick={() => onMerge(u)}
+                        disabled={!!busy || idx === sorted.length - 1} title="รวมกับประโยคถัดไป">
+                        <MergeIcon />รวมกับถัดไป
+                      </button>
+                    </div>
                   </div>
                 );
               })}

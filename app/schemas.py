@@ -54,6 +54,11 @@ class UtteranceEdit(BaseModel):
     speaker: Optional[str] = None
 
 
+class UtteranceSplit(BaseModel):
+    at: Optional[float] = Field(None, description="เวลาในคลิปที่ท่อนหลังเริ่ม (วินาที)")
+    pos: Optional[int] = Field(None, ge=1, description="ตำแหน่งตัวอักษรในบทพากย์ที่ท่อนหลังเริ่ม")
+
+
 class SynthStats(BaseModel):
     redubbed: int = 0  # ประโยคที่พากย์ใหม่รอบล่าสุด
     reused: int = 0  # ประโยคที่ใช้เสียงเดิม

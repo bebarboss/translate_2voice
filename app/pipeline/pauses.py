@@ -1,10 +1,12 @@
 """เว้นจังหวะหยุดตามต้นฉบับ
 
-พากย์ทั้งประโยครวดเดียว F5-TTS จะพูดต่อกันไม่หยุด ทั้งที่นักแสดงเว้นจังหวะ (หยุดคิด กลั้นอารมณ์ เน้นคำ)
-จึงหาช่วงเงียบกลางประโยคในเสียงต้นฉบับ ตัดบทไทยตรงตำแหน่งเดียวกัน (ที่ขอบท่อนหรือขอบคำที่ใกล้ที่สุด)
+พากย์ทั้งประโยครวดเดียว F5-TTS จะพูดต่อกันไม่หยุด ทั้งที่นักแสดงเว้นจังหวะ (หยุดหายใจ หยุดคิด กลั้นอารมณ์ เน้นคำ)
+จึงหาช่วงเงียบกลางประโยคในเสียงต้นฉบับ ตัดบทไทยตรงตำแหน่งเดียวกัน (ที่ขอบท่อน จุดแบ่งวลี หรือขอบคำที่ใกล้ที่สุด)
 แล้วพากย์ทีละช่วง วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
 """
-from typing import NamedTuple
+import re
+import unicodedata
+from typing import NamedTuple, Optional
 
 import numpy as np
 
@@ -38,15 +40,64 @@ def find_pauses(seg: np.ndarray, sr: int, min_pause: float) -> list[tuple[float,
     return out
 
 
-def _phrase_bounds(text: str) -> list[int]:
-    """ตำแหน่งที่ตัดบทได้: หลังเว้นวรรคหรือเครื่องหมายวรรคตอน (ผู้แปลเว้นวรรคตรงจุดแบ่งวลีของภาษาไทยอยู่แล้ว)
-    ไม่ตัดที่ขอบคำทั่วไป เพราะจังหวะหยุดในภาษาต้นฉบับไม่ตรงกับคำไทยพอดี ตัดแล้วชื่อหรือวลีขาดกลาง"""
+def _weight(text: str) -> int:
+    """ความยาวที่ใช้เทียบสัดส่วน: ไม่นับสระบนล่าง วรรณยุกต์ และช่องว่าง (ใกล้จำนวนเสียงที่พูดจริงกว่านับตัวอักษร)"""
+    return sum(1 for ch in text if not ch.isspace() and unicodedata.category(ch) != "Mn")
+
+
+def _bounds(text: str) -> dict[int, float]:
+    """ตำแหน่งที่ตัดบทได้ → ค่าปรับ (ยิ่งมากยิ่งไม่อยากตัด)
+
+    หลังเว้นวรรคหรือเครื่องหมายวรรคตอนดีที่สุด (ผู้แปลเว้นวรรคตรงจุดแบ่งวลีของภาษาไทยอยู่แล้ว)
+    บทที่ไม่เว้นวรรค (เช่น บทที่ถอดจากเสียงไทยตรง ๆ) ตัดที่ขอบคำได้ แต่เสียเปรียบกว่า กันชื่อหรือวลีขาดกลาง
+    ไม่ตัดระหว่างตัวเลขกับคำที่ตามมา ("5,000 | ดอลลาร์")
+    """
     punct = " ,.!?…"
-    return [i for i in range(1, len(text)) if text[i - 1] in punct and text[i] not in punct]
+    out: dict[int, float] = {}
+    for i in range(1, len(text)):
+        if text[i - 1] in punct and text[i] not in punct:
+            out[i] = 0.0
+    if re.search(r"[ก-๛]", text):
+        try:
+            from pythainlp.tokenize import word_tokenize
+            pos = 0
+            for tok in word_tokenize(text, engine="newmm", keep_whitespace=True)[:-1]:
+                pos += len(tok)
+                if 0 < pos < len(text) and pos not in out and not text[pos].isspace():
+                    out[pos] = 0.15
+        except ImportError:
+            pass
+    return {b: c for b, c in out.items() if not re.search(r"\d[\d,.]*\s*$", text[:b])}
 
 
-def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chunk: float = 1.0) -> list[Chunk]:
-    """แบ่งประโยค (ท่อนที่ติดกันของคนเดียว) เป็นช่วงพูดตามจังหวะหยุดของต้นฉบับ"""
+def _spoken_fraction(u, t: float, words: Optional[list]) -> float:
+    """สัดส่วนของท่อน u ที่พูดไปแล้วก่อนเวลา t
+
+    มีเวลาของแต่ละคำจาก Whisper → นับจากคำที่พูดจบก่อน t (แม่นกว่าสัดส่วนเวลา เพราะไม่นับช่วงหยุดและพูดเร็วช้าไม่เท่ากัน)
+    ไม่มี → ใช้สัดส่วนเวลา
+    """
+    own = [w for w in words or [] if u.start - 0.05 <= w.start <= u.end + 0.05]
+    total = sum(_weight(w.text) for w in own)
+    if total:  # ใช้เวลาเริ่มคำ เวลาจบของคำก่อนหยุดมักลากยาวคร่อมช่วงหยุด
+        return sum(_weight(w.text) for w in own if w.start < t) / total
+    return (t - u.start) / max(u.duration, 1e-3)
+
+
+def _position(text: str, fraction: float) -> float:
+    """ตำแหน่งตัวอักษรใน text ที่ตรงกับสัดส่วน fraction ของเสียงที่พูด"""
+    want, seen = fraction * _weight(text), 0
+    for i, ch in enumerate(text):
+        if seen >= want:
+            return i
+        if not ch.isspace() and unicodedata.category(ch) != "Mn":
+            seen += 1
+    return len(text)
+
+
+def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chunk: float = 0.8,
+         words: Optional[list] = None) -> list[Chunk]:
+    """แบ่งประโยค (ท่อนที่ติดกันของคนเดียว) เป็นช่วงพูดตามจังหวะหยุดของต้นฉบับ
+    words: เวลาของแต่ละคำในเสียงต้นฉบับ (words.json) ใช้หาว่าหยุดหลังพูดไปแค่ไหนแล้ว"""
     first, last = group[0], group[-1]
     seg = orig[int(first.start * sr): int(last.end * sr)]
     pauses = [(first.start + a, first.start + b) for a, b in find_pauses(seg, sr, min_pause)]
@@ -54,6 +105,7 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
     pauses += [(a.end, b.start) for a, b in zip(group, group[1:]) if b.start - a.end >= min_pause]
 
     cuts: dict[tuple[int, int], tuple[float, float]] = {}  # (ท่อน, ตำแหน่งตัวอักษร) → ช่วงหยุด
+    miss: dict[tuple[int, int], float] = {}  # ระยะจากตำแหน่งที่ควรตัด หลายจุดหยุดได้ตำแหน่งเดียวกัน → เก็บจุดที่ใกล้สุด
     for ps, pe in sorted(pauses):
         mid = (ps + pe) / 2
         for k, u in enumerate(group):
@@ -62,13 +114,14 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
                 if k + 1 < len(group):  # หยุดระหว่างท่อน → ตัดที่ขอบท่อน
                     cuts.setdefault((k, len(text)), (ps, pe))
                 break
-            if u.start <= mid < u.end:  # หยุดกลางท่อน → ตัดที่จุดแบ่งวลีที่ใกล้สัดส่วนเวลาที่สุด
-                target = (mid - u.start) / max(u.duration, 1e-3) * len(text)
-                bounds = _phrase_bounds(text)
+            if u.start <= mid < u.end:  # หยุดกลางท่อน → ตัดที่จุดแบ่งวลีหรือขอบคำที่ใกล้ตำแหน่งที่พูดถึงที่สุด
+                target = _position(text, _spoken_fraction(u, ps, words))
+                bounds = _bounds(text)
                 if bounds:
-                    pos = min(bounds, key=lambda b: abs(b - target))
-                    if abs(pos - target) <= 0.3 * len(text):
-                        cuts.setdefault((k, pos), (ps, pe))
+                    pos = min(bounds, key=lambda b: abs(b - target) / max(len(text), 1) + bounds[b])
+                    gap = abs(pos - target)
+                    if gap <= 0.25 * len(text) and gap < miss.get((k, pos), float("inf")):
+                        cuts[(k, pos)], miss[(k, pos)] = (ps, pe), gap
                 break
 
     def chunks_for(keys: list[tuple[int, int]]) -> list[Chunk]:

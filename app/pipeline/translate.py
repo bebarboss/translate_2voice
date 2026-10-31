@@ -1,7 +1,7 @@
 """แปลบทเป็นภาษาปลายทาง (ไทยหรืออังกฤษ) ด้วย Typhoon และย่อบทให้พอดีเวลา
 
 เส้นทางการแปล
-- ต้นฉบับเป็นภาษาเดียวกับปลายทาง        → ไม่แปล ใช้บทเดิม
+- ต้นฉบับเป็นภาษาเดียวกับปลายทาง        → ไม่แปล แต่ให้ Typhoon แก้คำที่ถอดเสียงผิด (ไม่มี API key ใช้บทเดิม)
 - อังกฤษ → ไทย + TRANSLATE_EN_LOCAL=true  → Typhoon Translate บนเครื่อง
 - ที่เหลือทั้งหมด                          → Typhoon 2.5 ผ่าน API (OpenAI-compatible)
 """
@@ -57,6 +57,25 @@ SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line so it can be spoken within its "seconds" value (about 2.5 words per second).
 Keep the meaning and the character's emotion, and keep it natural spoken English.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
+
+PROOFREAD_PROMPT_TH = """คุณคือผู้ตรวจบทถอดเสียงภาษาไทย บทนี้ได้จากระบบถอดเสียงอัตโนมัติ (Whisper) ซึ่งมักสะกดผิดตามเสียงที่ได้ยิน
+เช่น พยัญชนะหรือสระเพี้ยน (หิบะทะลม → หิมะถล่ม, ปืนคลั้ง → ปืนครั้ง) คำติดกัน หรือมีตัวอักษรอังกฤษหลุดกลางคำ
+กฎ:
+1. แก้เฉพาะคำที่ถอดเสียงผิด โดยเลือกคำที่ออกเสียงใกล้ที่สุดและเข้ากับเรื่อง ห้ามแปลงสำนวน ห้ามเรียบเรียงใหม่
+2. ห้ามลบคำ ห้ามเพิ่มเนื้อหา คำที่ฟังเพี้ยนให้เดาคำที่เสียงใกล้ที่สุดแทน ไม่ใช่ตัดทิ้ง
+3. title คือชื่อคลิป ถ้าบรรทัดไหนพูดชื่อเรื่อง ให้สะกดตาม title ทุกตัวอักษร ชื่อตัวละครและสถานที่ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกบรรทัด
+4. ใส่ ! ? … ตามน้ำเสียงได้ เพราะนักพากย์ใช้กำหนดน้ำเสียง
+5. บรรทัดที่ถูกอยู่แล้ว ให้คืนข้อความเดิม
+6. ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} ครบทุก id เท่านั้น"""
+
+PROOFREAD_PROMPT_EN = """You proofread an automatic (Whisper) English transcript of drama dialogue.
+Rules:
+1. Fix only misheard or misspelled words, choosing the closest-sounding word that fits the story. Do not rephrase or reorder.
+2. Never delete words or add content: replace a garbled word with its closest-sounding guess instead of dropping it.
+3. "title" is the video title: when a line says the title, spell it exactly as in "title". Spell character and place names the way the official release does, consistently on every line.
+4. You may add ! ? … where the tone calls for it.
+5. Return lines that are already correct unchanged.
+6. Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}, covering every id."""
 
 _client = None
 _local = None
@@ -302,6 +321,8 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
     if lang == target:
         for u in utts:
             u.target = u.target or u.source
+        if settings.typhoon_api_key:
+            proofread(utts, target, on_progress, check_cancel, title)
         return
 
     # โมเดลแปลบนเครื่องต้องใช้การ์ดจอ โหมด modal จึงแปลด้วย Typhoon API เสมอ
@@ -321,6 +342,37 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         context = [u for u in utts if u.target and u.id < batch[0][0].id][-6:]
         _translate_groups(batch, lang, target, context, title)
         done += sum(map(len, batch))
+        if on_progress:
+            on_progress(done / len(utts))
+
+
+def proofread(utts: list[Utterance], target: str = "th",
+              on_progress: Optional[Callable[[float], None]] = None,
+              check_cancel: Optional[Callable[[], None]] = None, title: str = "") -> None:
+    """ต้นฉบับเป็นภาษาเดียวกับปลายทาง: ไม่ต้องแปล แต่บทถอดเสียงผิดจะถูกพากย์ผิดตามไปด้วย จึงให้โมเดลแก้คำผิด
+    แก้ได้ไม่ผ่าน (คำตอบพัง จำนวนบรรทัดไม่ครบ หรือยาวต่างจากเดิมมากจนน่าจะเรียบเรียงใหม่) ใช้บทเดิม"""
+    prompt = PROOFREAD_PROMPT_EN if target == "en" else PROOFREAD_PROMPT_TH
+    done = 0
+    for batch in _chunks(utts, settings.translate_batch_size):
+        if check_cancel:
+            check_cancel()
+        before = [u.target for u in utts if u.id < batch[0].id][-6:]
+        payload = {"title": title, "previous_lines": before,
+                   "lines": [{"id": u.id, "speaker": u.speaker, "text": u.target} for u in batch]}
+        try:
+            # ใส่ชื่อคลิปไว้หัวข้อความด้วย อยู่แค่ใน JSON โมเดลมักไม่เอาไปเทียบตอนแก้ชื่อเรื่องที่ถอดเสียงเพี้ยน
+            head = f"title: {title}\n\n" if title else ""
+            result = _parse_json(_chat(prompt, head + json.dumps(payload, ensure_ascii=False), temperature=0.2,
+                                       max_tokens=min(4096, 400 + 150 * len(batch))))
+            by_id = {int(x["id"]): _item_text(x) for x in result.get("lines", []) if "id" in x}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("proofread failed: %s", exc)
+            by_id = {}
+        for u in batch:
+            text = by_id.get(u.id)
+            if text and not FOREIGN_SCRIPT.search(text) and 0.5 <= len(text) / max(len(u.target), 1) <= 1.8:
+                u.target = text
+        done += len(batch)
         if on_progress:
             on_progress(done / len(utts))
 

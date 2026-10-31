@@ -24,7 +24,7 @@ from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate,
                       RuntimeSettings, RuntimeSettingsUpdate, SpeakerVoice, Utterance, UtteranceEdit,
-                      VoiceStatus, VoiceSuggestion)
+                      UtteranceSplit, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -331,6 +331,7 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
     if not utterances:
         raise HTTPException(409, "งานนี้ยังไม่มีบท")
     by_id = {u.id: u for u in utterances}
+    moved = False
     for edit in edits:
         u = by_id.get(edit.id)
         if u is None:
@@ -340,9 +341,102 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
         if edit.speaker is not None:
             if edit.speaker not in job.speakers:
                 raise HTTPException(400, f"ไม่รู้จักผู้พูด {edit.speaker} มีแค่ {job.speakers}")
+            moved |= u.speaker != edit.speaker
             u.speaker = edit.speaker
-    store.save_transcript(job_id, utterances)
+    _save_lines(job, utterances, moved)
     return utterances
+
+
+def _editable_lines(job_id: str) -> tuple[Job, list[Utterance]]:
+    job = get_job_or_404(job_id)
+    if job.status not in EDITABLE:
+        raise HTTPException(409, "แก้บทได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
+    utterances = sorted(store.load_transcript(job_id), key=lambda u: u.start)
+    if not utterances:
+        raise HTTPException(409, "งานนี้ยังไม่มีบท")
+    return job, utterances
+
+
+def _save_lines(job: Job, utterances: list[Utterance], moved: bool) -> None:
+    """บันทึกบท ถ้าช่วงพูดของตัวละครเปลี่ยน สร้างเสียงแยกรายคนใหม่ (ปุ่มฟังเสียงแยก และเสียงตัวอย่างตอนเลือกเสียง)"""
+    from .transcript_edit import export_stems
+
+    store.save_transcript(job.id, utterances)
+    if moved:
+        export_stems(store.dir(job.id), utterances, job.speakers)
+
+
+@app.post("/jobs/{job_id}/transcript/{line_id}/split", response_model=list[Utterance],
+          dependencies=[Depends(require_key)])
+def split_line(job_id: str, line_id: int, body: UtteranceSplit):
+    """แยกประโยคเป็นสองท่อน เช่น สองคนพูดต่อกันแต่ถูกรวมเป็นท่อนเดียว แล้วเปลี่ยนตัวละครของท่อนหลังได้
+    ระบุ at (วินาทีในคลิป) หรือ pos (ตำแหน่งตัวอักษรในบทพากย์) หรือทั้งสองอย่าง ค่าที่ไม่ระบุหาจากเวลาของแต่ละคำ"""
+    from .pipeline.runner import _load_words
+    from .transcript_edit import split
+
+    job, utterances = _editable_lines(job_id)
+    i = next((k for k, u in enumerate(utterances) if u.id == line_id), None)
+    if i is None:
+        raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
+    u = utterances[i]
+    if body.pos is not None and not 0 < body.pos < len(u.target.strip()):
+        raise HTTPException(400, "ตำแหน่งที่แยกต้องอยู่กลางบท ไม่ใช่หัวหรือท้าย")
+    try:
+        a, b = split(u, max(x.id for x in utterances) + 1, body.at, body.pos, _load_words(store.dir(job_id)))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    utterances[i:i + 1] = [a, b]
+    _save_lines(job, utterances, False)
+    return utterances
+
+
+@app.post("/jobs/{job_id}/transcript/{line_id}/merge", response_model=list[Utterance],
+          dependencies=[Depends(require_key)])
+def merge_line(job_id: str, line_id: int):
+    """รวมประโยคนี้กับประโยคถัดไป ใช้ตัวละครของประโยคนี้"""
+    from .transcript_edit import merge
+
+    job, utterances = _editable_lines(job_id)
+    i = next((k for k, u in enumerate(utterances) if u.id == line_id), None)
+    if i is None:
+        raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
+    if i + 1 == len(utterances):
+        raise HTTPException(400, "เป็นประโยคสุดท้าย ไม่มีประโยคถัดไปให้รวม")
+    moved = utterances[i + 1].speaker != utterances[i].speaker
+    utterances[i:i + 2] = [merge(utterances[i], utterances[i + 1])]
+    _save_lines(job, utterances, moved)
+    return utterances
+
+
+# ---------------------------------------------------------------- ตัวละคร
+@app.post("/jobs/{job_id}/speakers", response_model=Job, dependencies=[Depends(require_key)])
+def add_speaker(job_id: str):
+    """เพิ่มตัวละครใหม่ (ระบบแยกผู้พูดรวมสองคนเป็นคนเดียว) แล้วย้ายประโยคไปให้ด้วย PUT /jobs/{id}/transcript"""
+    job, _ = _editable_lines(job_id)
+    n = max((int(s.split("_")[-1]) for s in job.speakers if re.fullmatch(r"speaker_\d{2}", s)), default=0) + 1
+    if n > 99:
+        raise HTTPException(400, "ตัวละครเต็มแล้ว")
+    return store.update(job_id, speakers=job.speakers + [f"speaker_{n:02d}"])
+
+
+@app.delete("/jobs/{job_id}/speakers/{speaker}", response_model=Job, dependencies=[Depends(require_key)])
+def remove_speaker(job_id: str, speaker: str, into: Optional[str] = None):
+    """ลบตัวละคร (ระบบแยกคนเดียวเป็นสองตัวละคร) ประโยคของตัวละครนี้ย้ายไปให้ into"""
+    job, utterances = _editable_lines(job_id)
+    if speaker not in job.speakers:
+        raise HTTPException(404, f"ไม่รู้จักผู้พูด {speaker}")
+    if len(job.speakers) == 1:
+        raise HTTPException(400, "ต้องเหลือตัวละครอย่างน้อยหนึ่งตัว")
+    own = [u for u in utterances if u.speaker == speaker]
+    if own and (into is None or into == speaker or into not in job.speakers):
+        raise HTTPException(400, f"ตัวละครนี้มี {len(own)} ประโยค ต้องเลือกตัวละครที่จะรับประโยคไป (into)")
+    for u in own:
+        u.speaker = into
+    speakers = [s for s in job.speakers if s != speaker]
+    voice_map = {s: v for s, v in job.voice_map.items() if s != speaker}
+    job = store.update(job_id, speakers=speakers, voice_map=voice_map)
+    _save_lines(job, utterances, True)
+    return job
 
 
 @app.post("/jobs/{job_id}/synthesize", response_model=JobCreated, status_code=202,

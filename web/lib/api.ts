@@ -180,6 +180,14 @@ export const api = {
   getTranscript: (id: string) => request<Utterance[]>(`/jobs/${id}/transcript`),
   saveTranscript: (id: string, edits: UtteranceEdit[]) =>
     request<Utterance[]>(`/jobs/${id}/transcript`, json("PUT", edits)),
+  splitLine: (id: string, lineId: number, at: { at?: number; pos?: number }) =>
+    request<Utterance[]>(`/jobs/${id}/transcript/${lineId}/split`, json("POST", at)),
+  mergeLine: (id: string, lineId: number) =>
+    request<Utterance[]>(`/jobs/${id}/transcript/${lineId}/merge`, { method: "POST" }),
+  addSpeaker: (id: string) => request<Job>(`/jobs/${id}/speakers`, { method: "POST" }),
+  removeSpeaker: (id: string, speaker: string, into?: string) =>
+    request<Job>(`/jobs/${id}/speakers/${speaker}${into ? `?into=${encodeURIComponent(into)}` : ""}`,
+      { method: "DELETE" }),
   synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
   listStems: (id: string) => request<string[]>(`/jobs/${id}/stems`),
   jobVoices: (id: string) => request<SpeakerVoice[]>(`/jobs/${id}/voices`),

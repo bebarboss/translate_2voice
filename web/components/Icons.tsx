@@ -40,3 +40,12 @@ export const PlayIcon = ({ size = 15 }: P) => (
 
 export const PauseIcon = ({ size = 15, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M8 5v14" /><path d="M16 5v14" /></>);
+
+export const ScissorsIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M20 4L8.1 15.9" /><path d="M14.5 14.5L20 20" /><path d="M8.1 8.1L12 12" /></>);
+
+export const MergeIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M7 4v5a5 5 0 0 0 5 5 5 5 0 0 1 5 5v1" /><path d="M17 4v5a5 5 0 0 1-3 4.6" /></>);
+
+export const XIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>);

@@ -111,13 +111,29 @@ def _load_cached(tts_dir: Path, uid: int, key: str):
         return None
 
 
+def _load_words(d: Path) -> Optional[list]:
+    """เวลาของแต่ละคำในเสียงต้นฉบับที่ขั้นวิเคราะห์เก็บไว้ งานเก่าที่ไม่มีไฟล์คืน None"""
+    from .common import Word
+    try:
+        return [Word(**w) for w in json.loads((d / "words.json").read_text(encoding="utf-8"))]
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _pause_holes(g: list, p, orig: np.ndarray, sr: int, words: Optional[list]) -> list[tuple[float, float]]:
+    """ช่วงหยุดระหว่างช่วงพูดของประโยค (ตามที่ตัดไว้ตอนพากย์ ประโยคที่ใช้เสียงเดิมจากแคชคำนวณใหม่ ผลเท่ากัน)"""
+    chunks = getattr(p, "chunks", None) or pauses.plan(g, orig, sr, settings.min_pause_sec, words=words)
+    return [(a.end, b.start) for a, b in zip(chunks, chunks[1:]) if b.start > a.end]
+
+
 def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
-                   voices_: Optional[dict] = None) -> list[list]:
+                   voices_: Optional[dict] = None, pinned: frozenset = frozenset()) -> list[list]:
     """รวมท่อนที่พูดต่อกันเป็นประโยคเดียว (คนเดิม เว้นไม่เกิน max_gap และท่อนก่อนยังไม่จบประโยค) แล้วพากย์รวดเดียว
 
     ถ้าพากย์ทีละท่อน ทุกท่อนจะลงเสียงเหมือนจบประโยคและขาดเป็นช่วง ๆ ฟังไม่ต่อเนื่อง
     จำกัดความยาวรวมไว้ เพราะ F5-TTS พูดยาวเกินไปจะเพี้ยนและใช้หน่วยความจำการ์ดจอมาก
     voices_: ไม่รวมท่อนที่เสียงต่างกันชัด (ระบบแยกผู้พูดอาจรวมเด็กกับผู้ใหญ่เป็นคนเดียว) ไม่งั้นทั้งคู่จะได้เสียงตัวอย่างเดียวกัน
+    pinned: ผู้พูดที่ผู้ใช้เลือกเสียงจากคลังให้ ท่อนของคนนี้ห้ามไปรวมกับคนอื่น (และกลับกัน) ไม่งั้นได้เสียงผิดตัว
     """
     from .transcribe import SENTENCE_END
     from .voices import clearly_different, of_run
@@ -134,7 +150,10 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
 
     # ท่อนสั้นมาก (คำเดียว) F5-TTS พากย์เดี่ยว ๆ แล้วมักได้เสียงมั่ว และมักเป็นหัวหรือหางประโยคที่ถูกแยกผู้พูดผิด
     # → ต่อเข้ากับประโยคที่ติดกัน ยกเว้นเสียงต่างกันชัด (อีกคนพูดแทรก เช่น "Mom!") ให้พากย์ด้วยเสียงตัวเอง
-    differ = lambda a, b: clearly_different(of_run(a, voices_), of_run(b, voices_))  # noqa: E731
+    def differ(a, b) -> bool:
+        if a[0].speaker != b[0].speaker and (a[0].speaker in pinned or b[0].speaker in pinned):
+            return True
+        return clearly_different(of_run(a, voices_), of_run(b, voices_))
     merged: list[list] = []
     for i, g in enumerate(groups):
         if len(g) == 1 and g[0].duration < 0.8:
@@ -242,8 +261,10 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     voice_map = None
     if settings.voice_match and gpu.voice_tools():
         voice_map = gpu.voice_profiles(d, utterances, orig, orig_sr)
-    groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map)
     library_refs = _library_refs(job, voice_store, target)
+    groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map,
+                            pinned=frozenset(library_refs))
+    words = _load_words(d)
     if library_refs:
         log.info("library voices: %s", {s: k[0] for s, k in library_refs.items()})
     library_paths = {voice_id: path for voice_id, path, _, _ in library_refs.values()}
@@ -255,7 +276,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                         pauses=[settings.pause_match, settings.min_pause_sec],
+                         pauses=[settings.pause_match, settings.min_pause_sec, 2],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries])
 
     # ---- วางแผนทุกประโยค: เสียงตัวอย่าง ช่วงเวลา และใช้เสียงเดิมได้ไหม
@@ -309,7 +330,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             if not settings.pause_match or settings.mock_pipeline:
                 p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, p.text())]
             else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
-                p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec)
+                p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
             lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
                        "target_lang": target, "slot": max(c.end - c.start, 0.3), "max_speedup": p.max_speedup,
                        "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None}
@@ -364,6 +385,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             done[p.i] = voice
 
     clips = [(g[0].start, done[i]) for i, g in enumerate(groups)]
+    plans_by_i = {p.i: p for p in plans}
     spans = [(g[0].start, g[-1].end) for g in groups]
     redubbed = sum(len(p.g) for p in plans)
 
@@ -379,6 +401,12 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if settings.nonspeech_gain > 0:
         # ช่วงที่มีบท (แม้ไม่ได้แปล) และช่วงที่เสียงพากย์ล้นออกไป ไม่ใส่เสียงเดิม กันเสียงภาษาต้นฉบับโผล่
         speech = [(u.start, u.end) for u in utterances] + [(s, s + len(v) / sr) for s, v in clips]
+        if settings.breath_keep and settings.pause_match:
+            # ช่วงหยุดกลางประโยคที่เสียงพากย์เว้นไว้ ใส่เสียงเดิมของนักแสดง (หายใจ สูดลม ถอนใจ) ให้ฟังมีชีวิต
+            # เปิดเฉพาะช่วงที่เสียงพากย์เงียบจริง ถ้าเสียงพากย์ล้นเข้าไปก็ไม่ใส่ ส่วนคำพูดที่ถอดตกไปยังโดน is_speech กรองอยู่
+            holes = [h for i, g in enumerate(groups) for h in _pause_holes(g, plans_by_i.get(i), orig, orig_sr, words)]
+            voiced = [(s + a / sr, s + b / sr) for s, v in clips for a, b in mix._loud_runs(v, sr, level=0.01)]
+            speech = mix.minus([(u.start, u.end) for u in utterances], holes) + voiced
         is_speech = None
         if not settings.mock_pipeline:
             known, is_speech = gpu.speech_filter(d, source_lang)

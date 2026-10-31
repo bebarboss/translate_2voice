@@ -158,6 +158,13 @@ def clean_voice(raw: Path, work: Path, stage) -> dict:
     audio.cut_clip(vocals, start, end, ref, tts.SAMPLE_RATE)
     wav, rsr = sf.read(ref, dtype="float32")
     wav = _normalize(wav)
+    if not settings.mock_pipeline:
+        # ข้อความจากคำที่ถอดทั้งคลิปมักไม่ตรงขอบที่ตัด (คำหัวท้ายขาดหรือเกิน) และถอดผิดตามบริบทคลิปยาว
+        # F5-TTS ต้องได้ข้อความตรงเสียงตัวอย่างทุกคำ ไม่งั้นออกเสียงเพี้ยนหรือกลืนคำ → ถอดคลิปที่ตัดแล้วอีกรอบ
+        import librosa
+        from .transcribe import clip_text
+        text = clip_text(librosa.resample(wav, orig_sr=rsr, target_sr=16000), "th") or text
+        gpu.release("transcribe")
 
     stage("measure", 0.0)
     q = None

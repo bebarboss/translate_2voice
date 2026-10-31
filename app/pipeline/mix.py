@@ -29,6 +29,18 @@ def _loud_runs(x: np.ndarray, sr: int, level: float = 0.02, min_len: float = 0.2
     return [(a * hop, b * hop) for a, b in runs if (b - a) * 0.05 >= min_len]
 
 
+def minus(spans: list[tuple[float, float]], holes: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """ช่วงเวลา spans ที่เจาะ holes ออก"""
+    out = []
+    for a, b in spans:
+        cur = [(a, b)]
+        for ha, hb in holes:
+            cur = [piece for x, y in cur
+                   for piece in ([(x, y)] if hb <= x or ha >= y else [(x, ha), (hb, y)]) if piece[1] > piece[0]]
+        out += cur
+    return out
+
+
 def nonspeech(orig: np.ndarray, orig_sr: int, speech: list[tuple[float, float]], total_sec: float, sr: int,
               is_speech: Optional[Callable[[np.ndarray, int], bool]] = None,
               pad: float = 0.15, ramp: float = 0.05) -> np.ndarray:

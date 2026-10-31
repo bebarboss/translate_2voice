@@ -49,9 +49,6 @@ def _end_punct(text: str) -> str:
     return text
 
 
-FRAMES_PER_SEC = SAMPLE_RATE / 256  # hop_length ของ mel ใน F5-TTS
-
-
 def _quiet(*_args, **_kwargs) -> None:
     pass
 
@@ -59,6 +56,26 @@ def _quiet(*_args, **_kwargs) -> None:
 def _fit(natural: float, slot: float, max_speedup: float, max_slowdown: float) -> float:
     """ความยาวเสียงที่ให้ F5-TTS พูด: เต็มฉากพอดี แต่ไม่เร็วหรือช้ากว่าความเร็วปกติเกินที่ตั้งไว้"""
     return max(0.3, min(max(slot, natural / max_speedup), natural * max_slowdown))
+
+
+def thai_seconds(text: str) -> float:
+    """เวลาพูดปกติของบทไทย นับพยางค์ (คำละตินนับตามกลุ่มสระ) หารด้วยความเร็วพูดปกติ
+
+    สูตรเดิมของไลบรารีนับตัวอักษร IPA ซึ่งรวมวรรณยุกต์และเครื่องหมายเสียงยาว บทสั้นจึงได้เวลายาวเกินจริง
+    (เช่น "ก็แค่นั้นแหละ หนึ่ง สอง กระโดด" 8 พยางค์ ได้ 2.1 วินาที) โมเดลก็ยืดเสียงหรือพูดคำซ้ำให้เต็มเวลา
+    """
+    import re
+    from f5_tts_th.normalize import normalize_text
+    from pythainlp.tokenize import syllable_tokenize
+
+    text = normalize_text(text)  # ตัวเลข → คำอ่าน, ๆ → คำซ้ำ แบบเดียวกับที่โมเดลพูดจริง
+    n = 0
+    for tok in syllable_tokenize(text):
+        if re.search(r"[ก-๛]", tok):
+            n += 1
+        elif tok.strip():
+            n += max(1, len(re.findall(r"[aeiouy]+", tok.lower())))
+    return max(0.3, n / settings.thai_syllables_per_sec)
 
 
 def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0,
@@ -88,16 +105,13 @@ def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0
 
     # เรียก infer_process เองแทน TTS.infer เพื่อรู้ความยาวเสียงตัวอย่างหลังตัดความเงียบ และปิดการตัดบทเป็นท่อน
     # (f5-tts-th ใช้ fix_duration เดียวกันทุกท่อน ถ้าแบ่งสองท่อนเสียงจะยาวเป็นสองเท่า)
-    from f5_tts_th.utils_infer import infer_process, preprocess_ref_audio_text, th_to_g2p
+    from f5_tts_th.utils_infer import infer_process, preprocess_ref_audio_text
 
     model = _load_th()
     ref_file, ref_text_p = preprocess_ref_audio_text(str(ref_audio), ref_text.strip(), show_info=_quiet)
     fix = None
     if slot:
-        frames = len(th_to_g2p(gen_text)) * 5 / speed  # สูตรเดียวกับ infer_batch_process ของไลบรารี
-        if frames < 50:
-            frames *= 2
-        fix = sf.info(ref_file).duration + _fit(frames / FRAMES_PER_SEC, slot, max_speedup, max_slowdown)
+        fix = sf.info(ref_file).duration + _fit(thai_seconds(gen_text) / speed, slot, max_speedup, max_slowdown)
     wav, _, _ = infer_process(
         ref_file, ref_text_p, gen_text, model.f5_model, model.vocoder, mel_spec_type=model.vocoder_name,
         show_info=_quiet, nfe_step=steps, cfg_strength=settings.f5_cfg, speed=speed, fix_duration=fix,
