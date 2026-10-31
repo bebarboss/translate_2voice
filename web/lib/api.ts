@@ -77,6 +77,7 @@ export interface Utterance {
   end: number;
   source: string;
   target: string;
+  take: number;
   ref_reading: string;
 }
 
@@ -84,6 +85,9 @@ export interface UtteranceEdit {
   id: number;
   target?: string;
   speaker?: string;
+  start?: number;
+  end?: number;
+  take?: number;
 }
 
 export interface RuntimeSettings {

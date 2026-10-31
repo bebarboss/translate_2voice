@@ -3,11 +3,11 @@
 import type { ReactNode, Ref } from "react";
 import type { Utterance } from "@/lib/api";
 import { fmtTime, speakerColor, speakerLabel } from "@/lib/format";
-import { NEW_SPEAKER, type Transcript } from "@/lib/useTranscript";
-import { MergeIcon, ScissorsIcon } from "./Icons";
+import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
+import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon } from "./Icons";
 
 /** แก้ประโยคเดียว: ตัวละคร บทพากย์ แยกประโยค รวมกับประโยคถัดไป */
-export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onSeek, onFocusText, boxRef, tools }: {
+export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onSeek, onFocusText, boxRef, tools, retake }: {
   u: Utterance;
   tr: Transcript;
   isLast: boolean;
@@ -18,9 +18,18 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
   onFocusText?: () => void;
   boxRef?: Ref<HTMLDivElement>;
   tools?: ReactNode; // ปุ่มเพิ่มของแต่ละหน้า (เช่น เล่นช่วงนี้)
+  retake?: boolean; // แสดงปุ่มสุ่มเสียงพากย์ใหม่ (หลังพากย์แล้ว)
 }) {
   const d = tr.draftOf(u);
-  const changed = d.target !== u.target || d.speaker !== u.speaker;
+  const changed = isChanged(u, d);
+  const retimed = d.start !== u.start || d.end !== u.end;
+  // ช่องเวลา: ปัดทีละ 0.05 วินาที ไม่ให้สั้นกว่า 0.2 วินาที
+  const setTime = (key: "start" | "end", raw: string) => {
+    const v = Math.round(Number(raw) * 20) / 20;
+    if (!Number.isFinite(v) || v < 0) return;
+    if (key === "start" ? v > d.end - 0.2 : v < d.start + 0.2) return;
+    tr.setDraft(u.id, { [key]: v });
+  };
   return (
     <div ref={boxRef} className={`line${active ? " active" : ""}${speaking ? " speaking" : ""}`}>
       <div className="row" style={{ gap: 8 }}>
@@ -35,11 +44,26 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           <option value={NEW_SPEAKER}>+ ตัวละครใหม่</option>
         </select>
         <span style={{ marginLeft: "auto" }} className="row">
+          {d.take > 0 && <span className="badge" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>เสียงรอบที่ {d.take + 1}</span>}
           {changed && <span className="badge awaiting_review">แก้แล้ว</span>}
           {tooLong && <span className="badge warn">ยาวเกินเวลา</span>}
         </span>
       </div>
       <p className="src">{u.source}</p>
+      <div className="row time-range" style={{ gap: 6 }}>
+        <label htmlFor={`st-${u.id}`}>เริ่ม</label>
+        <input id={`st-${u.id}`} type="number" step={0.05} min={0} value={d.start}
+          onChange={(e) => setTime("start", e.target.value)} />
+        <label htmlFor={`en-${u.id}`}>จบ</label>
+        <input id={`en-${u.id}`} type="number" step={0.05} min={0} value={d.end}
+          onChange={(e) => setTime("end", e.target.value)} />
+        <span className="dim">วิ · ยาว {(d.end - d.start).toFixed(2)} วิ</span>
+        {retimed && (
+          <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { start: u.start, end: u.end })}>
+            คืนเวลาเดิม
+          </button>
+        )}
+      </div>
       <label className="sr-only" htmlFor={`tg-${u.id}`}>บทพากย์ประโยคที่ {u.id}</label>
       <textarea id={`tg-${u.id}`} className="textarea" rows={2} value={d.target}
         onChange={(e) => tr.setDraft(u.id, { target: e.target.value })}
@@ -47,6 +71,20 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
         onFocus={onFocusText} />
       <div className="line-tools">
         {tools}
+        {retake && (
+          <>
+            {d.take > 0 && (
+              <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { take: d.take - 1 })}
+                title="กลับไปใช้เสียงพากย์รอบก่อน (ใช้เสียงที่เก็บไว้ ไม่ต้องพากย์ซ้ำ)">
+                <ArrowLeft size={13} />รอบก่อน
+              </button>
+            )}
+            <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { take: d.take + 1 })}
+              title="ให้ระบบพากย์ประโยคนี้ใหม่ ได้น้ำเสียงหรือการออกเสียงแบบใหม่ บทเหมือนเดิม">
+              <ShuffleIcon />สุ่มเสียงใหม่
+            </button>
+          </>
+        )}
         <button type="button" className="icon-btn" onClick={() => tr.split(u)} disabled={!!tr.busy}
           title="แยกตรงเคอร์เซอร์ในบท หรือตรงเวลาที่หยุดวิดีโอไว้">
           <ScissorsIcon />แยกประโยค

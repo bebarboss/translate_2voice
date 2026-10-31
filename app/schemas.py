@@ -41,6 +41,7 @@ class Utterance(BaseModel):
     source: str  # ข้อความภาษาต้นฉบับ
     # บทพากย์ในภาษาปลายทาง (ไฟล์งานเก่าเก็บไว้ในชื่อ thai)
     target: str = Field("", validation_alias=AliasChoices("target", "thai"))
+    take: int = 0  # รอบที่ผู้ใช้กดสุ่มเสียงพากย์ใหม่ (0 = รอบแรก)
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property
@@ -52,6 +53,9 @@ class UtteranceEdit(BaseModel):
     id: int
     target: Optional[str] = Field(None, validation_alias=AliasChoices("target", "thai"))
     speaker: Optional[str] = None
+    take: Optional[int] = Field(None, ge=0, le=99)
+    start: Optional[float] = Field(None, ge=0)  # เวลาในคลิป (วินาที) ใช้ขยับช่วงที่ระบบจับเวลาเพี้ยน
+    end: Optional[float] = Field(None, ge=0)
 
 
 class UtteranceSplit(BaseModel):

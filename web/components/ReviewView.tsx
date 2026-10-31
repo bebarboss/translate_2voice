@@ -23,6 +23,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [t, setT] = useState(0);
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
+  const [picked, setPicked] = useState<number | null>(null); // บล็อกที่คลิกเลือก (ลากขอบได้) ล้างเมื่อเล่นวิดีโอ
   const [maxSpeedup, setMaxSpeedup] = useState(1.35);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -108,8 +109,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   };
 
   const tooLong = (u: Utterance) => {
-    const text = tr.draftOf(u).target;
-    const dur = Math.max(0.3, u.end - u.start);
+    const { target: text, start, end } = tr.draftOf(u);
+    const dur = Math.max(0.3, end - start);
     return !!text.trim() && estimateSeconds(text, job.target_lang) > dur * maxSpeedup;
   };
   const longCount = sorted.filter(tooLong).length;
@@ -152,7 +153,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
             <video ref={videoRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
               onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
               onSeeked={(e) => setT(e.currentTarget.currentTime)}
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} />
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onPlay={() => setPicked(null)} />
             {speaking && tr.draftOf(speaking).target && (
               <div className="caption"><span>{tr.draftOf(speaking).target}</span></div>
             )}
@@ -162,8 +164,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
             <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
           </div>
 
-          <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={speaking?.id ?? null}
-            onPick={(u) => seek(u.start)} />
+          <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
+            onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} />
 
           <VoiceCast job={{ ...job, speakers }} value={voiceDraft}
             onChange={(s, id) => setVoiceDraft((d) => ({ ...d, [s]: id }))} />
@@ -182,7 +184,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
             {lines === null ? <div className="empty">กำลังโหลดบท...</div>
               : sorted.length === 0 ? <div className="empty">ไม่พบบทพูดในคลิปนี้</div>
               : sorted.map((u, idx) => (
-                <LineCard key={u.id} u={u} tr={tr} isLast={idx === sorted.length - 1}
+                <LineCard key={u.id} u={u} tr={tr} isLast={idx === sorted.length - 1} retake={!!onCancelEdit}
                   active={active?.id === u.id} speaking={speaking?.id === u.id} tooLong={tooLong(u)}
                   onSeek={seek} onFocusText={() => { if (videoRef.current?.paused) seek(u.start); }}
                   boxRef={(el) => { lineRefs.current[u.id] = el; }} />

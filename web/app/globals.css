@@ -154,6 +154,9 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .icon-btn { flex: none; height: 28px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; border-radius: 6px; border: 1px solid var(--border-2); background: transparent; color: var(--text-2); font-size: 12px; cursor: pointer; }
 .icon-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .icon-btn:disabled { opacity: 0.4; cursor: default; }
+.lane .handle { position: absolute; top: 1px; bottom: 1px; width: 8px; margin-left: -4px; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); cursor: ew-resize; touch-action: none; z-index: 2; }
+.time-range { font-size: 13px; color: var(--text-2); flex-wrap: wrap; }
+.time-range input { width: 84px; height: 28px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--surface-2); font-family: var(--mono); font-size: 12px; }
 .line-tools { display: flex; gap: 6px; justify-content: flex-end; }
 .lane-remove { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; }
 .spk-select { height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--surface-2); font-size: 13px; }

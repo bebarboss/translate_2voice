@@ -47,5 +47,8 @@ export const ScissorsIcon = ({ size = 14, color = "currentColor" }: P) =>
 export const MergeIcon = ({ size = 14, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M7 4v5a5 5 0 0 0 5 5 5 5 0 0 1 5 5v1" /><path d="M17 4v5a5 5 0 0 1-3 4.6" /></>);
 
+export const ShuffleIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></>);
+
 export const XIcon = ({ size = 14, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>);

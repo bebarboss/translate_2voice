@@ -98,13 +98,18 @@ def _clip_key(**parts) -> str:
     return hashlib.sha1(json.dumps(parts, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def _take_file(tts_dir: Path, uid: int, key: str) -> Path:
+    """สำเนาเสียงพากย์ของแต่ละรอบ (ตามคีย์) ผู้ใช้สุ่มใหม่แล้วอยากกลับไปใช้รอบก่อน จะได้ไม่ต้องพากย์ซ้ำ"""
+    return tts_dir / f"{uid:04d}.{key[:12]}.wav"
+
+
 def _load_cached(tts_dir: Path, uid: int, key: str):
     meta, wav = tts_dir / f"{uid:04d}.json", tts_dir / f"{uid:04d}.wav"
-    if not (meta.exists() and wav.exists()):
-        return None
     try:
-        if json.loads(meta.read_text(encoding="utf-8")).get("key") != key:
-            return None
+        if not (meta.exists() and wav.exists() and json.loads(meta.read_text(encoding="utf-8")).get("key") == key):
+            wav = _take_file(tts_dir, uid, key)
+            if not wav.exists():
+                return None
         data, _ = sf.read(wav, dtype="float32")
         return data
     except (ValueError, OSError, RuntimeError):
@@ -277,7 +282,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
                          pauses=[settings.pause_match, settings.min_pause_sec, 2],
-                         voice=[voice_map is not None, settings.voice_drift, settings.voice_retries])
+                         voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
+                         # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
+                         **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))
 
     # ---- วางแผนทุกประโยค: เสียงตัวอย่าง ช่วงเวลา และใช้เสียงเดิมได้ไหม
     stage("tts", 0.72)
@@ -380,8 +387,10 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
             voice = audio.fade(p.voice[: int(p.limit_sec * sr)], sr)
             first = p.g[0]
+            key = key_for(p, p.text())
             sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
-            (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key_for(p, p.text())}), encoding="utf-8")
+            sf.write(_take_file(tts_dir, first.id, key), voice, sr)
+            (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key}), encoding="utf-8")
             done[p.i] = voice
 
     clips = [(g[0].start, done[i]) for i, g in enumerate(groups)]

@@ -50,6 +50,72 @@ def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word]
     return words, info.language
 
 
+def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Optional[str],
+              min_gap: float = 1.0, max_window: float = 25.0) -> list[Word]:
+    """ถอดซ้ำเฉพาะช่วงที่ pyannote ได้ยินคนพูดแต่ Whisper ไม่ได้คำเลย
+
+    ถอดทั้งคลิปทีเดียว Whisper มักข้ามทั้งก้อนเมื่อมีเพลงดังทับเสียงพูด (VAD ตัดทิ้ง หรือโมเดลตัดสินว่าไม่มีเสียงพูด)
+    เช่น ตัวอย่างหนังที่ดนตรีขึ้นช่วงกลาง ทั้งที่ยังมีบทพูดอยู่ ถอดช่วงนั้นแยกโดยไม่ใช้ VAD มักได้ข้อความกลับมา
+    """
+    import numpy as np
+    import soundfile as sf
+
+    # ช่วงที่มีคนพูด (รวม turn ที่ห่างกันไม่ถึง 0.5 วินาที) แล้วตัดส่วนที่มีคำอยู่แล้วออก
+    spans: list[list[float]] = []
+    for t in sorted(turns, key=lambda t: t.start):
+        if spans and t.start - spans[-1][1] < 0.5:
+            spans[-1][1] = max(spans[-1][1], t.end)
+        else:
+            spans.append([t.start, t.end])
+    covered = sorted((w.start, w.end) for w in words)
+    holes: list[tuple[float, float]] = []
+    for a, b in spans:
+        cur = a
+        for ws, we in covered:
+            if we <= cur or ws >= b:
+                continue
+            if ws - cur >= min_gap:
+                holes.append((cur, ws))
+            cur = max(cur, we)
+        if b - cur >= min_gap:
+            holes.append((cur, b))
+    if not holes:
+        return words
+
+    # รวมช่วงที่ใกล้กันเป็นหน้าต่างเดียว (ได้บริบทมากขึ้น ถอดแม่นกว่า) ไม่เกิน max_window วินาที
+    windows: list[list[float]] = []
+    for a, b in holes:
+        if windows and a - windows[-1][1] < 2.0 and b - windows[-1][0] <= max_window:
+            windows[-1][1] = b
+        else:
+            windows.append([a, b])
+
+    audio, sr = sf.read(wav16k, dtype="float32")
+    audio = audio.mean(axis=1) if audio.ndim > 1 else audio
+    seg_id = max((w.segment for w in words), default=-1) + 1
+    added: list[Word] = []
+    for a, b in windows:
+        lo, hi = max(0.0, a - 0.2), min(len(audio) / sr, b + 0.2)
+        if hi - lo < min_gap:
+            continue
+        segments, _ = _load().transcribe(audio[int(lo * sr): int(hi * sr)], language=language, vad_filter=False,
+                                         word_timestamps=True, beam_size=5, condition_on_previous_text=False)
+        for seg in segments:
+            # เพลงหรือเสียงประกอบล้วน Whisper มักเดาข้อความมั่วออกมา → ทิ้งท่อนที่โมเดลเองไม่มั่นใจ
+            if seg.no_speech_prob > 0.6 or seg.avg_logprob < -1.0 or seg.compression_ratio > 2.4:
+                continue
+            new = [Word(lo + w.start, lo + w.end, w.word, seg_id) for w in seg.words or []
+                   if a - 0.3 <= lo + w.start <= b + 0.3]
+            if new:
+                added += new
+                seg_id += 1
+    if added:
+        import logging
+        logging.getLogger(__name__).info("filled %d transcription gaps: %r", len(windows),
+                                         "".join(w.text for w in added)[:300])
+    return sorted(words + added, key=lambda w: w.start)
+
+
 def clip_text(audio16k, language: Optional[str] = None) -> str:
     """ข้อความทั้งหมดที่พูดในคลิปสั้น ๆ (ไม่ตัดเสียงอุทาน) ใช้เป็นข้อความกำกับเสียงตัวอย่าง"""
     segments, _ = _load().transcribe(audio16k, language=language, vad_filter=False, beam_size=5,

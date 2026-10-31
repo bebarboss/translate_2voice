@@ -118,6 +118,9 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
 
     stage("transcribe", 0.4)
     words, lang = transcribe(wav16k, source_lang)
+    if not settings.mock_pipeline:  # ช่วงที่มีคนพูดแต่ถอดไม่ออก (เพลงดังทับ) → ถอดซ้ำเฉพาะช่วงนั้น
+        from .transcribe import fill_gaps
+        words = fill_gaps(wav16k, words, turns, lang)
     release("transcribe")
     if not words:
         raise RuntimeError("ไม่พบคำพูดในคลิป")

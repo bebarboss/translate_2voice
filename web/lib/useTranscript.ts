@@ -4,10 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Job, type Utterance, type UtteranceEdit } from "./api";
 import { speakerLabel } from "./format";
 
-export type Draft = { target: string; speaker: string };
+export type Draft = { target: string; speaker: string; start: number; end: number; take: number };
 export type Message = { kind: "error" | "info"; text: string } | null;
 
 export const NEW_SPEAKER = "__new__";
+
+export const isChanged = (u: Utterance, d: Draft) =>
+  d.target !== u.target || d.speaker !== u.speaker || d.start !== u.start || d.end !== u.end || d.take !== (u.take ?? 0);
 
 /** บทพากย์ที่กำลังแก้: ร่างที่ยังไม่บันทึก แยก/รวมประโยค และเพิ่มลบตัวละคร ใช้ทั้งหน้าตรวจบทและหน้าผลลัพธ์
  *  now: เวลาที่วิดีโออยู่ตอนนี้ ใช้เป็นจุดแยกเมื่อไม่ได้วางเคอร์เซอร์ในบท */
@@ -25,7 +28,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const applyLines = (u: Utterance[]) => {
     setLines(u);
-    setDrafts(Object.fromEntries(u.map((x) => [x.id, { target: x.target, speaker: x.speaker }])));
+    setDrafts(Object.fromEntries(u.map((x) => [x.id, { target: x.target, speaker: x.speaker, start: x.start, end: x.end, take: x.take ?? 0 }])));
   };
 
   useEffect(() => {
@@ -36,10 +39,11 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const dirty = useMemo(() => (lines ?? []).filter((u) => {
     const d = drafts[u.id];
-    return d && (d.target !== u.target || d.speaker !== u.speaker);
+    return d && isChanged(u, d);
   }), [lines, drafts]);
 
-  const draftOf = (u: Utterance): Draft => drafts[u.id] ?? { target: u.target, speaker: u.speaker };
+  const draftOf = (u: Utterance): Draft =>
+    drafts[u.id] ?? { target: u.target, speaker: u.speaker, start: u.start, end: u.end, take: u.take ?? 0 };
 
   const setDraft = (id: number, patch: Partial<Draft>) =>
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
@@ -51,6 +55,9 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
       const e: UtteranceEdit = { id: u.id };
       if (d.target !== u.target) e.target = d.target;
       if (d.speaker !== u.speaker) e.speaker = d.speaker;
+      if (d.start !== u.start) e.start = d.start;
+      if (d.end !== u.end) e.end = d.end;
+      if (d.take !== (u.take ?? 0)) e.take = d.take;
       return e;
     });
     applyLines(await api.saveTranscript(job.id, edits));

@@ -79,9 +79,10 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const playLine = (u: Utterance) => {
     const v = videoRef.current;
     if (!v) return;
+    const d = tr.draftOf(u);
     setPicked(u.id);
-    v.currentTime = u.start;
-    stopAt.current = u.end + 0.15;
+    v.currentTime = d.start;
+    stopAt.current = d.end + 0.15;
     v.play().catch(() => {});
   };
   const onTime = (v: HTMLVideoElement) => {
@@ -115,8 +116,8 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     }
   };
   const tooLong = (u: Utterance) => {
-    const text = tr.draftOf(u).target;
-    const limit = Math.max(0.3, u.end - u.start) * (settings?.max_speedup ?? 1.35);
+    const { target: text, start, end } = tr.draftOf(u);
+    const limit = Math.max(0.3, end - start) * (settings?.max_speedup ?? 1.35);
     return !!text.trim() && estimateSeconds(text, job.target_lang) > limit;
   };
 
@@ -232,6 +233,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
 
           {sorted.length > 0 && (
             <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={current?.id ?? null} onPick={pick}
+              onRetimed={(sec) => seek(Math.max(0, sec - 1))}
               stemLabel="เสียงต้นฉบับ" />
           )}
           {current && (
@@ -245,7 +247,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
                   </button>
                 </div>
               </div>
-              <LineCard u={current} tr={tr} isLast={idx === sorted.length - 1} tooLong={tooLong(current)}
+              <LineCard u={current} tr={tr} isLast={idx === sorted.length - 1} tooLong={tooLong(current)} retake
                 onSeek={seek} onFocusText={() => { videoRef.current?.pause(); setPicked(current.id); }}
                 tools={<>
                   <button type="button" className="icon-btn" disabled={idx <= 0} onClick={() => pick(sorted[idx - 1])}

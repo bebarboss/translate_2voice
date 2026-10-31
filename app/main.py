@@ -323,7 +323,7 @@ def get_transcript(job_id: str):
 
 @app.put("/jobs/{job_id}/transcript", response_model=list[Utterance], dependencies=[Depends(require_key)])
 def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
-    """แก้บทพากย์หรือป้ายผู้พูดทีละประโยค แล้วเรียก POST /jobs/{id}/synthesize เพื่อพากย์"""
+    """แก้บทพากย์ ป้ายผู้พูด หรือเวลาเริ่ม/จบทีละประโยค แล้วเรียก POST /jobs/{id}/synthesize เพื่อพากย์"""
     job = get_job_or_404(job_id)
     if job.status not in EDITABLE:
         raise HTTPException(409, "แก้บทได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
@@ -343,6 +343,15 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
                 raise HTTPException(400, f"ไม่รู้จักผู้พูด {edit.speaker} มีแค่ {job.speakers}")
             moved |= u.speaker != edit.speaker
             u.speaker = edit.speaker
+        if edit.take is not None:
+            u.take = edit.take
+        if edit.start is not None or edit.end is not None:
+            start = round(edit.start if edit.start is not None else u.start, 3)
+            end = round(edit.end if edit.end is not None else u.end, 3)
+            if end - start < 0.2 or (job.duration and end > job.duration + 0.05):
+                raise HTTPException(400, f"เวลาของประโยค id={edit.id} ไม่ถูกต้อง ต้องยาวอย่างน้อย 0.2 วินาทีและอยู่ในคลิป")
+            moved |= (start, end) != (u.start, u.end)
+            u.start, u.end = start, end
     _save_lines(job, utterances, moved)
     return utterances
 

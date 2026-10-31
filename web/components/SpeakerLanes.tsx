@@ -7,18 +7,46 @@ import type { Transcript } from "@/lib/useTranscript";
 import { XIcon } from "./Icons";
 
 /** เลเยอร์เสียงของแต่ละตัวละครบนเส้นเวลา คลิกบล็อกเพื่อเลือกประโยค ลบตัวละครที่ระบบแยกเกินได้ */
-export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, stemLabel = "ฟังเสียงแยก" }: {
+export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, stemLabel = "ฟังเสียงแยก" }: {
   job: Job;
   tr: Transcript;
   total: number;
   t: number;
-  highlight: number | null; // ประโยคที่เน้น (กำลังพูดหรือที่เลือกไว้)
+  highlight: number | null; // ประโยคที่เน้น (กำลังพูดหรือที่เลือกไว้) มีที่จับให้ลากขอบปรับเวลา
   onPick: (u: Utterance) => void;
+  onRetimed?: (sec: number) => void; // ลากขอบเสร็จ (เวลาของขอบที่ลาก) ใช้เลื่อนวิดีโอไปฟังตรงนั้น
   stemLabel?: string;
 }) {
   const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
   const { speakers, sorted, busy } = tr;
   const playheadPct = `${Math.min(100, (t / Math.max(total, 1e-3)) * 100)}%`;
+  const pct = (sec: number) => `${(sec / total) * 100}%`;
+
+  // ลากที่จับขอบบล็อก: แปลงตำแหน่งเมาส์บนแถบเป็นวินาที ปัดทีละ 0.05 วินาที ประโยคยาวอย่างน้อย 0.2 วินาที
+  const drag = (u: Utterance, edge: "start" | "end") => (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const handle = e.currentTarget;
+    const rect = handle.parentElement!.getBoundingClientRect();
+    handle.setPointerCapture(e.pointerId);
+    let last = tr.draftOf(u)[edge];
+    const move = (ev: PointerEvent) => {
+      const d = tr.draftOf(u);
+      let sec = Math.round(((ev.clientX - rect.left) / rect.width) * total * 20) / 20;
+      sec = edge === "start" ? Math.min(Math.max(0, sec), d.end - 0.2) : Math.max(Math.min(total, sec), d.start + 0.2);
+      last = sec;
+      tr.setDraft(u.id, { [edge]: sec });
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      onRetimed?.(last);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
 
   return (
     <div className="card tight">
@@ -35,17 +63,29 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, ste
               <div className="lane">
                 <div className="who"><span className="swatch" style={{ background: color }} />{speakerLabel(s)}</div>
                 <div className="track">
-                  {own.map((u) => (
-                    <button key={u.id} type="button" className={`block${highlight === u.id ? " on" : ""}`}
-                      aria-label={`${speakerLabel(s)} ${fmtTime(u.start)}`} title={tr.draftOf(u).target}
-                      onClick={() => onPick(u)}
-                      style={{
-                        left: `${(u.start / total) * 100}%`,
-                        width: `${((u.end - u.start) / total) * 100}%`,
-                        background: color,
-                        opacity: highlight === u.id ? 1 : 0.45,
-                      }} />
-                  ))}
+                  {own.map((u) => {
+                    const d = tr.draftOf(u);
+                    return (
+                      <button key={u.id} type="button" className="block"
+                        aria-label={`${speakerLabel(s)} ${fmtTime(d.start)}`} title={d.target}
+                        onClick={() => onPick(u)}
+                        style={{
+                          left: pct(d.start),
+                          width: pct(d.end - d.start),
+                          background: color,
+                          opacity: highlight === u.id ? 1 : 0.45,
+                        }} />
+                    );
+                  })}
+                  {own.filter((u) => u.id === highlight).map((u) => {
+                    const d = tr.draftOf(u);
+                    return [
+                      <div key="s" className="handle" style={{ left: pct(d.start) }} onPointerDown={drag(u, "start")}
+                        title="ลากเพื่อเลื่อนเวลาเริ่ม" aria-hidden="true" />,
+                      <div key="e" className="handle" style={{ left: pct(d.end) }} onPointerDown={drag(u, "end")}
+                        title="ลากเพื่อเลื่อนเวลาจบ" aria-hidden="true" />,
+                    ];
+                  })}
                   <div className="playhead" style={{ left: playheadPct }} />
                 </div>
                 <a href={fileUrl.stem(job.id, s)} target="_blank" rel="noreferrer" className="dim" style={{ flex: "none", color: "var(--accent)" }}>{stemLabel}</a>
