@@ -167,7 +167,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
             onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} />
 
-          <VoiceCast job={{ ...job, speakers }} value={voiceDraft}
+          <VoiceCast job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft}
             onChange={(s, id) => setVoiceDraft((d) => ({ ...d, [s]: id }))} />
         </section>
 

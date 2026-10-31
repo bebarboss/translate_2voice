@@ -61,7 +61,7 @@ export default function VoiceCast({ job, value, onChange }: {
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, width: 150, flex: "none" }}>
                   <span className="row" style={{ gap: 8 }}>
                     <span className="swatch" style={{ background: speakerColor(c.speaker, job.speakers) }} />
-                    {speakerLabel(c.speaker)}
+                    {speakerLabel(c.speaker, job.speaker_names)}
                   </span>
                   <span className="dim">
                     {c.gender ? `น่าจะ${GENDER_LABEL[c.gender]}` : "วัดเสียงไม่ได้"}{c.pitch_hz ? ` · ${Math.round(c.pitch_hz)} Hz` : ""}
@@ -69,7 +69,7 @@ export default function VoiceCast({ job, value, onChange }: {
                 </div>
                 <PreviewButton url={fileUrl.stem(job.id, c.speaker)} playing={preview.playing} onToggle={preview.toggle}
                   label="เสียงเดิม" />
-                <label className="sr-only" htmlFor={`voice-${c.speaker}`}>เสียงพากย์ของ{speakerLabel(c.speaker)}</label>
+                <label className="sr-only" htmlFor={`voice-${c.speaker}`}>เสียงพากย์ของ{speakerLabel(c.speaker, job.speaker_names)}</label>
                 <select id={`voice-${c.speaker}`} className="select" style={{ flex: "1 1 220px", minWidth: 0 }}
                   value={missing ? "" : selected ?? ""}
                   onChange={(e) => onChange(c.speaker, e.target.value || null)}>

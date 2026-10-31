@@ -32,6 +32,7 @@ export interface Job {
   duration: number | null;
   synth_stats: { redubbed: number; reused: number } | null;
   voice_map: Record<string, string>;
+  speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -230,6 +231,8 @@ export const api = {
   mergeLine: (id: string, lineId: number) =>
     request<Utterance[]>(`/jobs/${id}/transcript/${lineId}/merge`, { method: "POST" }),
   addSpeaker: (id: string) => request<Job>(`/jobs/${id}/speakers`, { method: "POST" }),
+  renameSpeaker: (id: string, speaker: string, name: string) =>
+    request<Job>(`/jobs/${id}/speakers/${speaker}`, json("PATCH", { name })),
   removeSpeaker: (id: string, speaker: string, into?: string) =>
     request<Job>(`/jobs/${id}/speakers/${speaker}${into ? `?into=${encodeURIComponent(into)}` : ""}`,
       { method: "DELETE" }),

@@ -29,7 +29,10 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   const cursors = useRef<Record<number, number>>({}); // ตำแหน่งเคอร์เซอร์ล่าสุดในบทของแต่ละประโยค ใช้เป็นจุดแยก
   const [voices, setVoices] = useState<LibraryVoice[]>([]); // ใช้รู้ว่าเสียงในคลังของตัวละครแต่ละตัวมีอารมณ์อะไรบ้าง
 
+  const [names, setNames] = useState<Record<string, string>>(job.speaker_names ?? {});
   useEffect(() => { setSpeakers(job.speakers); }, [job.speakers]);
+  useEffect(() => { setNames(job.speaker_names ?? {}); }, [job.speaker_names]);
+  const label = (s: string) => speakerLabel(s, names);
 
   const applyLines = (u: Utterance[]) => {
     setLines(u);
@@ -126,11 +129,21 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const removeSpeaker = (speaker: string, into: string) =>
     restructure(async () => setSpeakers((await api.removeSpeaker(job.id, speaker, into || undefined)).speakers),
-      into ? `ลบ${speakerLabel(speaker)} ย้ายประโยคไปให้${speakerLabel(into)}แล้ว` : `ลบ${speakerLabel(speaker)}แล้ว`);
+      into ? `ลบ${label(speaker)} ย้ายประโยคไปให้${label(into)}แล้ว` : `ลบ${label(speaker)}แล้ว`);
+
+  /** ตั้งชื่อตัวละคร (ว่าง = กลับไปใช้ "ตัวละคร N") มีผลทันที ไม่ต้องพากย์ใหม่ */
+  const renameSpeaker = async (speaker: string, name: string) => {
+    try {
+      setNames((await api.renameSpeaker(job.id, speaker, name)).speaker_names ?? {});
+      onChanged();
+    } catch (e) {
+      setMessage({ kind: "error", text: (e as Error).message });
+    }
+  };
 
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
-    saveLines, split, merge, changeSpeaker, removeSpeaker, moodsOf,
+    saveLines, split, merge, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
   };
 }
 

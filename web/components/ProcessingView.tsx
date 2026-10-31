@@ -120,11 +120,11 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
                 <div key={s} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, borderRadius: 12, background: "var(--surface-3)" }}>
                   <div className="row" style={{ gap: 8 }}>
                     <span className="swatch" style={{ background: speakerColor(s, job.speakers) }} />
-                    <span>{speakerLabel(s)}</span>
+                    <span>{speakerLabel(s, job.speaker_names)}</span>
                     <span className="dim">{s}</span>
                   </div>
                   <audio controls preload="none" src={fileUrl.stem(job.id, s)} style={{ width: "100%", height: 36 }}
-                    aria-label={`เสียงแยกของ${speakerLabel(s)}`} />
+                    aria-label={`เสียงแยกของ${speakerLabel(s, job.speaker_names)}`} />
                 </div>
               ))}
             </>

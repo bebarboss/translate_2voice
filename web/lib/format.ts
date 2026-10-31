@@ -95,7 +95,9 @@ export function fmtWhen(iso: string): string {
   return `${d.toLocaleDateString("th-TH", { day: "numeric", month: "short" })} ${time}`;
 }
 
-export function speakerLabel(speaker: string): string {
+/** ชื่อตัวละคร: ชื่อที่ผู้ใช้ตั้ง ไม่มีใช้ "ตัวละคร N" */
+export function speakerLabel(speaker: string, names?: Record<string, string>): string {
+  if (names?.[speaker]) return names[speaker];
   const n = Number(speaker.replace(/\D/g, ""));
   return n ? `ตัวละคร ${n}` : speaker;
 }

@@ -91,6 +91,8 @@ class Job(BaseModel):
     speakers: list[str] = Field(default_factory=list)
     # ผู้พูด → id เสียงในคลังที่เลือกให้พากย์ ผู้พูดที่ไม่มีในนี้ใช้เสียงต้นฉบับของตัวเองเป็นตัวอย่าง
     voice_map: dict[str, str] = Field(default_factory=dict)
+    # ผู้พูด → ชื่อที่ผู้ใช้ตั้ง (เช่น "โคนัน") ผู้พูดที่ไม่มีในนี้แสดงเป็น "ตัวละคร N"
+    speaker_names: dict[str, str] = Field(default_factory=dict)
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
@@ -102,6 +104,10 @@ class Job(BaseModel):
 class JobCreated(BaseModel):
     id: str
     status: JobStatus
+
+
+class SpeakerRename(BaseModel):
+    name: str = Field("", max_length=40, description="ว่าง = กลับไปใช้ชื่อเริ่มต้น")
 
 
 class JobOptionsUpdate(BaseModel):

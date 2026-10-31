@@ -24,7 +24,7 @@ from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate, Mood,
-                      RuntimeSettings, RuntimeSettingsUpdate, SpeakerVoice, Utterance, UtteranceEdit,
+                      RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
 
@@ -492,6 +492,19 @@ def add_speaker(job_id: str):
     return store.update(job_id, speakers=job.speakers + [f"speaker_{n:02d}"])
 
 
+@app.patch("/jobs/{job_id}/speakers/{speaker}", response_model=Job, dependencies=[Depends(require_key)])
+def rename_speaker(job_id: str, speaker: str, body: SpeakerRename):
+    """ตั้งชื่อตัวละคร ใช้แสดงในหน้าเว็บอย่างเดียว ไม่กระทบเสียงพากย์ จึงแก้ได้ทุกเมื่อ"""
+    job = get_job_or_404(job_id)
+    if speaker not in job.speakers:
+        raise HTTPException(404, f"ไม่รู้จักผู้พูด {speaker}")
+    name = " ".join(body.name.split())
+    names = {s: n for s, n in job.speaker_names.items() if s != speaker}
+    if name:
+        names[speaker] = name
+    return store.update(job_id, speaker_names=names)
+
+
 @app.delete("/jobs/{job_id}/speakers/{speaker}", response_model=Job, dependencies=[Depends(require_key)])
 def remove_speaker(job_id: str, speaker: str, into: Optional[str] = None):
     """ลบตัวละคร (ระบบแยกคนเดียวเป็นสองตัวละคร) ประโยคของตัวละครนี้ย้ายไปให้ into"""
@@ -507,7 +520,8 @@ def remove_speaker(job_id: str, speaker: str, into: Optional[str] = None):
         u.speaker = into
     speakers = [s for s in job.speakers if s != speaker]
     voice_map = {s: v for s, v in job.voice_map.items() if s != speaker}
-    job = store.update(job_id, speakers=speakers, voice_map=voice_map)
+    names = {s: n for s, n in job.speaker_names.items() if s != speaker}
+    job = store.update(job_id, speakers=speakers, voice_map=voice_map, speaker_names=names)
     _save_lines(job, utterances, True)
     return job
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { fileUrl, type Job, type Utterance } from "@/lib/api";
-import { fmtTime, speakerColor, speakerLabel } from "@/lib/format";
+import { fmtTime, speakerColor } from "@/lib/format";
 import type { Transcript } from "@/lib/useTranscript";
 import { XIcon } from "./Icons";
 
@@ -18,6 +18,12 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   stemLabel?: string;
 }) {
   const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
+  const [naming, setNaming] = useState<{ speaker: string; name: string } | null>(null);
+  const speakerLabel = tr.label;
+  const finishNaming = () => {
+    if (naming && naming.name.trim() !== (tr.names[naming.speaker] ?? "")) tr.renameSpeaker(naming.speaker, naming.name.trim());
+    setNaming(null);
+  };
   const { speakers, sorted, busy } = tr;
   const playheadPct = `${Math.min(100, (t / Math.max(total, 1e-3)) * 100)}%`;
   const pct = (sec: number) => `${(sec / total) * 100}%`;
@@ -61,7 +67,22 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
           return (
             <div key={s} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div className="lane">
-                <div className="who"><span className="swatch" style={{ background: color }} />{speakerLabel(s)}</div>
+                <div className="who">
+                  <span className="swatch" style={{ background: color }} />
+                  {naming?.speaker === s ? (
+                    <input className="who-input" autoFocus maxLength={40} value={naming.name} placeholder={speakerLabel(s)}
+                      aria-label={`ชื่อของ${speakerLabel(s)}`}
+                      onChange={(e) => setNaming({ speaker: s, name: e.target.value })}
+                      onBlur={finishNaming}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") finishNaming();
+                        if (e.key === "Escape") setNaming(null);
+                      }} />
+                  ) : (
+                    <button type="button" className="who-name" title="คลิกเพื่อตั้งชื่อตัวละคร"
+                      onClick={() => setNaming({ speaker: s, name: tr.names[s] ?? "" })}>{speakerLabel(s)}</button>
+                  )}
+                </div>
                 <div className="track">
                   {own.map((u) => {
                     const d = tr.draftOf(u);
@@ -113,7 +134,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
           );
         })}
       </div>
-      <span className="dim">แยกเสียงผิด? คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวมเข้าตัวอื่น · สองคนถูกรวมเป็นตัวเดียว เลือก “+ ตัวละครใหม่” ในช่องตัวละครของประโยค · สองคนพูดในประโยคเดียว กด “แยกประโยค”</span>
+      <span className="dim">แยกเสียงผิด? คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวมเข้าตัวอื่น · สองคนถูกรวมเป็นตัวเดียว เลือก “+ ตัวละครใหม่” ในช่องตัวละครของประโยค · สองคนพูดในประโยคเดียว กด “แยกประโยค” · คลิกชื่อตัวละครเพื่อตั้งชื่อ</span>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api, checkFile, fileUrl, type Fonts, type Job, type RuntimeSettings, type SubtitleStyle, type Utterance,
 } from "@/lib/api";
-import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor, speakerLabel } from "@/lib/format";
+import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor } from "@/lib/format";
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import SpeakerLanes from "./SpeakerLanes";
@@ -318,7 +318,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
             {speakerStems.map((s) => (
               <div key={s} className="row" style={{ fontSize: 14 }}>
                 <span className="swatch" style={{ background: speakerColor(s, job.speakers) }} />
-                <span style={{ flex: 1 }}>{speakerLabel(s)} · เสียงต้นฉบับ</span>
+                <span style={{ flex: 1 }}>{tr.label(s)} · เสียงต้นฉบับ</span>
                 <a href={fileUrl.stem(job.id, s)} download>ดาวน์โหลด</a>
               </div>
             ))}

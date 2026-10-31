@@ -2,7 +2,7 @@
 
 import type { ReactNode, Ref } from "react";
 import type { Utterance } from "@/lib/api";
-import { MOOD_LABEL, fmtTime, speakerColor, speakerLabel } from "@/lib/format";
+import { MOOD_LABEL, fmtTime, speakerColor } from "@/lib/format";
 import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
 import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon } from "./Icons";
 
@@ -43,7 +43,7 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
         <label className="sr-only" htmlFor={`spk-${u.id}`}>ตัวละครของประโยคที่ {u.id}</label>
         <select id={`spk-${u.id}`} className="spk-select" value={d.speaker} disabled={tr.busy === "edit"}
           onChange={(e) => tr.changeSpeaker(u, e.target.value)}>
-          {tr.speakers.map((s) => <option key={s} value={s}>{speakerLabel(s)}</option>)}
+          {tr.speakers.map((s) => <option key={s} value={s}>{tr.label(s)}</option>)}
           <option value={NEW_SPEAKER}>+ ตัวละครใหม่</option>
         </select>
         {showMood && (
