@@ -57,6 +57,7 @@ export function stageLabel(stage: string): string {
 /** ขั้นย่อยของแต่ละขั้นใหญ่ ใช้แสดงในหน้ากำลังประมวลผล */
 export function stepsFor(job: Job): string[] {
   if (job.phase === "render") return ["burn_subs"];
+  if (job.phase === "translate") return ["translate", "fit_lengths"];
   if (job.phase === "synthesize") {
     return ["tts", "mix", "mux_video", ...(job.burn_subs ? ["burn_subs"] : [])];
   }
@@ -126,6 +127,9 @@ export const MOODS = Object.keys(MOOD_LABEL) as Mood[];
 /** สตางค์ → "1,234 บาท" (มีเศษสตางค์แสดงทศนิยม) */
 export const fmtBaht = (satang: number) =>
   `${(satang / 100).toLocaleString("th-TH", { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 })} บาท`;
+
+/** แนวเรื่องที่เลือกได้ทันที ใช้ช่วย AI เลือกสรรพนามตอนแปล (พิมพ์เองได้) */
+export const GENRES = ["การ์ตูนเด็ก", "อนิเมะ", "ละครจีนโบราณ", "ละครจีนสมัยใหม่", "ซีรีส์เกาหลี", "หนังแอ็กชัน", "หนังตลก", "สารคดี"];
 
 /** หมวดหมู่เสียงที่เลือกได้ทันที (เพิ่มหมวดเองได้ในหน้าคลังเสียง) */
 export const VOICE_CATEGORIES = ["ละคร", "หนัง", "การ์ตูน", "อนิเมะ", "สารคดี", "โฆษณา"];

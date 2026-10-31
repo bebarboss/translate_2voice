@@ -201,3 +201,7 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 500; }
 .chip-input { height: 30px; width: 110px; padding: 0 12px; border-radius: 999px; border: 1px dashed var(--border-2); background: transparent; color: inherit; font: inherit; font-size: 13px; }
 .badge.category { background: rgba(255, 138, 76, .14); color: var(--accent); }
+
+/* แปลใหม่ทั้งเรื่อง */
+.retranslate summary { cursor: pointer; font-weight: 500; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.retranslate[open] summary { margin-bottom: 4px; }

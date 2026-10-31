@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, uploadJob, type CreateOptions, type Job, type TargetLang } from "@/lib/api";
-import { LANGS, TARGET_LABEL, langName } from "@/lib/format";
+import { GENRES, LANGS, TARGET_LABEL, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { ArrowRight, LinkIcon, UploadIcon } from "@/components/Icons";
 
@@ -19,6 +19,8 @@ export default function UploadPage() {
   const [sourceLang, setSourceLang] = useState("");
   const [targetLang, setTargetLang] = useState<TargetLang>("th");
   const [speakers, setSpeakers] = useState("");
+  const [genre, setGenre] = useState("");
+  const [glossary, setGlossary] = useState("");
   const [review, setReview] = useState(true);
   const [burnSubs, setBurnSubs] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,7 +56,7 @@ export default function UploadPage() {
     setError("");
     setBusy(true);
     const opts: CreateOptions = {
-      sourceLang, targetLang, review, burnSubs,
+      sourceLang, targetLang, review, burnSubs, genre: genre.trim(), glossary: glossary.trim(),
       numSpeakers: speakers ? Number(speakers) : null,
     };
     try {
@@ -158,7 +160,20 @@ export default function UploadPage() {
           <span className="t"><span>ฝังซับในวิดีโอ</span><small>ได้ไฟล์ SRT แยกมาเสมอ</small></span>
           <input type="checkbox" checked={burnSubs} onChange={(e) => setBurnSubs(e.target.checked)} />
         </label>
+        <div className="card tight field">
+          <label htmlFor="genre">แนวเรื่อง (ถ้ารู้)</label>
+          <input id="genre" className="input" list="genres" maxLength={80} placeholder="ให้ AI เดาจากชื่อคลิป"
+            value={genre} onChange={(e) => setGenre(e.target.value)} />
+          <datalist id="genres">{GENRES.map((g) => <option key={g} value={g} />)}</datalist>
+        </div>
       </section>
+
+      <details className="card tight retranslate">
+        <summary>ชื่อเฉพาะ <span className="dim">ไม่ใส่ก็ได้ ช่วยให้ชื่อตัวละครและสถานที่สะกดตรงกับฉบับไทย</span></summary>
+        <label className="sr-only" htmlFor="glossary">ชื่อเฉพาะ บรรทัดละคำ</label>
+        <textarea id="glossary" className="textarea" rows={4} maxLength={2000}
+          placeholder={"บรรทัดละคำ เช่น\nドラえもん = โดราเอมอน\nのび太 = โนบิตะ"} value={glossary} onChange={(e) => setGlossary(e.target.value)} />
+      </details>
 
       {error && <div className="alert error" role="alert">{error}</div>}
 

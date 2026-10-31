@@ -60,7 +60,8 @@ def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word]
 
 def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          on_progress: Optional[Callable[[float], None]] = None,
-                         check_cancel: Optional[Callable[[], None]] = None, title: str = "") -> None:
+                         check_cancel: Optional[Callable[[], None]] = None, title: str = "",
+                         hints: Optional[dict] = None) -> None:
     for i, u in enumerate(utts):
         if check_cancel:
             check_cancel()

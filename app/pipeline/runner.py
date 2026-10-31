@@ -20,8 +20,8 @@ import soundfile as sf
 from .. import runtime_settings
 from ..config import settings
 from ..jobs import JobStore
-from ..schemas import SynthStats
-from . import audio, gpu, mix, pauses, subs, tts
+from ..schemas import SynthStats, Utterance
+from . import audio, gpu, hallucination, mix, pauses, subs, tts
 from .diarize import export_speaker_stems, load_turns, overlap_ratio, save_turns
 
 log = logging.getLogger("dubbing.runner")
@@ -48,12 +48,10 @@ def _stage(store: JobStore, job_id: str):
 
 # ---------------------------------------------------------------- analyze
 def run_analyze(store: JobStore, job_id: str) -> None:
-    translate, fit_lengths = _impl()
     job = store.get(job_id)
     d = store.dir(job_id)
     stage = _stage(store, job_id)
     cancel = lambda: store.check_cancel(job_id)  # noqa: E731
-    rs = runtime_settings.get()
 
     if job.source_url and not (job.input_path and Path(job.input_path).exists()):
         from .download import download
@@ -85,19 +83,42 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     # เก็บเวลาของแต่ละคำไว้ เผื่อแบ่งท่อนใหม่ภายหลัง
     (d / "words.json").write_text(json.dumps([w.__dict__ for w in words], ensure_ascii=False), encoding="utf-8")
     store.update(job_id, detected_lang=lang)
+    utterances = hallucination.clean(utterances)
     store.save_transcript(job_id, utterances)
 
-    stage("translate", 0.55)
+    _translate_and_fit(store, job_id, utterances, lang, 0.55, 0.72)
+
+
+def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance], lang: str,
+                       lo: float, hi: float) -> None:
+    """แปลแล้วย่อบทให้พอดีเวลา ใช้แนวเรื่อง คำเฉพาะ และชื่อตัวละครของงานช่วยแปล"""
+    translate, fit_lengths = _impl()
+    job = store.get(job_id)
+    stage = _stage(store, job_id)
+    cancel = lambda: store.check_cancel(job_id)  # noqa: E731
+    hints = {"genre": job.genre, "glossary": job.glossary, "names": job.speaker_names}
+    span = hi - lo
+    stage("translate", lo)
     translate(utterances, lang, job.target_lang,
-              on_progress=lambda f: stage("translate", 0.55 + 0.13 * f), check_cancel=cancel,
-              title=Path(job.filename or "").stem)
+              on_progress=lambda f: stage("translate", lo + span * 0.75 * f), check_cancel=cancel,
+              title=Path(job.filename or "").stem, hints=hints)
     _free_vram("translate")
     store.save_transcript(job_id, utterances)
 
-    stage("fit_lengths", 0.69)
-    fit_lengths(utterances, job.target_lang, rs.max_speedup)
+    stage("fit_lengths", lo + span * 0.8)
+    fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
-    stage("analyzed", 0.72)
+    stage("analyzed", hi)
+
+
+def run_translate(store: JobStore, job_id: str) -> None:
+    """แปลบทใหม่ทั้งหมดจากบทถอดเสียงเดิม (ไม่ถอดเสียงใหม่) เช่น หลังตั้งชื่อตัวละครหรือแนวเรื่อง
+    บทที่แก้เองไว้จะถูกแทนด้วยคำแปลใหม่ ตัวละคร เวลา และอารมณ์ของแต่ละประโยคคงเดิม"""
+    job = store.get(job_id)
+    utterances = hallucination.clean(store.load_transcript(job_id))
+    for u in utterances:
+        u.target = ""
+    _translate_and_fit(store, job_id, utterances, job.detected_lang or job.source_lang or "", 0.0, 1.0)
 
 
 # ---------------------------------------------------------------- synthesize

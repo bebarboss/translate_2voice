@@ -34,10 +34,13 @@ LANG_NAMES_EN = {
 SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์ละครมืออาชีพ แปลบทพูดเป็นภาษาไทยสำหรับให้นักพากย์อ่าน
 กฎ:
 1. ใช้ภาษาพูดที่เป็นธรรมชาติแบบคนไทยคุยกันจริง ไม่แปลตรงตัว
-2. เลือกสรรพนามและคำลงท้ายให้เข้ากับตัวละคร ความสัมพันธ์ และแนวเรื่อง (เช่น ละครจีนโบราณใช้ ข้า/เจ้า, ละครสมัยใหม่ใช้ ฉัน/นาย/เธอ) และใช้ให้คงที่ตลอดเรื่อง ดูแนวเรื่องได้จาก title
+2. เลือกสรรพนามและคำลงท้ายให้เข้ากับตัวละคร ความสัมพันธ์ และแนวเรื่อง และใช้ให้คงที่ตลอดเรื่อง ถ้ามี genre ให้ยึดตาม genre ไม่งั้นเดาจาก title
+   เช่น ละครจีนโบราณ/กำลังภายใน ใช้ ข้า/เจ้า, ละครหรือหนังสมัยใหม่ ใช้ ฉัน/ผม/นาย/เธอ, การ์ตูนเด็ก ใช้ ฉัน/ผม/นาย/เธอ แบบเด็กพูดกัน ห้ามใช้ ข้า/เจ้า
+   speaker คือชื่อตัวละครที่พูด (ถ้ารู้) ใช้เลือกสรรพนามให้เข้ากับคนพูด
 3. คงอารมณ์ของต้นฉบับ (โกรธ เยาะเย้ย อ้อนวอน เศร้า ตกใจ) ด้วยคำลงท้ายและคำอุทานที่คนไทยใช้จริง และใส่เครื่องหมาย ! ? … ตามน้ำเสียง เพราะนักพากย์ใช้เครื่องหมายเหล่านี้กำหนดน้ำเสียง
-4. ความยาวของแต่ละท่อนต้องพูดจบได้ภายในเวลา seconds ของท่อนนั้น ที่ความเร็วพูดปกติประมาณ 6 พยางค์ต่อวินาที ถ้ายาวเกินให้ย่อโดยคงความหมายหลัก
-5. ชื่อคนและสถานที่ ให้ถอดเสียงเป็นอักษรไทยแบบเดียวกันทุกครั้ง
+4. แต่ละท่อนมี max_chars คือจำนวนตัวอักษรไทยมากสุดที่พูดทันในเวลานั้นด้วยความเร็วปกติ (ไม่นับสระบน สระล่าง และวรรณยุกต์) ห้ามเกิน
+   ถ้าต้นฉบับพูดเร็วหรือยาว ให้เก็บใจความหลักแล้วตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นออก บทสั้นที่พูดสบายดีกว่าบทครบที่ต้องรีบพูด
+5. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
 6. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
 7. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
@@ -45,16 +48,16 @@ SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each 
 Rules:
 1. Use natural, conversational English that fits the character and the genre (infer the genre from "title"); do not translate word for word.
 2. Keep the emotion of the original (anger, mockery, pleading, grief, shock) and mark it with ! ? … where the tone calls for it, because the voice actor reads the tone from punctuation.
-3. Keep each part short enough to be spoken within its "seconds" value at about 2.5 words per second. Shorten if needed while keeping the core meaning.
-4. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time.
+3. Each part has "max_words", the most words that can be spoken in its time at a natural pace. Never exceed it: keep the core meaning and drop filler. A short line spoken comfortably beats a complete line that has to be rushed.
+4. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
 5. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
 6. Reply with JSON only, no explanations."""
 
-SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้พูดจบได้ภายใน seconds วินาที (ประมาณ 6 พยางค์ต่อวินาที)
-คงความหมายและอารมณ์ของตัวละครไว้ ใช้ภาษาพูดที่เป็นธรรมชาติ
+SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
+คงความหมายหลักและอารมณ์ของตัวละครไว้ ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็น ใช้ภาษาพูดที่เป็นธรรมชาติ ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
-SHORTEN_PROMPT_EN = """Shorten each English dubbing line so it can be spoken within its "seconds" value (about 2.5 words per second).
+SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
 Keep the meaning and the character's emotion, and keep it natural spoken English.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
@@ -88,6 +91,31 @@ def estimate_seconds(text: str, target_lang: str = "th") -> float:
         return len(text.split()) / settings.en_words_per_sec
     base = sum(1 for ch in text if not ch.isspace() and unicodedata.category(ch) != "Mn")
     return base / settings.thai_chars_per_sec
+
+
+def max_length(seconds: float, target_lang: str = "th") -> int:
+    """ความยาวบทมากสุดที่พูดทันในเวลานี้ด้วยความเร็วปกติ (ไทย = ตัวอักษรแบบ estimate_seconds, อังกฤษ = คำ)"""
+    rate = settings.en_words_per_sec if target_lang == "en" else settings.thai_chars_per_sec
+    return max(1, int(seconds * rate))
+
+
+def budgets(utts: list[Utterance]) -> dict[int, float]:
+    """เวลาที่ใช้พูดแต่ละท่อนได้จริง: ช่วงที่นักแสดงพูด บวกช่วงเงียบก่อนประโยคถัดไปอีกเล็กน้อย
+    (ตอนพากย์ยอมให้เสียงล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป)"""
+    order = sorted(utts, key=lambda u: u.start)
+    out = {}
+    for i, u in enumerate(order):
+        gap = (order[i + 1].start - u.end) if i + 1 < len(order) else settings.fit_slack
+        out[u.id] = u.duration + min(max(gap, 0.0), settings.fit_slack)
+    return out
+
+
+def _speaker_label(speaker: str, hints: dict) -> str:
+    return (hints.get("names") or {}).get(speaker) or speaker
+
+
+def _glossary(hints: dict) -> list[str]:
+    return [line.strip() for line in (hints.get("glossary") or "").splitlines() if line.strip()][:60]
 
 
 def _parse_json(text: str) -> dict:
@@ -189,14 +217,22 @@ def _group_batches(groups: list[list[Utterance]], max_lines: int):
 
 
 def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
-                   context: list[Utterance], title: str = "") -> tuple[str, str]:
+                   context: list[Utterance], title: str = "", hints: Optional[dict] = None) -> tuple[str, str]:
     names = LANG_NAMES_EN if target == "en" else LANG_NAMES
+    hints = hints or {}
+    budget = hints.get("budgets") or {}
+    limit_key = "max_words" if target == "en" else "max_chars"
+    glossary = _glossary(hints)
     payload = {
         "title": title,
+        **({"genre": hints["genre"]} if hints.get("genre") else {}),
+        **({"glossary": glossary} if glossary else {}),
         "source_language": names.get(lang, lang),
-        "previous_lines": [{"speaker": u.speaker, "text": u.target} for u in context],
-        "sentences": [{"id": g[0].id, "speaker": g[0].speaker,
-                       "parts": [{"seconds": round(u.duration, 1), "text": u.source} for u in g]}
+        "previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context],
+        "sentences": [{"id": g[0].id, "speaker": _speaker_label(g[0].speaker, hints),
+                       "parts": [{"seconds": round(budget.get(u.id, u.duration), 1),
+                                  limit_key: max_length(budget.get(u.id, u.duration), target),
+                                  "text": u.source} for u in g]}
                       for g in groups],
     }
     if target == "en":
@@ -213,12 +249,12 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
 
 
 def _translate_groups(groups: list[list[Utterance]], lang: str, target: str, context: list[Utterance],
-                      title: str = "") -> None:
+                      title: str = "", hints: Optional[dict] = None) -> None:
     pending = groups
     foreign: dict[int, list[str]] = {}  # คำตอบที่ครบแต่มีอักษรต้นฉบับปน ไว้ใช้เมื่อแปลใหม่แล้วยังไม่ผ่าน
     single = len(groups) == 1 and len(groups[0]) == 1
     for attempt in range(3 if single else 2):
-        system, user = _groups_prompt(pending, lang, target, context, title)
+        system, user = _groups_prompt(pending, lang, target, context, title, hints)
         # จำกัดความยาวคำตอบตามจำนวนท่อน บางครั้งโมเดลพิมพ์วนไม่หยุดเป็นหมื่นตัวอักษร ทั้งช้าและอ่าน JSON ไม่ออก
         # รอบที่ลองใหม่เพิ่มความสุ่ม คำตอบจะได้ไม่พังซ้ำแบบเดิม
         max_tokens = min(4096, 400 + 200 * sum(map(len, pending)))
@@ -251,11 +287,11 @@ def _translate_groups(groups: list[list[Utterance]], lang: str, target: str, con
     done = lambda: [u for g in groups for u in g if u.target]  # noqa: E731
     if len(pending) > 1:  # คำตอบยาวจนถูกตัดหรืออ่านไม่ออก → แบ่งครึ่งแล้วแปลใหม่
         mid = len(pending) // 2
-        _translate_groups(pending[:mid], lang, target, context, title)
-        _translate_groups(pending[mid:], lang, target, (context + done())[-6:], title)
+        _translate_groups(pending[:mid], lang, target, context, title, hints)
+        _translate_groups(pending[mid:], lang, target, (context + done())[-6:], title, hints)
     elif len(pending[0]) > 1:  # แบ่งท่อนให้ตรงไม่ได้ → แปลทีละท่อน
         for u in pending[0]:
-            _translate_groups([[u]], lang, target, (context + done())[-6:], title)
+            _translate_groups([[u]], lang, target, (context + done())[-6:], title, hints)
     else:
         _translate_plain(pending[0][0], lang, target, context, foreign.get(pending[0][0].id))
 
@@ -317,7 +353,10 @@ def unload() -> None:
 # ---------------- ฟังก์ชันหลัก ----------------
 def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          on_progress: Optional[Callable[[float], None]] = None,
-                         check_cancel: Optional[Callable[[], None]] = None, title: str = "") -> None:
+                         check_cancel: Optional[Callable[[], None]] = None, title: str = "",
+                         hints: Optional[dict] = None) -> None:
+    """hints: genre (แนวเรื่อง), glossary (ชื่อเฉพาะ บรรทัดละคำ เช่น ドラえもん = โดราเอมอน), names (ผู้พูด → ชื่อตัวละคร)"""
+    hints = {**(hints or {}), "budgets": budgets(utts)}
     if lang == target:
         for u in utts:
             u.target = u.target or u.source
@@ -340,7 +379,7 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         if check_cancel:
             check_cancel()
         context = [u for u in utts if u.target and u.id < batch[0][0].id][-6:]
-        _translate_groups(batch, lang, target, context, title)
+        _translate_groups(batch, lang, target, context, title, hints)
         done += sum(map(len, batch))
         if on_progress:
             on_progress(done / len(utts))
@@ -378,23 +417,38 @@ def proofread(utts: list[Utterance], target: str = "th",
 
 
 def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35) -> None:
-    """ย่อบทที่คาดว่าพูดไม่ทันเวลา แม้จะเร่งความเร็วสูงสุดแล้ว"""
+    """ย่อบทที่คาดว่ายาวเกินเวลาที่มี ให้พูดได้ด้วยความเร็วปกติ (เดิมย่อเฉพาะบทที่เร่งสุดแล้วยังไม่ทัน เสียงจึงรีบ)
+    ย่อสองรอบ รอบสองเฉพาะบรรทัดที่ยังยาวเกิน"""
     if not settings.typhoon_api_key:
         return
-    too_long = [u for u in utts
-                if u.duration > 0 and estimate_seconds(u.target, target) > u.duration * max_speedup]
-    for batch in _chunks(too_long, settings.translate_batch_size):
-        shorten(batch, target)
+    tolerance = min(max_speedup, settings.fit_tolerance)
+    budget = budgets(utts)
+    for _ in range(2):
+        too_long = [u for u in utts if u.duration > 0 and u.target
+                    and estimate_seconds(u.target, target) > budget[u.id] * tolerance]
+        if not too_long:
+            return
+        log.info("shorten %d lines: %s", len(too_long), [u.id for u in too_long])
+        for batch in _chunks(too_long, settings.translate_batch_size):
+            shorten(batch, target, budgets=budget)
 
 
-def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.0) -> None:
-    payload = [{"id": u.id, "seconds": round(u.duration * target_ratio, 1), "text": u.target} for u in batch]
+def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.0,
+            budgets: Optional[dict[int, float]] = None) -> None:
+    limit_key = "max_words" if target == "en" else "max_chars"
+    payload = []
+    for u in batch:
+        sec = (budgets or {}).get(u.id, u.duration) * target_ratio
+        payload.append({"id": u.id, "seconds": round(sec, 1), limit_key: max_length(sec, target), "text": u.target})
     prompt = SHORTEN_PROMPT_EN if target == "en" else SHORTEN_PROMPT_TH
     try:
         result = _parse_json(_chat(prompt, json.dumps({"lines": payload}, ensure_ascii=False)))
         by_id = {int(x["id"]): _item_text(x) for x in result.get("lines", []) if "id" in x}
         for u in batch:
-            if by_id.get(u.id) and not FOREIGN_SCRIPT.search(by_id[u.id]):
-                u.target = by_id[u.id]
+            text = by_id.get(u.id)
+            # ใช้เฉพาะคำตอบที่สั้นลงจริง บางครั้งโมเดลคืนบทเดิมหรือยาวขึ้น
+            if (text and not FOREIGN_SCRIPT.search(text)
+                    and estimate_seconds(text, target) < estimate_seconds(u.target, target)):
+                u.target = text
     except Exception as exc:  # noqa: BLE001  ย่อไม่ได้ก็ใช้บทเดิม แล้วไปเร่งความเร็วแทน
         log.warning("shorten failed: %s", exc)

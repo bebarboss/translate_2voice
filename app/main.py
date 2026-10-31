@@ -24,7 +24,7 @@ from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate, Mood,
-                      RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerVoice, Utterance, UtteranceEdit,
+                      Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
 
@@ -256,6 +256,8 @@ async def create_job(
     num_speakers: Optional[int] = Form(None, ge=1, le=20, description="จำนวนตัวละคร ถ้ารู้ ช่วยให้แยกผู้พูดแม่นขึ้น"),
     review: Optional[bool] = Form(None, description="true = หยุดรอให้ตรวจแก้บทก่อนพากย์"),
     burn_subs: Optional[bool] = Form(None, description="true = ฝังซับลงวิดีโอด้วย"),
+    genre: str = Form("", max_length=80, description="แนวเรื่อง เช่น การ์ตูนเด็ก ละครจีนโบราณ ช่วยเลือกสรรพนามตอนแปล"),
+    glossary: str = Form("", max_length=2000, description="ชื่อเฉพาะและคำแปล บรรทัดละคำ เช่น ドラえもん = โดราเอมอน"),
 ):
     owner = current_user_id(request)
     if owner:
@@ -302,6 +304,8 @@ async def create_job(
         num_speakers=num_speakers,
         review=rs.default_review if review is None else review,
         burn_subs=rs.default_burn_subs if burn_subs is None else burn_subs,
+        genre=genre.strip(),
+        glossary=glossary.strip(),
         owner=owner,
     ))
     worker.submit(job.id, "analyze")
@@ -524,6 +528,23 @@ def remove_speaker(job_id: str, speaker: str, into: Optional[str] = None):
     job = store.update(job_id, speakers=speakers, voice_map=voice_map, speaker_names=names)
     _save_lines(job, utterances, True)
     return job
+
+
+@app.post("/jobs/{job_id}/retranslate", response_model=JobCreated, status_code=202,
+          dependencies=[Depends(require_key)])
+def retranslate(job_id: str, body: Retranslate):
+    """แปลบทใหม่ทั้งหมดจากบทถอดเสียงเดิม ใช้แนวเรื่อง คำเฉพาะ และชื่อตัวละครที่ตั้งไว้ แล้วรอตรวจบท
+    บทที่แก้เองไว้จะถูกแทน ตัวละคร เวลา และอารมณ์ของแต่ละประโยคคงเดิม"""
+    job = get_job_or_404(job_id)
+    if job.status in ACTIVE:
+        raise HTTPException(409, "งานกำลังทำงานอยู่")
+    if not store.load_transcript(job_id):
+        raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นถอดเสียงเสร็จก่อน")
+    fields = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if fields:
+        store.update(job_id, **fields)
+    worker.submit(job_id, "translate")
+    return JobCreated(id=job_id, status=JobStatus.queued)
 
 
 @app.post("/jobs/{job_id}/synthesize", response_model=JobCreated, status_code=202,

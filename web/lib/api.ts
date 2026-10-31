@@ -26,6 +26,8 @@ export interface Job {
   target_lang: TargetLang;
   num_speakers: number | null;
   review: boolean;
+  genre?: string;
+  glossary?: string;
   burn_subs: boolean;
   sub_style: SubtitleStyle | null;
   speakers: string[];
@@ -158,6 +160,8 @@ export interface CreateOptions {
   numSpeakers: number | null;
   review: boolean;
   burnSubs: boolean;
+  genre: string;
+  glossary: string;
 }
 
 const BASE = "/api";
@@ -241,6 +245,8 @@ export const api = {
   removeSpeaker: (id: string, speaker: string, into?: string) =>
     request<Job>(`/jobs/${id}/speakers/${speaker}${into ? `?into=${encodeURIComponent(into)}` : ""}`,
       { method: "DELETE" }),
+  retranslate: (id: string, body: { genre?: string; glossary?: string }) =>
+    request<{ id: string }>(`/jobs/${id}/retranslate`, json("POST", body)),
   synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
   listStems: (id: string) => request<string[]>(`/jobs/${id}/stems`),
   jobVoices: (id: string) => request<SpeakerVoice[]>(`/jobs/${id}/voices`),
@@ -300,6 +306,8 @@ function buildForm(opts: CreateOptions): FormData {
   if (opts.numSpeakers) form.append("num_speakers", String(opts.numSpeakers));
   form.append("review", String(opts.review));
   form.append("burn_subs", String(opts.burnSubs));
+  if (opts.genre) form.append("genre", opts.genre);
+  if (opts.glossary) form.append("glossary", opts.glossary);
   return form;
 }
 

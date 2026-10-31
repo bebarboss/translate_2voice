@@ -145,7 +145,7 @@ class Worker:
     """รับงานจากคิว
 
     phase: analyze (ดาวน์โหลด/แยกเสียง/ถอดเสียง/แปล), synthesize (พากย์และรวมวิดีโอ),
-    render (ฝังซับลงวิดีโอใหม่อย่างเดียว), voice (เตรียมเสียงในคลัง ใช้การ์ดจอเหมือนกันจึงเข้าคิวเดียวกัน)
+    render (ฝังซับลงวิดีโอใหม่อย่างเดียว), translate (แปลบทใหม่จากบทถอดเสียงเดิม), voice (เตรียมเสียงในคลัง ใช้การ์ดจอเหมือนกันจึงเข้าคิวเดียวกัน)
     WORKER=local รันทีละงาน (การ์ดจอใบเดียว) WORKER=modal รันพร้อมกันได้ MODAL_MAX_JOBS งาน แต่ละงานได้ GPU ของตัวเอง
     """
 
@@ -191,6 +191,10 @@ class Worker:
                 if phase == "render":
                     runner.run_render(self.store, job_id)
                     self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+                    continue
+                if phase == "translate":  # แปลบทใหม่ แล้วรอให้ตรวจก่อนพากย์ใหม่เสมอ
+                    runner.run_translate(self.store, job_id)
+                    self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
                     continue
                 if phase == "analyze":
                     runner.run_analyze(self.store, job_id)

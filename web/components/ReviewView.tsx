@@ -6,6 +6,7 @@ import { api, fileUrl, type Job, type Utterance } from "@/lib/api";
 import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName } from "@/lib/format";
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
+import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
 import VoiceCast from "./VoiceCast";
@@ -146,6 +147,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
         <div className="alert info">แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม</div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
+
+      <RetranslatePanel job={job} names={tr.names} onStarted={onChanged} />
 
       <div className="split">
         <section className="main" aria-label="วิดีโอ">

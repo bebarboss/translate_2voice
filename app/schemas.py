@@ -86,6 +86,8 @@ class Job(BaseModel):
     target_lang: TargetLang = "th"
     num_speakers: Optional[int] = None
     review: bool = False
+    genre: str = ""  # แนวเรื่อง เช่น การ์ตูนเด็ก ละครจีนโบราณ ใช้เลือกสรรพนามตอนแปล
+    glossary: str = ""  # ชื่อเฉพาะและคำแปลที่ต้องใช้ บรรทัดละคำ เช่น ドラえもん = โดราเอมอน
     burn_subs: bool = False
     sub_style: Optional[SubtitleStyle] = None  # None = ใช้ค่าเริ่มต้นจากหน้าตั้งค่า
     speakers: list[str] = Field(default_factory=list)
@@ -104,6 +106,11 @@ class Job(BaseModel):
 class JobCreated(BaseModel):
     id: str
     status: JobStatus
+
+
+class Retranslate(BaseModel):
+    genre: Optional[str] = Field(None, max_length=80)
+    glossary: Optional[str] = Field(None, max_length=2000)
 
 
 class SpeakerRename(BaseModel):

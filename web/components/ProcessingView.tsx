@@ -12,6 +12,7 @@ const TITLE: Record<string, string> = {
   analyze: "กำลังเตรียมบทพากย์",
   synthesize: "กำลังพากย์เสียง",
   render: "กำลังฝังซับลงวิดีโอ",
+  translate: "กำลังแปลบทใหม่",
 };
 
 export default function ProcessingView({ job, onChanged }: { job: Job; onChanged: () => void }) {
