@@ -21,7 +21,6 @@ export default function UploadPage() {
   const [speakers, setSpeakers] = useState("");
   const [review, setReview] = useState(true);
   const [burnSubs, setBurnSubs] = useState(false);
-  const [rights, setRights] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -48,7 +47,7 @@ export default function UploadPage() {
     setFile(f);
   };
 
-  const ready = rights && (mode === "file" ? !!file : /^https?:\/\/\S+$/i.test(url.trim()));
+  const ready = mode === "file" ? !!file : /^https?:\/\/\S+$/i.test(url.trim());
 
   const submit = async () => {
     if (!ready || busy) return;
@@ -161,11 +160,6 @@ export default function UploadPage() {
         </label>
       </section>
 
-      <label className="check" style={{ justifyContent: "flex-start" }}>
-        <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
-        <span>ฉันเป็นเจ้าของคลิปนี้ หรือได้รับอนุญาตจากเจ้าของคลิปและเจ้าของเสียงแล้ว</span>
-      </label>
-
       {error && <div className="alert error" role="alert">{error}</div>}
 
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -176,7 +170,7 @@ export default function UploadPage() {
             <button type="button" className="btn small" onClick={() => abortRef.current?.()}>ยกเลิก</button>
           </div>
         ) : (
-          <span className="dim">{!rights ? "ติ๊กยืนยันสิทธิ์ในคลิปก่อนเริ่ม" : ""}</span>
+          <span />
         )}
         <button type="button" className="btn primary lg" onClick={submit} disabled={!ready || busy}>
           {busy ? (mode === "file" ? "กำลังอัปโหลด..." : "กำลังส่งงาน...") : "เริ่มประมวลผล"}
