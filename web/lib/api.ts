@@ -39,6 +39,20 @@ export interface Job {
 
 export type Gender = "male" | "female" | "";
 
+export type Mood = "angry" | "sad" | "happy" | "whisper" | "scared";
+
+/** เสียงตัวอย่างอารมณ์หนึ่งของเสียงในคลัง (คนพากย์คนเดิม) */
+export interface VoiceMood {
+  mood: Mood;
+  status: "processing" | "ready" | "failed";
+  stage: string;
+  error: string | null;
+  filename: string;
+  text: string;
+  duration: number | null;
+  quality: number | null;
+}
+
 export interface LibraryVoice {
   id: string;
   name: string;
@@ -52,6 +66,7 @@ export interface LibraryVoice {
   duration: number | null;
   pitch_hz: number | null;
   quality: number | null;
+  moods: VoiceMood[];
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +93,7 @@ export interface Utterance {
   source: string;
   target: string;
   take: number;
+  mood: Mood | "";
   ref_reading: string;
 }
 
@@ -88,6 +104,7 @@ export interface UtteranceEdit {
   start?: number;
   end?: number;
   take?: number;
+  mood?: Mood | "";
 }
 
 export interface RuntimeSettings {
@@ -203,6 +220,10 @@ export const api = {
     request<LibraryVoice>(`/voices/${id}`, json("PATCH", patch)),
   deleteVoice: (id: string) => request<void>(`/voices/${id}`, { method: "DELETE" }),
   retryVoice: (id: string) => request<LibraryVoice>(`/voices/${id}/retry`, { method: "POST" }),
+  updateVoiceMood: (id: string, mood: Mood, text: string) =>
+    request<LibraryVoice>(`/voices/${id}/moods/${mood}`, json("PATCH", { text })),
+  deleteVoiceMood: (id: string, mood: Mood) => request<LibraryVoice>(`/voices/${id}/moods/${mood}`, { method: "DELETE" }),
+  retryVoiceMood: (id: string, mood: Mood) => request<LibraryVoice>(`/voices/${id}/moods/${mood}/retry`, { method: "POST" }),
 
   createFromUrl: (url: string, opts: CreateOptions) => {
     const form = buildForm(opts);
@@ -218,6 +239,8 @@ export const fileUrl = {
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
+  voiceMood: (id: string, mood: Mood, version = "") =>
+    `${BASE}/voices/${id}/moods/${mood}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
 };
 
 /** เช็กว่าไฟล์พร้อมดาวน์โหลดไหม โดยอ่านแค่ header แล้วยกเลิก ไม่โหลดทั้งไฟล์ */
@@ -246,7 +269,7 @@ function buildForm(opts: CreateOptions): FormData {
   return form;
 }
 
-type UploadPath = "jobs" | "voices";
+type UploadPath = "jobs" | "voices" | `voices/${string}/moods`;
 
 /** ที่อัปโหลด: ตรงไปที่ API พร้อมตั๋ว (บน Vercel) หรือผ่าน proxy /api */
 async function uploadTarget(path: UploadPath): Promise<{ url: string; token: string | null }> {
@@ -279,6 +302,18 @@ export function uploadVoice(
   form.append("tone", meta.tone);
   form.append("file", file);
   return upload<LibraryVoice>("voices", form, onProgress);
+}
+
+export function uploadVoiceMood(
+  voiceId: string,
+  file: File,
+  mood: Mood,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<LibraryVoice>; abort: () => void } {
+  const form = new FormData();
+  form.append("mood", mood);
+  form.append("file", file);
+  return upload<LibraryVoice>(`voices/${voiceId}/moods`, form, onProgress);
 }
 
 /** อัปโหลดด้วย XHR เพราะ fetch ยังรายงานความคืบหน้าการอัปโหลดไม่ได้ */

@@ -2,7 +2,7 @@
 
 import type { ReactNode, Ref } from "react";
 import type { Utterance } from "@/lib/api";
-import { fmtTime, speakerColor, speakerLabel } from "@/lib/format";
+import { MOOD_LABEL, fmtTime, speakerColor, speakerLabel } from "@/lib/format";
 import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
 import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon } from "./Icons";
 
@@ -23,6 +23,9 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
   const d = tr.draftOf(u);
   const changed = isChanged(u, d);
   const retimed = d.start !== u.start || d.end !== u.end;
+  // อารมณ์เลือกได้เมื่อตัวละครใช้เสียงในคลังที่มีเสียงอารมณ์อื่น (อารมณ์ที่เลือกไว้แต่ถูกลบไปแล้วยังแสดงให้เปลี่ยนกลับได้)
+  const moods = tr.moodsOf(d.speaker);
+  const showMood = moods.length > 0 || !!d.mood;
   // ช่องเวลา: ปัดทีละ 0.05 วินาที ไม่ให้สั้นกว่า 0.2 วินาที
   const setTime = (key: "start" | "end", raw: string) => {
     const v = Math.round(Number(raw) * 20) / 20;
@@ -43,6 +46,18 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           {tr.speakers.map((s) => <option key={s} value={s}>{speakerLabel(s)}</option>)}
           <option value={NEW_SPEAKER}>+ ตัวละครใหม่</option>
         </select>
+        {showMood && (
+          <>
+            <label className="sr-only" htmlFor={`mood-${u.id}`}>อารมณ์ของประโยคที่ {u.id}</label>
+            <select id={`mood-${u.id}`} className="spk-select" value={d.mood}
+              title="ใช้เสียงตัวอย่างอารมณ์นี้ของเสียงในคลังพากย์ประโยคนี้"
+              onChange={(e) => tr.setDraft(u.id, { mood: e.target.value as typeof d.mood })}>
+              <option value="">อารมณ์ปกติ</option>
+              {moods.map((m) => <option key={m} value={m}>{MOOD_LABEL[m]}</option>)}
+              {d.mood && !moods.includes(d.mood) && <option value={d.mood}>{MOOD_LABEL[d.mood]} (ไม่มีในเสียงนี้ ใช้เสียงปกติ)</option>}
+            </select>
+          </>
+        )}
         <span style={{ marginLeft: "auto" }} className="row">
           {d.take > 0 && <span className="badge" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>เสียงรอบที่ {d.take + 1}</span>}
           {changed && <span className="badge awaiting_review">แก้แล้ว</span>}

@@ -171,8 +171,8 @@ class Worker:
         self.store.update(job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None)
         self.queue.put((job_id, phase))
 
-    def submit_voice(self, voice_id: str) -> None:
-        self.queue.put((voice_id, "voice"))
+    def submit_voice(self, voice_id: str, mood: str = "") -> None:
+        self.queue.put((f"{voice_id}:{mood}" if mood else voice_id, "voice"))
 
     def run(self) -> None:
         from .pipeline import library, runner
@@ -180,7 +180,8 @@ class Worker:
             job_id, phase = self.queue.get()
             try:
                 if phase == "voice":
-                    library.prepare(self.voices, job_id)
+                    voice_id, _, mood = job_id.partition(":")
+                    library.prepare(self.voices, voice_id, mood or None)
                     continue
                 job = self.store.get(job_id)
                 if job is None or job.status != JobStatus.queued:  # ถูกลบหรือถูกยกเลิกระหว่างรอคิว

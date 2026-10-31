@@ -1,4 +1,4 @@
-import type { Gender, Job, JobStatus, TargetLang } from "./api";
+import type { Gender, Job, JobStatus, Mood, TargetLang } from "./api";
 
 export const LANGS: { code: string; label: string }[] = [
   { code: "zh", label: "จีน" },
@@ -115,6 +115,11 @@ export function estimateSeconds(text: string, lang: TargetLang): number {
 }
 
 export const GENDER_LABEL: Record<Gender, string> = { male: "ชาย", female: "หญิง", "": "ไม่ระบุ" };
+
+export const MOOD_LABEL: Record<Mood, string> = {
+  angry: "โกรธ/ตะโกน", sad: "เศร้า", happy: "ดีใจ/ตื่นเต้น", whisper: "กระซิบ/เบา", scared: "ตกใจ/กลัว",
+};
+export const MOODS = Object.keys(MOOD_LABEL) as Mood[];
 
 export const TONES = ["ทุ้มลึก", "นุ่มนวล", "สดใส", "แหลม", "หนักแน่น", "อ่อนโยน", "แหบ", "เสียงเด็ก", "เสียงผู้สูงอายุ"];
 

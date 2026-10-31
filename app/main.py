@@ -22,9 +22,9 @@ from fastapi.responses import FileResponse
 from . import runtime_settings
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
-from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate,
+from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate, Mood,
                       RuntimeSettings, RuntimeSettingsUpdate, SpeakerVoice, Utterance, UtteranceEdit,
-                      UtteranceSplit, VoiceStatus, VoiceSuggestion)
+                      UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -345,6 +345,8 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
             u.speaker = edit.speaker
         if edit.take is not None:
             u.take = edit.take
+        if edit.mood is not None:
+            u.mood = edit.mood
         if edit.start is not None or edit.end is not None:
             start = round(edit.start if edit.start is not None else u.start, 3)
             end = round(edit.end if edit.end is not None else u.end, 3)
@@ -562,7 +564,7 @@ def update_voice(voice_id: str, patch: LibraryVoiceUpdate):
 def delete_voice(voice_id: str):
     """ลบเสียงออกจากคลัง ตัวละครที่เลือกเสียงนี้ไว้จะกลับไปใช้เสียงต้นฉบับ"""
     v = get_voice_or_404(voice_id)
-    if v.status == VoiceStatus.processing and v.stage != "queued":
+    if any(x.status == VoiceStatus.processing and x.stage != "queued" for x in [v, *v.moods]):
         raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
     voice_store.delete(voice_id)
 
@@ -585,6 +587,75 @@ def get_voice_audio(voice_id: str):
     """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
     v = get_voice_or_404(voice_id)
     return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
+
+
+def get_mood_or_404(voice_id: str, mood: str) -> tuple[LibraryVoice, VoiceMood]:
+    v = get_voice_or_404(voice_id)
+    m = next((x for x in v.moods if x.mood == mood), None)
+    if m is None:
+        raise HTTPException(404, "เสียงนี้ยังไม่มีอารมณ์นี้")
+    return v, m
+
+
+@app.post("/voices/{voice_id}/moods", response_model=LibraryVoice, status_code=202,
+          dependencies=[Depends(require_key_or_upload_token)])
+async def add_voice_mood(
+    voice_id: str,
+    file: UploadFile = File(..., description="คลิปเสียงของคนพากย์คนเดิม พูดด้วยอารมณ์นั้น"),
+    mood: Mood = Form(...),
+):
+    """เพิ่ม (หรือแทน) เสียงตัวอย่างอารมณ์หนึ่ง ประโยคที่เลือกอารมณ์นี้จะพากย์จากเสียงตัวอย่างนี้แทนเสียงปกติ"""
+    v = get_voice_or_404(voice_id)
+    old = next((x for x in v.moods if x.mood == mood), None)
+    if old and old.status == VoiceStatus.processing and old.stage != "queued":
+        raise HTTPException(409, "กำลังเตรียมเสียงอารมณ์นี้อยู่ รอให้เสร็จก่อน")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in AUDIO_EXT:
+        raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")
+    voice_store.delete_mood(voice_id, mood)
+    d = voice_store.mood_dir(voice_id, mood)
+    d.mkdir(parents=True, exist_ok=True)
+    await save_upload(file, d / f"original{ext}", d)
+    v = voice_store.set_mood(voice_id, VoiceMood(mood=mood, filename=file.filename or ""))
+    worker.submit_voice(voice_id, mood)
+    return v
+
+
+@app.patch("/voices/{voice_id}/moods/{mood}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def update_voice_mood(voice_id: str, mood: Mood, patch: VoiceMoodUpdate):
+    """แก้ข้อความที่พูดในเสียงตัวอย่างอารมณ์นี้ (ถ้าถอดผิด)"""
+    get_mood_or_404(voice_id, mood)
+    voice_store.update_mood(voice_id, mood, text=patch.text.strip())
+    return voice_store.get(voice_id)
+
+
+@app.delete("/voices/{voice_id}/moods/{mood}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def delete_voice_mood(voice_id: str, mood: Mood):
+    """ลบอารมณ์นี้ ประโยคที่เลือกอารมณ์นี้ไว้จะกลับไปใช้เสียงปกติ"""
+    _, m = get_mood_or_404(voice_id, mood)
+    if m.status == VoiceStatus.processing and m.stage != "queued":
+        raise HTTPException(409, "กำลังเตรียมเสียงอารมณ์นี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
+    voice_store.delete_mood(voice_id, mood)
+    return voice_store.get(voice_id)
+
+
+@app.post("/voices/{voice_id}/moods/{mood}/retry", response_model=LibraryVoice, status_code=202,
+          dependencies=[Depends(require_key)])
+def retry_voice_mood(voice_id: str, mood: Mood):
+    _, m = get_mood_or_404(voice_id, mood)
+    if m.status != VoiceStatus.failed:
+        raise HTTPException(409, "ลองใหม่ได้เฉพาะเสียงที่เตรียมไม่สำเร็จ")
+    if not any(voice_store.mood_dir(voice_id, mood).glob("original.*")):
+        raise HTTPException(409, "ไม่พบไฟล์ต้นฉบับแล้ว ลบแล้วอัปโหลดใหม่")
+    voice_store.update_mood(voice_id, mood, status=VoiceStatus.processing, stage="queued", error=None)
+    worker.submit_voice(voice_id, mood)
+    return voice_store.get(voice_id)
+
+
+@app.get("/voices/{voice_id}/moods/{mood}/audio", dependencies=[Depends(require_key)])
+def get_voice_mood_audio(voice_id: str, mood: Mood):
+    v, _ = get_mood_or_404(voice_id, mood)
+    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
 
 
 # ---------------------------------------------------------------- ไฟล์

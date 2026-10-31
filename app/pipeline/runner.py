@@ -132,13 +132,15 @@ def _pause_holes(g: list, p, orig: np.ndarray, sr: int, words: Optional[list]) -
 
 
 def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
-                   voices_: Optional[dict] = None, pinned: frozenset = frozenset()) -> list[list]:
+                   voices_: Optional[dict] = None, pinned: frozenset = frozenset(),
+                   mood=lambda u: "") -> list[list]:
     """รวมท่อนที่พูดต่อกันเป็นประโยคเดียว (คนเดิม เว้นไม่เกิน max_gap และท่อนก่อนยังไม่จบประโยค) แล้วพากย์รวดเดียว
 
     ถ้าพากย์ทีละท่อน ทุกท่อนจะลงเสียงเหมือนจบประโยคและขาดเป็นช่วง ๆ ฟังไม่ต่อเนื่อง
     จำกัดความยาวรวมไว้ เพราะ F5-TTS พูดยาวเกินไปจะเพี้ยนและใช้หน่วยความจำการ์ดจอมาก
     voices_: ไม่รวมท่อนที่เสียงต่างกันชัด (ระบบแยกผู้พูดอาจรวมเด็กกับผู้ใหญ่เป็นคนเดียว) ไม่งั้นทั้งคู่จะได้เสียงตัวอย่างเดียวกัน
     pinned: ผู้พูดที่ผู้ใช้เลือกเสียงจากคลังให้ ท่อนของคนนี้ห้ามไปรวมกับคนอื่น (และกลับกัน) ไม่งั้นได้เสียงผิดตัว
+    mood: อารมณ์ที่ใช้พากย์ของแต่ละท่อน ท่อนต่างอารมณ์ใช้เสียงตัวอย่างคนละอัน จึงไม่รวมกัน
     """
     from .transcribe import SENTENCE_END
     from .voices import clearly_different, of_run
@@ -148,6 +150,7 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
         g = groups[-1] if groups else None
         if (g and u.speaker == g[-1].speaker and u.start - g[-1].end <= max_gap
                 and u.end - g[0].start <= max_span and not g[-1].source.strip().endswith(SENTENCE_END)
+                and mood(u) == mood(g[-1])
                 and not clearly_different(of_run([g[-1]], voices_), of_run([u], voices_))):
             g.append(u)
         else:
@@ -157,6 +160,8 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     # → ต่อเข้ากับประโยคที่ติดกัน ยกเว้นเสียงต่างกันชัด (อีกคนพูดแทรก เช่น "Mom!") ให้พากย์ด้วยเสียงตัวเอง
     def differ(a, b) -> bool:
         if a[0].speaker != b[0].speaker and (a[0].speaker in pinned or b[0].speaker in pinned):
+            return True
+        if mood(a[0]) != mood(b[0]):
             return True
         return clearly_different(of_run(a, voices_), of_run(b, voices_))
     merged: list[list] = []
@@ -178,9 +183,9 @@ def _group_speaker(g: list) -> str:
     return max(g, key=lambda u: u.duration).speaker
 
 
-def _library_refs(job, voice_store, target: str) -> dict[str, tuple[str, Path, str, list]]:
-    """ผู้พูด → (id เสียง, ไฟล์เสียงตัวอย่าง, ข้อความในเสียงนั้น, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
-    เสียงที่ถูกลบหรือยังไม่พร้อม ใช้เสียงต้นฉบับแทน"""
+def _library_refs(job, voice_store, target: str) -> dict[str, dict[str, tuple[str, Path, str, list]]]:
+    """ผู้พูด → อารมณ์ ("" = ปกติ) → (คีย์เสียงตัวอย่าง, ไฟล์, ข้อความในเสียงนั้น, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
+    เสียงที่ถูกลบหรือยังไม่พร้อม ใช้เสียงต้นฉบับแทน อารมณ์ที่ยังไม่พร้อมไม่มีในรายการ (ประโยคนั้นใช้เสียงปกติ)"""
     out = {}
     for speaker, voice_id in job.voice_map.items():
         v = voice_store.get(voice_id) if voice_store else None
@@ -189,7 +194,13 @@ def _library_refs(job, voice_store, target: str) -> dict[str, tuple[str, Path, s
             log.warning("speaker %s: library voice %s unavailable, using original voice", speaker, voice_id)
             continue
         # เสียงในคลังเป็นภาษาไทย พากย์อังกฤษต้องเขียนข้อความเป็นอักษรละติน
-        out[speaker] = (voice_id, path, tts.reference_text(v.text, "th", target), ["library", voice_id, v.text])
+        refs = {"": (voice_id, path, tts.reference_text(v.text, "th", target), ["library", voice_id, v.text])}
+        for m in v.moods:
+            mpath = voice_store.ref_path(voice_id, m.mood)
+            if m.status == "ready" and m.text and mpath.exists():
+                refs[m.mood] = (f"{voice_id}:{m.mood}", mpath, tts.reference_text(m.text, "th", target),
+                                ["library", voice_id, m.mood, m.text])
+        out[speaker] = refs
     return out
 
 
@@ -267,12 +278,16 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if settings.voice_match and gpu.voice_tools():
         voice_map = gpu.voice_profiles(d, utterances, orig, orig_sr)
     library_refs = _library_refs(job, voice_store, target)
+
+    def mood_of(u) -> str:
+        """อารมณ์ที่ใช้พากย์จริง: เฉพาะตัวละครที่ใช้เสียงในคลังและเสียงนั้นมีอารมณ์ที่เลือก"""
+        return u.mood if u.mood in library_refs.get(u.speaker, {}) else ""
     groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map,
-                            pinned=frozenset(library_refs))
+                            pinned=frozenset(library_refs), mood=mood_of)
     words = _load_words(d)
     if library_refs:
-        log.info("library voices: %s", {s: k[0] for s, k in library_refs.items()})
-    library_paths = {voice_id: path for voice_id, path, _, _ in library_refs.values()}
+        log.info("library voices: %s", {s: sorted(k) for s, k in library_refs.items()})
+    library_paths = {key: path for refs in library_refs.values() for key, path, _, _ in refs.values()}
 
     def key_for(p: _Plan, text: str) -> str:
         return _clip_key(text=text, speaker=p.speaker, start=p.g[0].start, end=p.g[-1].end,
@@ -299,8 +314,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         max_speedup = round(rs.max_speedup * (1 + 0.1 * min(max(excite, 0.0), 1.5)), 2)
         max_slowdown = round(settings.max_slowdown * (1 + 0.1 * min(max(-excite, 0.0), 1.5)), 2)
         if speaker in library_refs:  # ผู้ใช้เลือกเสียงจากคลังให้ตัวละครนี้
-            voice_id, _, ref_text, ref_key = library_refs[speaker]
-            ref = {"ref": voice_id}
+            ref_id, _, ref_text, ref_key = library_refs[speaker][mood_of(max(g, key=lambda u: u.duration))]
+            ref = {"ref": ref_id}
         else:
             r = tts.choose_reference(g, by_speaker[speaker], ref_quality, ref_arousal, voice_map)
             ref_key = [r[0].id, r[-1].id]

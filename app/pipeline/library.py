@@ -176,34 +176,40 @@ def clean_voice(raw: Path, work: Path, stage) -> dict:
             "emb": _embed(wav, rsr)}
 
 
-def prepare(store: VoiceStore, voice_id: str) -> None:
-    """ทำความสะอาด ตัดท่อน ถอดข้อความ วัดเสียง สถานะผิดพลาดบันทึกลงเสียงนั้นเอง ไม่โยนต่อ"""
+def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> None:
+    """ทำความสะอาด ตัดท่อน ถอดข้อความ วัดเสียง สถานะผิดพลาดบันทึกลงเสียงนั้นเอง ไม่โยนต่อ
+    mood: เตรียมเสียงตัวอย่างอารมณ์นั้นแทนเสียงหลัก (ไม่วัดลายเสียง ใช้ของเสียงหลักแนะนำตัวละคร)"""
     v = store.get(voice_id)
-    if v is None:  # ถูกลบระหว่างรอคิว
+    if v is None or (mood and not any(m.mood == mood for m in v.moods)):  # ถูกลบระหว่างรอคิว
         return
-    d = store.dir(voice_id)
+    update = (lambda **f: store.update_mood(voice_id, mood, **f)) if mood else (  # noqa: E731
+        lambda **f: store.update(voice_id, **f))
+    d = store.mood_dir(voice_id, mood)
     tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav", d / "ref_cut.wav"]
     try:
         src = next(d.glob("original.*"))
-        store.update(voice_id, stage="clean")
+        update(stage="clean")
         raw = tmp[0]
         audio.run(["ffmpeg", "-y", "-i", src, "-vn", "-t", MAX_INPUT_SEC, "-ac", "2", "-ar", 44100,
                    "-c:a", "pcm_s16le", raw])
-        r = gpu.prepare_voice(raw, d, lambda name, _progress: store.update(voice_id, stage=name))
+        r = gpu.prepare_voice(raw, d, lambda name, _progress: update(stage=name))
         wav, rsr = r["wav"], r["sr"]
-        sf.write(store.ref_path(voice_id), wav, rsr)
-        store.save_embedding(voice_id, r["emb"])
-        v = store.get(voice_id)
-        if v is None:
-            return
-        store.update(voice_id, status=VoiceStatus.ready, stage="ready", text=r["text"],
-                     duration=round(len(wav) / rsr, 2), pitch_hz=r["pitch_hz"], quality=r["quality"],
-                     gender=v.gender or guess_gender(r["pitch_hz"]), error=None)
-        log.info("voice %s ready: %.1fs pitch=%s quality=%s text=%r",
-                 voice_id, len(wav) / rsr, r["pitch_hz"], r["quality"], r["text"])
+        sf.write(store.ref_path(voice_id, mood), wav, rsr)
+        done = dict(status=VoiceStatus.ready, stage="ready", text=r["text"], duration=round(len(wav) / rsr, 2),
+                    quality=r["quality"], error=None)
+        if mood:
+            update(**done)
+        else:
+            store.save_embedding(voice_id, r["emb"])
+            v = store.get(voice_id)
+            if v is None:
+                return
+            update(**done, pitch_hz=r["pitch_hz"], gender=v.gender or guess_gender(r["pitch_hz"]))
+        log.info("voice %s%s ready: %.1fs pitch=%s quality=%s text=%r", voice_id, f" ({mood})" if mood else "",
+                 len(wav) / rsr, r["pitch_hz"], r["quality"], r["text"])
     except Exception as exc:  # noqa: BLE001
-        log.exception("voice %s failed", voice_id)
-        store.update(voice_id, status=VoiceStatus.failed, error=str(exc)[:500])
+        log.exception("voice %s %s failed", voice_id, mood or "")
+        update(status=VoiceStatus.failed, error=str(exc)[:500])
     finally:
         for f in tmp:
             f.unlink(missing_ok=True)

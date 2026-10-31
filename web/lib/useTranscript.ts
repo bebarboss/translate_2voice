@@ -1,16 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Job, type Utterance, type UtteranceEdit } from "./api";
+import { api, type Job, type LibraryVoice, type Mood, type Utterance, type UtteranceEdit } from "./api";
 import { speakerLabel } from "./format";
 
-export type Draft = { target: string; speaker: string; start: number; end: number; take: number };
+export type Draft = { target: string; speaker: string; start: number; end: number; take: number; mood: Mood | "" };
 export type Message = { kind: "error" | "info"; text: string } | null;
 
 export const NEW_SPEAKER = "__new__";
 
 export const isChanged = (u: Utterance, d: Draft) =>
-  d.target !== u.target || d.speaker !== u.speaker || d.start !== u.start || d.end !== u.end || d.take !== (u.take ?? 0);
+  d.target !== u.target || d.speaker !== u.speaker || d.start !== u.start || d.end !== u.end || d.take !== (u.take ?? 0)
+  || d.mood !== (u.mood ?? "");
+
+const draftFrom = (u: Utterance): Draft =>
+  ({ target: u.target, speaker: u.speaker, start: u.start, end: u.end, take: u.take ?? 0, mood: u.mood ?? "" });
 
 /** บทพากย์ที่กำลังแก้: ร่างที่ยังไม่บันทึก แยก/รวมประโยค และเพิ่มลบตัวละคร ใช้ทั้งหน้าตรวจบทและหน้าผลลัพธ์
  *  now: เวลาที่วิดีโออยู่ตอนนี้ ใช้เป็นจุดแยกเมื่อไม่ได้วางเคอร์เซอร์ในบท */
@@ -23,17 +27,26 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   const [message, setMessage] = useState<Message>(null);
   const [saved, setSaved] = useState(0); // จำนวนครั้งที่บันทึกบทในหน้านี้ (หน้าผลลัพธ์ใช้บอกว่าต้องพากย์ใหม่)
   const cursors = useRef<Record<number, number>>({}); // ตำแหน่งเคอร์เซอร์ล่าสุดในบทของแต่ละประโยค ใช้เป็นจุดแยก
+  const [voices, setVoices] = useState<LibraryVoice[]>([]); // ใช้รู้ว่าเสียงในคลังของตัวละครแต่ละตัวมีอารมณ์อะไรบ้าง
 
   useEffect(() => { setSpeakers(job.speakers); }, [job.speakers]);
 
   const applyLines = (u: Utterance[]) => {
     setLines(u);
-    setDrafts(Object.fromEntries(u.map((x) => [x.id, { target: x.target, speaker: x.speaker, start: x.start, end: x.end, take: x.take ?? 0 }])));
+    setDrafts(Object.fromEntries(u.map((x) => [x.id, draftFrom(x)])));
   };
 
   useEffect(() => {
     api.getTranscript(job.id).then(applyLines).catch((e) => setMessage({ kind: "error", text: e.message }));
   }, [job.id]);
+
+  useEffect(() => { api.listVoices().then(setVoices).catch(() => setVoices([])); }, [job.id]);
+
+  /** อารมณ์ที่พร้อมใช้ของเสียงในคลังที่ตัวละครนี้ใช้ (ตัวละครที่ใช้เสียงต้นฉบับ = ไม่มี) */
+  const moodsOf = (speaker: string): Mood[] => {
+    const v = voices.find((x) => x.id === job.voice_map[speaker]);
+    return v ? v.moods.filter((m) => m.status === "ready").map((m) => m.mood) : [];
+  };
 
   const sorted = useMemo(() => (lines ?? []).slice().sort((a, b) => a.start - b.start), [lines]);
 
@@ -42,8 +55,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
     return d && isChanged(u, d);
   }), [lines, drafts]);
 
-  const draftOf = (u: Utterance): Draft =>
-    drafts[u.id] ?? { target: u.target, speaker: u.speaker, start: u.start, end: u.end, take: u.take ?? 0 };
+  const draftOf = (u: Utterance): Draft => drafts[u.id] ?? draftFrom(u);
 
   const setDraft = (id: number, patch: Partial<Draft>) =>
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
@@ -58,6 +70,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
       if (d.start !== u.start) e.start = d.start;
       if (d.end !== u.end) e.end = d.end;
       if (d.take !== (u.take ?? 0)) e.take = d.take;
+      if (d.mood !== (u.mood ?? "")) e.mood = d.mood;
       return e;
     });
     applyLines(await api.saveTranscript(job.id, edits));
@@ -117,7 +130,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
-    saveLines, split, merge, changeSpeaker, removeSpeaker,
+    saveLines, split, merge, changeSpeaker, removeSpeaker, moodsOf,
   };
 }
 

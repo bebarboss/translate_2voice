@@ -11,6 +11,8 @@ def now() -> datetime:
 
 
 TargetLang = Literal["th", "en"]
+# อารมณ์ของเสียงตัวอย่างเพิ่มเติมในคลัง ("" = เสียงปกติ คือเสียงตัวอย่างหลักของเสียงนั้น)
+Mood = Literal["angry", "sad", "happy", "whisper", "scared"]
 SubPosition = Literal["bottom", "top"]
 
 
@@ -42,6 +44,7 @@ class Utterance(BaseModel):
     # บทพากย์ในภาษาปลายทาง (ไฟล์งานเก่าเก็บไว้ในชื่อ thai)
     target: str = Field("", validation_alias=AliasChoices("target", "thai"))
     take: int = 0  # รอบที่ผู้ใช้กดสุ่มเสียงพากย์ใหม่ (0 = รอบแรก)
+    mood: str = ""  # อารมณ์ที่เลือกให้ประโยคนี้ ใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง ("" = ปกติ)
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property
@@ -54,6 +57,7 @@ class UtteranceEdit(BaseModel):
     target: Optional[str] = Field(None, validation_alias=AliasChoices("target", "thai"))
     speaker: Optional[str] = None
     take: Optional[int] = Field(None, ge=0, le=99)
+    mood: Optional[Literal["", "angry", "sad", "happy", "whisper", "scared"]] = None
     start: Optional[float] = Field(None, ge=0)  # เวลาในคลิป (วินาที) ใช้ขยับช่วงที่ระบบจับเวลาเพี้ยน
     end: Optional[float] = Field(None, ge=0)
 
@@ -114,6 +118,18 @@ class VoiceStatus(str, Enum):
     failed = "failed"
 
 
+class VoiceMood(BaseModel):
+    """เสียงตัวอย่างอารมณ์หนึ่งของเสียงในคลัง (คนพากย์คนเดียวกับเสียงหลัก) เก็บใน data/voices/<id>/moods/<mood>/"""
+    mood: Mood
+    status: VoiceStatus = VoiceStatus.processing
+    stage: str = "queued"
+    error: Optional[str] = None
+    filename: str = ""
+    text: str = ""
+    duration: Optional[float] = None
+    quality: Optional[float] = None
+
+
 class LibraryVoice(BaseModel):
     """เสียงภาษาไทยในคลัง ใช้เป็นเสียงตัวอย่างให้ F5-TTS พากย์ตัวละครแทนเสียงต้นฉบับ"""
     id: str
@@ -128,6 +144,7 @@ class LibraryVoice(BaseModel):
     duration: Optional[float] = None  # ความยาวเสียงตัวอย่าง (วินาที)
     pitch_hz: Optional[float] = None  # ระดับเสียงกลาง
     quality: Optional[float] = None  # ความสะอาด (ประมาณ PESQ 1–4.5)
+    moods: list[VoiceMood] = Field(default_factory=list)  # เสียงตัวอย่างอารมณ์อื่น ๆ
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 
@@ -137,6 +154,10 @@ class LibraryVoiceUpdate(BaseModel):
     gender: Optional[Gender] = None
     tone: Optional[str] = Field(None, max_length=80)
     text: Optional[str] = Field(None, min_length=1)
+
+
+class VoiceMoodUpdate(BaseModel):
+    text: str = Field(..., min_length=1)
 
 
 class VoiceSuggestion(BaseModel):

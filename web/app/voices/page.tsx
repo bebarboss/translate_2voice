@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, fileUrl, uploadVoice, type Gender, type LibraryVoice } from "@/lib/api";
-import { GENDER_LABEL, TONES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
+import { api, fileUrl, uploadVoice, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceMood } from "@/lib/api";
+import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
 
@@ -134,6 +134,98 @@ function UploadCard({ onUploaded }: { onUploaded: () => void }) {
   );
 }
 
+/** เสียงอารมณ์หนึ่ง: ฟัง แก้ข้อความ ลองใหม่ ลบ */
+function MoodRow({ v, m, preview, run }: {
+  v: LibraryVoice;
+  m: VoiceMood;
+  preview: ReturnType<typeof usePreview>;
+  run: (fn: () => Promise<unknown>) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(m.text);
+  useEffect(() => { if (!editing) setText(m.text); }, [m.text, editing]);
+  const save = async () => {
+    if (text.trim() && await run(() => api.updateVoiceMood(v.id, m.mood, text.trim()))) setEditing(false);
+  };
+  return (
+    <div className="mood-row">
+      <div className="row" style={{ gap: 8 }}>
+        <span className="badge awaiting_review">{MOOD_LABEL[m.mood]}</span>
+        {m.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[m.stage] ?? m.stage}...</span>}
+        {m.status === "failed" && <span className="badge failed">เตรียมเสียงไม่สำเร็จ</span>}
+        {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">มีเสียงรบกวน</span>}
+        <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
+          {m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>แก้ข้อความ</button>}
+          {m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>ลองใหม่</button>}
+          {!(m.status === "processing" && m.stage !== "queued") && (
+            <button type="button" className="icon-btn" aria-label={`ลบอารมณ์${MOOD_LABEL[m.mood]}`}
+              onClick={() => window.confirm(`ลบเสียงอารมณ์${MOOD_LABEL[m.mood]}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ`)
+                && run(() => api.deleteVoiceMood(v.id, m.mood))}>ลบ</button>
+          )}
+          {m.status === "ready" && (
+            <PreviewButton url={fileUrl.voiceMood(v.id, m.mood, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} />
+          )}
+        </span>
+      </div>
+      {m.status === "failed" && m.error && <div className="alert error">{m.error}</div>}
+      {editing ? (
+        <div className="field">
+          <label className="sr-only" htmlFor={`mx-${v.id}-${m.mood}`}>ข้อความที่พูดในเสียงอารมณ์นี้</label>
+          <textarea id={`mx-${v.id}-${m.mood}`} className="textarea" rows={2} value={text} onChange={(e) => setText(e.target.value)} />
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn small primary" onClick={save}>บันทึก</button>
+            <button type="button" className="btn small" onClick={() => setEditing(false)}>ยกเลิก</button>
+          </div>
+        </div>
+      ) : m.status === "ready" && (
+        <span className="dim">“{m.text}” · {m.duration?.toFixed(1)} วินาที</span>
+      )}
+    </div>
+  );
+}
+
+/** เสียงตัวอย่างอารมณ์อื่นของเสียงนี้ เลือกใช้ทีละประโยคในหน้าแก้บท */
+function MoodSection({ v, preview, run }: {
+  v: LibraryVoice;
+  preview: ReturnType<typeof usePreview>;
+  run: (fn: () => Promise<unknown>) => Promise<boolean>;
+}) {
+  const missing = MOODS.filter((m) => !v.moods.some((x) => x.mood === m));
+  const [mood, setMood] = useState<Mood | "">("");
+  const [progress, setProgress] = useState<number | null>(null);
+  const pick = missing.includes(mood as Mood) ? (mood as Mood) : missing[0];
+  const add = (file: File | undefined) => {
+    if (!file || !pick) return;
+    setProgress(0);
+    run(() => uploadVoiceMood(v.id, file, pick, setProgress).promise).finally(() => setProgress(null));
+  };
+  return (
+    <div className="moods">
+      <span className="label">เสียงอารมณ์อื่น</span>
+      {v.moods.map((m) => <MoodRow key={m.mood} v={v} m={m} preview={preview} run={run} />)}
+      {missing.length > 0 && (
+        <div className="row" style={{ gap: 8 }}>
+          <label className="sr-only" htmlFor={`am-${v.id}`}>อารมณ์ที่จะเพิ่ม</label>
+          <select id={`am-${v.id}`} className="spk-select" value={pick} onChange={(e) => setMood(e.target.value as Mood)}
+            disabled={progress !== null}>
+            {missing.map((m) => <option key={m} value={m}>{MOOD_LABEL[m]}</option>)}
+          </select>
+          {progress !== null ? (
+            <span className="mono">กำลังอัปโหลด {Math.round(progress * 100)}%</span>
+          ) : (
+            <label className="btn small" style={{ cursor: "pointer" }}>
+              เพิ่มคลิปอารมณ์นี้
+              <input type="file" accept={ACCEPT} className="sr-only"
+                onChange={(e) => { add(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          )}
+        </div>
+      )}
+      <span className="dim">ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้วเลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท</span>
+    </div>
+  );
+}
+
 function VoiceCard({ v, preview, onChanged }: {
   v: LibraryVoice;
   preview: ReturnType<typeof usePreview>;
@@ -231,6 +323,7 @@ function VoiceCard({ v, preview, onChanged }: {
           {v.quality != null ? ` · ความชัด ${v.quality.toFixed(1)}/4.5` : ""} · เพิ่มเมื่อ {fmtWhen(v.created_at)}
         </span>
       )}
+      {v.status === "ready" && !editing && <MoodSection v={v} preview={preview} run={run} />}
       {error && <div className="alert error" role="alert">{error}</div>}
 
       <div className="row" style={{ gap: 8 }}>
@@ -265,7 +358,7 @@ export default function VoicesPage() {
   useEffect(() => { refresh(); }, [refresh]);
 
   // ระหว่างมีเสียงกำลังเตรียม ถามสถานะทุก 2 วินาที
-  const processing = voices?.some((v) => v.status === "processing") ?? false;
+  const processing = voices?.some((v) => v.status === "processing" || v.moods.some((m) => m.status === "processing")) ?? false;
   useEffect(() => {
     if (!processing) return;
     const t = setInterval(refresh, 2000);

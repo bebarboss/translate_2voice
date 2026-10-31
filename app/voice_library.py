@@ -1,15 +1,18 @@
-"""คลังเสียงภาษาไทย: เก็บใน data/voices/<id>/ (voice.json, original.*, ref.wav, embedding.npy)"""
+"""คลังเสียงภาษาไทย: เก็บใน data/voices/<id>/ (voice.json, original.*, ref.wav, embedding.npy)
+เสียงตัวอย่างอารมณ์อื่นเก็บใน data/voices/<id>/moods/<mood>/ (original.*, ref.wav)"""
 import logging
 import shutil
 import threading
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, get_args
 
 import numpy as np
 
 from .jobs import _atomic_write
-from .schemas import LibraryVoice, VoiceStatus, now
+from .schemas import LibraryVoice, Mood, VoiceMood, VoiceStatus, now
+
+MOODS: tuple[str, ...] = get_args(Mood)
 
 log = logging.getLogger("dubbing.voices")
 
@@ -26,8 +29,10 @@ class VoiceStore:
             except Exception:
                 log.warning("skip broken voice file %s", f)
                 continue
-            if v.status == VoiceStatus.processing:
-                v.status, v.error = VoiceStatus.failed, "เซิร์ฟเวอร์รีสตาร์ตระหว่างเตรียมเสียง กดลองใหม่ได้เลย"
+            stuck = [x for x in [v, *v.moods] if x.status == VoiceStatus.processing]
+            for x in stuck:
+                x.status, x.error = VoiceStatus.failed, "เซิร์ฟเวอร์รีสตาร์ตระหว่างเตรียมเสียง กดลองใหม่ได้เลย"
+            if stuck:
                 self._write(v)
             self._voices[v.id] = v
 
@@ -37,9 +42,12 @@ class VoiceStore:
     def dir(self, voice_id: str) -> Path:
         return self.root / voice_id
 
-    def ref_path(self, voice_id: str) -> Path:
+    def mood_dir(self, voice_id: str, mood: Optional[str]) -> Path:
+        return self.dir(voice_id) / "moods" / mood if mood else self.dir(voice_id)
+
+    def ref_path(self, voice_id: str, mood: Optional[str] = None) -> Path:
         """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (24 kHz mono) ใช้ฟังและส่งให้ F5-TTS"""
-        return self.dir(voice_id) / "ref.wav"
+        return self.mood_dir(voice_id, mood) / "ref.wav"
 
     def new_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -72,6 +80,39 @@ class VoiceStore:
             v.updated_at = now()
             self._write(v)
             return v.model_copy(deep=True)
+
+    def set_mood(self, voice_id: str, m: VoiceMood) -> Optional[LibraryVoice]:
+        """เพิ่มหรือแทนเสียงอารมณ์ m.mood"""
+        with self._lock:
+            v = self._voices.get(voice_id)
+            if v is None:
+                return None
+            v.moods = sorted([x for x in v.moods if x.mood != m.mood] + [m], key=lambda x: MOODS.index(x.mood))
+            v.updated_at = now()
+            self._write(v)
+            return v.model_copy(deep=True)
+
+    def update_mood(self, voice_id: str, mood: str, **fields) -> Optional[VoiceMood]:
+        """คืน None ถ้าเสียงหรืออารมณ์นั้นถูกลบไปแล้ว"""
+        with self._lock:
+            v = self._voices.get(voice_id)
+            m = next((x for x in v.moods if x.mood == mood), None) if v else None
+            if m is None:
+                return None
+            for key, value in fields.items():
+                setattr(m, key, value)
+            v.updated_at = now()
+            self._write(v)
+            return m.model_copy(deep=True)
+
+    def delete_mood(self, voice_id: str, mood: str) -> None:
+        with self._lock:
+            v = self._voices.get(voice_id)
+            if v is not None:
+                v.moods = [x for x in v.moods if x.mood != mood]
+                v.updated_at = now()
+                self._write(v)
+            shutil.rmtree(self.mood_dir(voice_id, mood), ignore_errors=True)
 
     def delete(self, voice_id: str) -> None:
         with self._lock:
