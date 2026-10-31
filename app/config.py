@@ -39,6 +39,12 @@ class Settings:
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")  # การ์ดจอเล็ก: ปล่อยโมเดลทิ้งหลังใช้แต่ละขั้น ไม่โหลดค้างพร้อมกัน
 
+    # บัญชีผู้ใช้และการเก็บเงิน (accounts.py) ยังไม่เปิดใช้งาน
+    auth_enabled: bool = _bool("AUTH_ENABLED")  # ต้องล็อกอิน แต่ละคนเห็นเฉพาะงานของตัวเอง
+    billing_enabled: bool = _bool("BILLING_ENABLED")  # กระเป๋าเงิน แพ็กเกจ และตัดนาทีต่องาน (ต้องเปิด AUTH_ENABLED ด้วย)
+    admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
+    payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ)
+
     # ที่รันขั้นที่ใช้การ์ดจอ (pipeline/gpu.py): local = เครื่องนี้, modal = Modal GPU L4 (ไฟล์งานยังอยู่ใน data/)
     worker: str = _env("WORKER", "local").lower()
     modal_app: str = _env("MODAL_APP", "dubbing-gpu")  # ชื่อแอปที่ modal deploy ไว้ (ตรงกับ modal_app.py)

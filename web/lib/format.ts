@@ -121,6 +121,10 @@ export const MOOD_LABEL: Record<Mood, string> = {
 };
 export const MOODS = Object.keys(MOOD_LABEL) as Mood[];
 
+/** สตางค์ → "1,234 บาท" (มีเศษสตางค์แสดงทศนิยม) */
+export const fmtBaht = (satang: number) =>
+  `${(satang / 100).toLocaleString("th-TH", { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 })} บาท`;
+
 export const TONES = ["ทุ้มลึก", "นุ่มนวล", "สดใส", "แหลม", "หนักแน่น", "อ่อนโยน", "แหบ", "เสียงเด็ก", "เสียงผู้สูงอายุ"];
 
 export const VOICE_STAGE_LABEL: Record<string, string> = {

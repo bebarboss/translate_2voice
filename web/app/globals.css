@@ -16,6 +16,7 @@
   --accent-soft: #211a15;
   --danger: #f2a0a0;
   --danger-soft: #2c1818;
+  --success: #8fd19e;
   --font: "IBM Plex Sans Thai", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   color-scheme: dark;
@@ -176,3 +177,13 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 /* เสียงอารมณ์อื่นในการ์ดเสียง */
 .moods { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; }
 .mood-row { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+
+/* บัญชีผู้ใช้ */
+.page.narrow { max-width: 460px; }
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.plan { gap: 8px; }
+.plan.current { border-color: var(--accent); }
+.ledger { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ledger th { text-align: left; font-weight: 500; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.ledger td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+@media (max-width: 640px) { .ledger th:nth-child(3), .ledger td:nth-child(3) { display: none; } }

@@ -64,7 +64,14 @@ def run_analyze(store: JobStore, job_id: str) -> None:
         job = store.get(job_id)
 
     video = Path(job.input_path)
-    store.update(job_id, duration=round(audio.probe_duration(video), 2))
+    duration = round(audio.probe_duration(video), 2)
+    store.update(job_id, duration=duration)
+    if job.owner:  # งานของผู้ใช้ที่ล็อกอิน: ตัดนาทีก่อนเริ่มใช้การ์ดจอ เมื่อเปิดระบบเก็บเงิน (ไม่พอ = งานล้มพร้อมบอกเหตุผล)
+        from .. import accounts
+        try:
+            accounts.charge_job(job.owner, job_id, duration)
+        except accounts.AccountError as e:
+            raise RuntimeError(str(e)) from None
 
     stage("extract_audio", 0.06)
     mixed = audio.extract_audio(video, d / "audio.wav")

@@ -208,8 +208,12 @@ class Worker:
                     self.store.update(job_id, status=JobStatus.cancelled, stage="cancelled", error=None)
             except Exception as exc:  # noqa: BLE001
                 log.error("job %s failed:\n%s", job_id, traceback.format_exc())
-                if self.store.get(job_id):
+                job = self.store.get(job_id)
+                if job:
                     self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
+                    if phase == "analyze" and job.owner:  # วิเคราะห์ไม่สำเร็จ คืนนาทีที่ตัดไป
+                        from . import accounts
+                        accounts.refund_job(job.owner, job_id)
             finally:
                 self._running.pop(threading.current_thread().name, None)
                 self.store.clear_cancel(job_id)

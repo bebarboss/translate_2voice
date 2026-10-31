@@ -39,6 +39,14 @@ export interface Job {
 
 export type Gender = "male" | "female" | "";
 
+// ---- บัญชีผู้ใช้ กระเป๋าเงิน แพ็กเกจ (ยังไม่เปิดใช้งาน: ดู AuthConfig) เงินเป็นสตางค์
+export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean }
+export interface User { id: string; email: string; name: string; admin: boolean; balance: number }
+export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
+export interface Subscription { plan_id: string; minutes_left: number; started_at: number; expires_at: number }
+export interface LedgerEntry { kind: string; amount: number; minutes: number; ref: string | null; note: string; created_at: number }
+export interface Wallet { balance: number; subscription: Subscription | null; payg_per_minute: number; ledger: LedgerEntry[] }
+
 export type Mood = "angry" | "sad" | "happy" | "whisper" | "scared";
 
 /** เสียงตัวอย่างอารมณ์หนึ่งของเสียงในคลัง (คนพากย์คนเดิม) */
@@ -170,6 +178,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
+    // ระบบบัญชีเปิดอยู่แต่ยังไม่ล็อกอิน (หรือหมดอายุ) → ไปหน้าเข้าสู่ระบบ แล้วกลับมาหน้าเดิม
+    if (res.status === 401 && (body as { detail?: string } | null)?.detail === "กรุณาเข้าสู่ระบบ"
+      && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    }
     throw new ApiError(errorMessage(res.status, body), res.status);
   }
   if (res.status === 204) return undefined as T;
@@ -183,6 +196,17 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  authConfig: () => request<AuthConfig>("/auth/config"),
+  me: () => request<User>("/auth/me"),
+  login: (email: string, password: string) => request<{ user: User }>("/auth/login", json("POST", { email, password })),
+  signup: (email: string, password: string, name: string) =>
+    request<{ user: User }>("/auth/signup", json("POST", { email, password, name })),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  changePassword: (old: string, next: string) => request<void>("/auth/password", json("POST", { old, new: next })),
+  plans: () => request<{ plans: Plan[]; payg_per_minute: number }>("/billing/plans"),
+  wallet: () => request<Wallet>("/billing/wallet"),
+  subscribe: (planId: string) => request<Wallet>("/billing/subscribe", json("POST", { plan_id: planId })),
+  topup: (amount: number) => request<{ id: string; status: string; amount: number }>("/billing/topups", json("POST", { amount })),
   health: () => request<{ status: string; mock: boolean; queued: number }>("/health"),
   system: () => request<SystemInfo>("/system"),
   fonts: () => request<Fonts>("/fonts"),

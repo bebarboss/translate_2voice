@@ -15,11 +15,12 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import runtime_settings
+from . import accounts, runtime_settings
+from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate, Mood,
@@ -62,21 +63,68 @@ def require_key(x_api_key: Optional[str] = Header(default=None)) -> None:
         raise HTTPException(401, "API key ไม่ถูกต้อง (ส่งใน header X-API-Key)")
 
 
-def _valid_upload_token(token: str) -> bool:
-    """ตั๋วอัปโหลด "<หมดอายุ unix>.<hmac>" ที่หน้าเว็บออกให้เบราว์เซอร์ (web/app/api/upload-ticket)
-    ให้อัปโหลดไฟล์ตรงมาที่ API ได้โดยไม่เห็นคีย์จริง"""
-    exp, _, sig = token.partition(".")
+def _upload_ticket(token: str) -> Optional[str]:
+    """ตั๋วอัปโหลด "<หมดอายุ unix>.<hmac>" หรือ "<หมดอายุ>.<id ผู้ใช้>.<hmac>" ที่หน้าเว็บออกให้เบราว์เซอร์
+    (web/app/api/upload-ticket) ให้อัปโหลดไฟล์ตรงมาที่ API ได้โดยไม่เห็นคีย์จริง
+    คืน id ผู้ใช้ ("" = ตั๋วไม่ระบุผู้ใช้) หรือ None ถ้าตั๋วใช้ไม่ได้"""
+    parts = token.split(".")
+    if len(parts) not in (2, 3) or not settings.api_key:
+        return None
+    exp, uid, sig = parts if len(parts) == 3 else (parts[0], "", parts[1])
     if not exp.isdigit() or int(exp) < time.time():
-        return False
-    expected = hmac.new(settings.api_key.encode(), f"upload:{exp}".encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(sig, expected)
+        return None
+    msg = f"upload:{exp}:{uid}" if uid else f"upload:{exp}"
+    expected = hmac.new(settings.api_key.encode(), msg.encode(), hashlib.sha256).hexdigest()
+    return uid if hmac.compare_digest(sig, expected) else None
 
 
 def require_key_or_upload_token(x_api_key: Optional[str] = Header(default=None),
                                 x_upload_token: Optional[str] = Header(default=None)) -> None:
-    if settings.api_key and x_upload_token and _valid_upload_token(x_upload_token):
+    if x_upload_token and _upload_ticket(x_upload_token) is not None:
         return
     require_key(x_api_key)
+
+
+OPEN_PATHS = ("/health", "/auth/", "/billing/plans", "/docs", "/openapi.json", "/redoc")
+ADMIN_WRITES = ("/settings", "/voices")  # เปิดระบบบัญชีแล้ว คลังเสียงและค่าตั้งระบบแก้ได้เฉพาะผู้ดูแล
+
+
+def access_guard(request: Request, x_user_token: Optional[str] = Header(default=None),
+                 x_upload_token: Optional[str] = Header(default=None)) -> None:
+    """เปิด AUTH_ENABLED แล้ว: หาผู้ใช้จาก token ทุกคำขอ ต้องล็อกอิน และเข้าถึงได้เฉพาะงานของตัวเอง
+    ปิดอยู่: ไม่ทำอะไร ระบบทำงานเหมือนเดิม"""
+    request.state.user = None
+    if not accounts.auth_enabled():
+        return
+    user = accounts.user_by_token(x_user_token)
+    if user is None and x_upload_token:
+        uid = _upload_ticket(x_upload_token)
+        user = accounts.user_by_id(uid) if uid else None
+    request.state.user = user
+    path = request.url.path
+    if path.startswith(OPEN_PATHS):
+        return
+    if user is None:
+        raise HTTPException(401, "กรุณาเข้าสู่ระบบ")
+    if accounts.is_admin(user["email"]):
+        return
+    job_id = request.path_params.get("job_id")
+    if job_id:
+        job = store.get(job_id)
+        if job is not None and job.owner != user["id"]:
+            raise HTTPException(404, "ไม่พบงานนี้")
+    if path.startswith(("/admin", "/system")) or (
+            path.startswith(ADMIN_WRITES) and request.method not in ("GET", "HEAD")):
+        raise HTTPException(403, "เฉพาะผู้ดูแลระบบ")
+
+
+# ใช้กับทุกเส้นทาง (ต้องเพิ่มก่อนประกาศเส้นทางแรก)
+app.router.dependencies.append(Depends(access_guard))
+
+
+def current_user_id(request: Request) -> Optional[str]:
+    user = getattr(request.state, "user", None)
+    return user["id"] if user is not None else None
 
 
 def get_job_or_404(job_id: str) -> Job:
@@ -123,6 +171,9 @@ def video_for_download(job: Job, with_subs: bool) -> Path:
     if not subs.burned_matches(d, runner.effective_style(job)):
         raise HTTPException(409, "ยังไม่มีวิดีโอฝังซับตามรูปแบบล่าสุด เรียก POST /jobs/{id}/render ก่อน")
     return d / "output_subs.mp4"
+
+
+app.include_router(account_router, dependencies=[Depends(require_key)])
 
 
 # ---------------------------------------------------------------- ระบบ
@@ -197,6 +248,7 @@ def fonts():
 # ---------------------------------------------------------------- สร้างงาน
 @app.post("/jobs", response_model=JobCreated, status_code=202, dependencies=[Depends(require_key_or_upload_token)])
 async def create_job(
+    request: Request,
     file: Optional[UploadFile] = File(None, description="ไฟล์วิดีโอต้นฉบับ (ส่งอย่างใดอย่างหนึ่งกับ url)"),
     url: Optional[str] = Form(None, description="ลิงก์คลิป YouTube, TikTok, Facebook, Bilibili ฯลฯ"),
     source_lang: Optional[str] = Form(None, description="รหัสภาษาต้นฉบับ เช่น zh, en, ko, ja ว่างไว้ = ตรวจอัตโนมัติ"),
@@ -205,6 +257,12 @@ async def create_job(
     review: Optional[bool] = Form(None, description="true = หยุดรอให้ตรวจแก้บทก่อนพากย์"),
     burn_subs: Optional[bool] = Form(None, description="true = ฝังซับลงวิดีโอด้วย"),
 ):
+    owner = current_user_id(request)
+    if owner:
+        try:
+            accounts.can_start(owner)
+        except accounts.AccountError as e:
+            raise HTTPException(e.status, str(e))
     rs = runtime_settings.get()
     target = (target_lang or rs.default_target_lang).strip().lower()
     if target not in ("th", "en"):
@@ -244,14 +302,18 @@ async def create_job(
         num_speakers=num_speakers,
         review=rs.default_review if review is None else review,
         burn_subs=rs.default_burn_subs if burn_subs is None else burn_subs,
+        owner=owner,
     ))
     worker.submit(job.id, "analyze")
     return JobCreated(id=job.id, status=JobStatus.queued)
 
 
 @app.get("/jobs", response_model=list[Job], dependencies=[Depends(require_key)])
-def list_jobs():
-    return store.all()
+def list_jobs(request: Request):
+    user = getattr(request.state, "user", None)
+    if user is None or accounts.is_admin(user["email"]):
+        return store.all()
+    return [j for j in store.all() if j.owner == user["id"]]
 
 
 @app.get("/jobs/{job_id}", response_model=Job, dependencies=[Depends(require_key)])

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@/lib/useAuth";
 import { MicIcon } from "./Icons";
 
 const LINKS = [
@@ -14,6 +15,7 @@ const LINKS = [
 export default function Header() {
   const path = usePathname();
   const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
+  const { config, user } = useAuth();
   return (
     <header className="header">
       <Link href="/" className="brand">
@@ -25,6 +27,11 @@ export default function Header() {
           <Link key={l.href} href={l.href} aria-current={isActive(l.href) ? "page" : undefined}>
             {l.label}
           </Link>
+        ))}
+        {config?.auth && (user ? (
+          <Link href="/account" aria-current={isActive("/account") ? "page" : undefined}>{user.name}</Link>
+        ) : (
+          <Link href="/login" aria-current={isActive("/login") ? "page" : undefined}>เข้าสู่ระบบ</Link>
         ))}
       </nav>
     </header>
