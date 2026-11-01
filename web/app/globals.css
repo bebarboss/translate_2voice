@@ -212,3 +212,17 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .lanes.cutting .block { cursor: crosshair; }
 .lane .cut-guide { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px dashed #fff; pointer-events: none; z-index: 3; }
 .lane.drop .track { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+/* ซูมและเลื่อนเส้นเวลา */
+.lane .track { clip-path: inset(-6px 0); }
+.lanes.zoomed .track { cursor: grab; }
+.lanes.zoomed.cutting .track { cursor: crosshair; }
+.lane.ruler .track { height: 18px; background: none; }
+.lane.ruler .tick { position: absolute; top: 0; bottom: 0; padding-left: 4px; border-left: 1px solid var(--border-2); font-size: 11px; color: var(--text-3, var(--text-2)); font-family: var(--mono); white-space: nowrap; }
+.lane-spacer { visibility: hidden; flex: none; }
+.zoom { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); }
+.zoom .icon-btn { width: 28px; height: 28px; font-size: 16px; }
+.zoom-level { min-width: 64px; height: 28px; border: none; background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px; }
+.zoom-level:hover { background: var(--surface); }
+.timeline-scroll { flex: 1; accent-color: var(--accent); }
+.lanes { user-select: none; }
