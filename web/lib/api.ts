@@ -130,9 +130,14 @@ export interface Utterance {
   source: string;
   target: string;
   take: number;
-  mood: Mood | "";
+  /** "" = ให้ระบบเลือก (ดู mood_auto), "normal" = อารมณ์ปกติ */
+  mood: LineMood;
+  mood_auto?: Mood | "";
+  mood_auto_text?: string;
   ref_reading: string;
 }
+
+export type LineMood = Mood | "" | "normal";
 
 export interface UtteranceEdit {
   id: number;
@@ -141,7 +146,7 @@ export interface UtteranceEdit {
   start?: number;
   end?: number;
   take?: number;
-  mood?: Mood | "";
+  mood?: LineMood;
 }
 
 export interface RuntimeSettings {

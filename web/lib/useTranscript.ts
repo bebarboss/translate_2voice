@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type Job, type LibraryVoice, type Mood, type Utterance, type UtteranceEdit } from "./api";
+import { api, type Job, type LibraryVoice, type LineMood, type Mood, type Utterance, type UtteranceEdit } from "./api";
 import { speakerLabel } from "./format";
 
-export type Draft = { target: string; speaker: string; start: number; end: number; take: number; mood: Mood | "" };
+export type Draft = { target: string; speaker: string; start: number; end: number; take: number; mood: LineMood };
 export type Message = { kind: "error" | "info"; text: string } | null;
 
 export const NEW_SPEAKER = "__new__";
@@ -52,6 +52,26 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   };
 
   const sorted = useMemo(() => (lines ?? []).slice().sort((a, b) => a.start - b.start), [lines]);
+
+  /** ช่วงที่ตัวละครต่างคนพูดซ้อนกัน (ตามบทที่แก้อยู่) และประโยคที่อยู่ในช่วงนั้น เสียงพากย์ของช่วงนี้จะเล่นทับกัน */
+  const overlaps = useMemo(() => {
+    const ds = sorted.map((u) => ({ id: u.id, ...(drafts[u.id] ?? draftFrom(u)) })).filter((d) => d.target.trim());
+    const spans: { start: number; end: number }[] = [];
+    const ids = new Set<number>();
+    for (const a of ds) {
+      for (const b of ds) {
+        if (b.id <= a.id || a.speaker === b.speaker) continue;
+        const start = Math.max(a.start, b.start), end = Math.min(a.end, b.end);
+        if (end - start < 0.2) continue;
+        ids.add(a.id).add(b.id);
+        const last = spans[spans.length - 1];
+        if (last && start <= last.end) last.end = Math.max(last.end, end);
+        else spans.push({ start, end });
+      }
+    }
+    spans.sort((x, y) => x.start - y.start);
+    return { spans, ids };
+  }, [sorted, drafts]);
 
   const dirty = useMemo(() => (lines ?? []).filter((u) => {
     const d = drafts[u.id];
@@ -168,6 +188,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
     saveLines, split, splitAt, merge, duplicate, removeLine, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
+    overlaps,
   };
 }
 

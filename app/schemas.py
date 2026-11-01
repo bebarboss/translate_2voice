@@ -44,7 +44,10 @@ class Utterance(BaseModel):
     # บทพากย์ในภาษาปลายทาง (ไฟล์งานเก่าเก็บไว้ในชื่อ thai)
     target: str = Field("", validation_alias=AliasChoices("target", "thai"))
     take: int = 0  # รอบที่ผู้ใช้กดสุ่มเสียงพากย์ใหม่ (0 = รอบแรก)
-    mood: str = ""  # อารมณ์ที่เลือกให้ประโยคนี้ ใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง ("" = ปกติ)
+    # อารมณ์ที่ใช้พากย์ประโยคนี้ ใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง ("" = ให้ระบบเลือก, "normal" = ปกติ)
+    mood: str = ""
+    mood_auto: str = ""  # อารมณ์ที่ระบบเลือกให้ ("" = ปกติ) ใช้เมื่อ mood = ""
+    mood_auto_text: str = ""  # บทพากย์ตอนที่เลือก mood_auto บทเปลี่ยนแล้วเลือกใหม่
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property
@@ -57,7 +60,7 @@ class UtteranceEdit(BaseModel):
     target: Optional[str] = Field(None, validation_alias=AliasChoices("target", "thai"))
     speaker: Optional[str] = None
     take: Optional[int] = Field(None, ge=0, le=99)
-    mood: Optional[Literal["", "angry", "sad", "happy", "whisper", "scared"]] = None
+    mood: Optional[Literal["", "normal", "angry", "sad", "happy", "whisper", "scared"]] = None
     start: Optional[float] = Field(None, ge=0)  # เวลาในคลิป (วินาที) ใช้ขยับช่วงที่ระบบจับเวลาเพี้ยน
     end: Optional[float] = Field(None, ge=0)
 

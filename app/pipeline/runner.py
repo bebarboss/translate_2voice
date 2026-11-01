@@ -306,10 +306,22 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if settings.voice_match and gpu.voice_tools():
         voice_map = gpu.voice_profiles(d, utterances, orig, orig_sr)
     library_refs = _library_refs(job, voice_store, target)
+    # ประโยคที่ให้ระบบเลือกอารมณ์ (mood = "") ของตัวละครที่เสียงในคลังมีเสียงอารมณ์: เลือกใหม่เฉพาะบทที่เปลี่ยน
+    pending = [(u, sorted(k for k in library_refs[u.speaker] if k)) for u in utterances
+               if not u.mood and u.target.strip() and u.mood_auto_text != u.target
+               and len(library_refs.get(u.speaker, {})) > 1]
+    if pending and can_shorten:
+        from .translate import detect_moods
+        picked = detect_moods(pending, utterances, ref_arousal)
+        for u, _ in pending:
+            u.mood_auto, u.mood_auto_text = picked.get(u.id, ""), u.target
+        store.save_transcript(job_id, utterances)
+        log.info("auto moods: %s", {u.id: u.mood_auto for u, _ in pending if u.mood_auto})
 
     def mood_of(u) -> str:
-        """อารมณ์ที่ใช้พากย์จริง: เฉพาะตัวละครที่ใช้เสียงในคลังและเสียงนั้นมีอารมณ์ที่เลือก"""
-        return u.mood if u.mood in library_refs.get(u.speaker, {}) else ""
+        """อารมณ์ที่ใช้พากย์จริง: ที่ผู้ใช้เลือก หรือที่ระบบเลือกให้ เฉพาะตัวละครที่ใช้เสียงในคลังและเสียงนั้นมีอารมณ์นั้น"""
+        m = u.mood or u.mood_auto
+        return m if m != "normal" and m in library_refs.get(u.speaker, {}) else ""
     groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map,
                             pinned=frozenset(library_refs), mood=mood_of)
     words = _load_words(d)

@@ -40,7 +40,7 @@ REMOTE_FIELDS = (
     "separator", "separator_model", "separator_overlap", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
-    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries",
+    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover",
 )
 
 
@@ -120,6 +120,13 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     if not words:
         raise RuntimeError("ไม่พบคำพูดในคลิป")
     utterances = assign_speakers(words, turns, lang=lang)
+    raw_turns = list(turns)  # ช่วงพูดตามป้ายของ pyannote (relabel_turns ด้านล่างเปลี่ยนชื่อให้ตรงกับประโยค)
+    hidden = []
+    if settings.overlap_recover and not settings.mock_pipeline:  # คนที่ถูกกลบตอนพูดพร้อมกัน
+        from . import overlap
+        stage("transcribe", 0.48)
+        hidden = overlap.recover(sf.read(wav16k, dtype="float32")[0], turns, utterances, words, lang)
+        release("overlap", "transcribe")
     if settings.voice_match and voice_ok:
         from . import voices
         wav, wsr = sf.read(wav16k, dtype="float32")
@@ -145,6 +152,14 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
             if renamed:
                 log.info("split speakers by voice: %s", renamed)
                 speakers = sorted({u.speaker for u in utterances})
+    if hidden:
+        from .overlap import map_speakers
+        hidden = map_speakers(hidden, raw_turns, utterances)
+        log.info("recovered %d overlapping lines", len(hidden))
+        utterances = sorted(utterances + hidden, key=lambda u: (u.start, u.end))
+        for i, u in enumerate(utterances, 1):
+            u.id = i
+        speakers = sorted({*speakers, *(u.speaker for u in hidden)})
     return {"vocals": vocals, "bgm": bgm, "turns": turns, "words": words, "lang": lang,
             "utterances": utterances, "speakers": speakers}
 

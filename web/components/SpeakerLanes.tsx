@@ -320,6 +320,10 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
               const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
               if (d) { e.preventDefault(); onSeek(Math.min(total, Math.max(0, t + d * (e.shiftKey ? 5 : 1)))); }
             }}>
+            {tr.overlaps.spans.filter((o) => o.end > view && o.start < view + span).map((o) => (
+              <span key={o.start} className="overlap-band" style={{ left: pct(o.start), width: width(o.end - o.start) }}
+                title={`พูดซ้อน ${fmtTime(o.start)}–${fmtTime(o.end)} เสียงพากย์จะเล่นทับกัน`} />
+            ))}
             {ticks.map((x) => <span key={x} className="tick" style={{ left: pct(x) }}>{fmtTick(x)}</span>)}
             <div className="playhead" style={{ left: playheadPct }}><span className="playhead-knob" /></div>
           </div>
@@ -354,7 +358,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                   {own.map((u) => {
                     const d = tr.draftOf(u);
                     return (
-                      <button key={u.id} type="button" className="block"
+                      <button key={u.id} type="button" className={`block${tr.overlaps.ids.has(u.id) ? " overlapped" : ""}`}
                         aria-label={`${speakerLabel(s)} ${fmtTime(d.start)}`} title={d.target}
                         onClick={click(u)} onPointerDown={press(u, s)}
                         style={{

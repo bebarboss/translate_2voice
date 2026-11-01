@@ -80,6 +80,14 @@ Rules:
 5. Return lines that are already correct unchanged.
 6. Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}, covering every id."""
 
+MOOD_PROMPT_TH = """คุณคือผู้กำกับการพากย์ เลือกอารมณ์ของเสียงพากย์ให้แต่ละบรรทัด จากบทต้นฉบับ (source) บทพากย์ (text) และบรรทัดรอบ ๆ
+แต่ละบรรทัดมี moods คืออารมณ์ที่เลือกได้ และ excite คือความตื่นเต้นที่วัดจากเสียงต้นฉบับ (0 = ปกติของตัวละครนั้น, บวก = ดัง/ตื่นเต้นกว่าปกติ, ลบ = เบา/เนิบกว่าปกติ) ถ้ามี
+ความหมายของอารมณ์: angry = โกรธ ตะโกน ดุ, sad = เศร้า ร้องไห้ ผิดหวัง, happy = ดีใจ ตื่นเต้น หัวเราะ, whisper = กระซิบ พูดเบา ๆ แอบพูด, scared = ตกใจ กลัว ตื่นตระหนก
+กฎ:
+1. ตอบ normal เมื่อเป็นบทพูดทั่วไปหรือไม่แน่ใจ เลือกอารมณ์อื่นเฉพาะเมื่อบทและน้ำเสียงชัดเจน เพราะเสียงอารมณ์ที่ผิดฟังแย่กว่าเสียงปกติ
+2. เลือกได้เฉพาะ normal หรืออารมณ์ใน moods ของบรรทัดนั้น
+3. ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"mood":"normal"}]} ครบทุก id เท่านั้น"""
+
 _client = None
 _local = None
 
@@ -383,6 +391,33 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         done += sum(map(len, batch))
         if on_progress:
             on_progress(done / len(utts))
+
+
+def detect_moods(lines: list[tuple[Utterance, list[str]]], context: list[Utterance],
+                 arousal: Optional[dict[int, float]] = None) -> dict[int, str]:
+    """เลือกอารมณ์ให้แต่ละบรรทัด (บรรทัด, อารมณ์ที่เลือกได้) → id → อารมณ์ ("" = ปกติ)
+    เรียกไม่สำเร็จหรือตอบอารมณ์ที่ไม่มีให้เลือก ใช้เสียงปกติ"""
+    order = {u.id: i for i, u in enumerate(context)}
+    out: dict[int, str] = {}
+    for batch in _chunks(lines, settings.translate_batch_size):
+        ids = [order.get(u.id, 0) for u, _ in batch]
+        around = [u for u in context[max(0, min(ids) - 3): max(ids) + 4] if u.id not in {b.id for b, _ in batch}]
+        payload = {
+            "nearby_lines": [{"speaker": u.speaker, "text": u.target} for u in around],
+            "lines": [{"id": u.id, "speaker": u.speaker, "source": u.source, "text": u.target, "moods": moods,
+                       **({"excite": arousal[u.id]} if arousal and u.id in arousal else {})} for u, moods in batch],
+        }
+        try:
+            result = _parse_json(_chat(MOOD_PROMPT_TH, json.dumps(payload, ensure_ascii=False), temperature=0.1,
+                                       max_tokens=min(4096, 200 + 40 * len(batch))))
+            got = {int(x["id"]): str(x.get("mood", "")) for x in result.get("lines", []) if "id" in x}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mood detection failed: %s", exc)
+            got = {}
+        for u, moods in batch:
+            m = got.get(u.id, "")
+            out[u.id] = m if m in moods else ""
+    return out
 
 
 def proofread(utts: list[Utterance], target: str = "th",

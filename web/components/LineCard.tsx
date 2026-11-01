@@ -25,7 +25,9 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
   const retimed = d.start !== u.start || d.end !== u.end;
   // อารมณ์เลือกได้เมื่อตัวละครใช้เสียงในคลังที่มีเสียงอารมณ์อื่น (อารมณ์ที่เลือกไว้แต่ถูกลบไปแล้วยังแสดงให้เปลี่ยนกลับได้)
   const moods = tr.moodsOf(d.speaker);
-  const showMood = moods.length > 0 || !!d.mood;
+  const showMood = moods.length > 0 || (!!d.mood && d.mood !== "normal");
+  // อารมณ์ที่ระบบเลือกไว้ตอนพากย์รอบล่าสุด (แสดงเมื่อบทยังเหมือนตอนที่เลือก)
+  const auto = u.mood_auto && u.mood_auto_text === d.target ? u.mood_auto : "";
   // ช่องเวลา: ปัดทีละ 0.05 วินาที ไม่ให้สั้นกว่า 0.2 วินาที
   const setTime = (key: "start" | "end", raw: string) => {
     const v = Math.round(Number(raw) * 20) / 20;
@@ -50,16 +52,18 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           <>
             <label className="sr-only" htmlFor={`mood-${u.id}`}>อารมณ์ของประโยคที่ {u.id}</label>
             <select id={`mood-${u.id}`} className="spk-select" value={d.mood}
-              title="ใช้เสียงตัวอย่างอารมณ์นี้ของเสียงในคลังพากย์ประโยคนี้"
+              title="อัตโนมัติ: ระบบเลือกอารมณ์จากบทและน้ำเสียงต้นฉบับตอนพากย์ หรือเลือกเองเพื่อใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง"
               onChange={(e) => tr.setDraft(u.id, { mood: e.target.value as typeof d.mood })}>
-              <option value="">อารมณ์ปกติ</option>
+              <option value="">{auto ? `อัตโนมัติ · ${MOOD_LABEL[auto]}` : "อารมณ์อัตโนมัติ"}</option>
+              <option value="normal">อารมณ์ปกติ</option>
               {moods.map((m) => <option key={m} value={m}>{MOOD_LABEL[m]}</option>)}
-              {d.mood && !moods.includes(d.mood) && <option value={d.mood}>{MOOD_LABEL[d.mood]} (ไม่มีในเสียงนี้ ใช้เสียงปกติ)</option>}
+              {d.mood && d.mood !== "normal" && !moods.includes(d.mood) && <option value={d.mood}>{MOOD_LABEL[d.mood]} (ไม่มีในเสียงนี้ ใช้เสียงปกติ)</option>}
             </select>
           </>
         )}
         <span style={{ marginLeft: "auto" }} className="row">
           {d.take > 0 && <span className="badge" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>เสียงรอบที่ {d.take + 1}</span>}
+          {tr.overlaps.ids.has(u.id) && <span className="badge overlap" title="ตัวละครอื่นพูดพร้อมกันในช่วงนี้ เสียงพากย์จะเล่นทับกัน">พูดซ้อน</span>}
           {changed && <span className="badge awaiting_review">แก้แล้ว</span>}
           {tooLong && <span className="badge warn">ยาวเกินเวลา</span>}
         </span>

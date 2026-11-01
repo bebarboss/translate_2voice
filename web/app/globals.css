@@ -334,6 +334,10 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .lane.ruler .track.scrub:hover { background: var(--surface-2); }
 .lane.ruler .track.scrub:focus-visible { outline: 2px solid var(--accent); }
 .lane.ruler .tick { pointer-events: none; }
+/* ช่วงที่ตัวละครพูดซ้อนกัน: แถบบนไม้บรรทัด และลายเส้นบนบล็อกของประโยคในช่วงนั้น */
+.lane.ruler .overlap-band { position: absolute; bottom: 0; height: 5px; border-radius: 3px; background: var(--accent); opacity: .7; min-width: 3px; }
+.lane .block.overlapped { background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, .35) 0 3px, transparent 3px 7px) !important; }
+.badge.overlap { background: var(--accent-soft); color: var(--accent); }
 .playhead-knob { position: absolute; top: -2px; left: -5px; width: 12px; height: 10px; background: #fff; clip-path: polygon(0 0, 100% 0, 50% 100%); }
 .lane:not(.ruler) .playhead-knob { display: none; }
 
