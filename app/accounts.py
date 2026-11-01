@@ -45,6 +45,7 @@ PLANS = [
 ]
 CREDIT_PRICE = 15_00  # ราคาเครดิตเติม (สตางค์ต่อเครดิต) แพ็กเกจรายเดือนตกเครดิตละถูกกว่า
 CREDIT_PACKS = (10, 30, 100, 300)  # จำนวนเครดิตที่หน้าเว็บให้เลือกซื้อ
+CARD_BONUS = 5  # เครดิตฟรีเมื่อผูกบัตรครั้งแรก (ได้ครั้งเดียวต่อผู้ใช้ และต่อบัตรหนึ่งใบ)
 
 
 class AccountError(Exception):
@@ -86,6 +87,11 @@ CREATE INDEX IF NOT EXISTS ledger_user ON ledger(user_id, id);
 CREATE TABLE IF NOT EXISTS topups (
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL, amount INTEGER NOT NULL, provider TEXT NOT NULL,
   status TEXT NOT NULL, created_at REAL NOT NULL, paid_at REAL);
+CREATE TABLE IF NOT EXISTS cards (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, provider TEXT NOT NULL, ref TEXT NOT NULL, brand TEXT NOT NULL,
+  last4 TEXT NOT NULL, exp_month INTEGER NOT NULL, exp_year INTEGER NOT NULL, fingerprint TEXT NOT NULL,
+  created_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS cards_user ON cards(user_id);
 """
 
 
@@ -113,6 +119,8 @@ def _migrate(db: sqlite3.Connection) -> None:
             db.execute("UPDATE users SET credits = ?, balance = 0 WHERE id = ?", (n, u["id"]))
             db.execute("INSERT INTO ledger (user_id, kind, credits, note, created_at) VALUES (?, 'adjust', ?, ?, ?)",
                        (u["id"], n, f"แปลงเงิน {u['balance'] / 100:,.0f} บาทเป็นเครดิต", time.time()))
+    if "admin" not in cols("users"):
+        db.execute("ALTER TABLE users ADD COLUMN admin INTEGER NOT NULL DEFAULT 0")
     if "credits" not in cols("topups"):
         db.execute("ALTER TABLE topups ADD COLUMN credits INTEGER NOT NULL DEFAULT 0")
         db.execute("ALTER TABLE topups ADD COLUMN plan_id TEXT")
@@ -146,13 +154,19 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def is_admin(email: str) -> bool:
+def is_owner(email: str) -> bool:
+    """ผู้ดูแลจาก ADMIN_EMAILS ถอดสิทธิ์ผ่านหน้าเว็บไม่ได้"""
     return email.lower() in settings.admin_emails
 
 
+def is_admin(user: sqlite3.Row) -> bool:
+    """ผู้ดูแลระบบ: อยู่ใน ADMIN_EMAILS หรือผู้ดูแลคนอื่นให้สิทธิ์ (users.admin)"""
+    return is_owner(user["email"]) or bool(user["admin"])
+
+
 def public_user(row: sqlite3.Row) -> dict:
-    return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row["email"]),
-            "credits": row["credits"]}
+    return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row),
+            "owner": is_owner(row["email"]), "credits": row["credits"]}
 
 
 def _verify_google(credential: str) -> dict:
@@ -218,6 +232,20 @@ def all_users() -> list[dict]:
                  "subscription": dict(sub) if (sub := _subscription(db, r["id"])) else None} for r in rows]
 
 
+def set_admin(uid: str, admin: bool, by: sqlite3.Row) -> None:
+    """ผู้ดูแลให้หรือถอดสิทธิ์ผู้ดูแลของคนอื่น ถอดผู้ดูแลจาก ADMIN_EMAILS หรือตัวเองไม่ได้ (กันไม่มีใครเหลือ)"""
+    with _tx() as db:
+        u = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if u is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        if u["id"] == by["id"]:
+            raise AccountError(400, "เปลี่ยนสิทธิ์ของตัวเองไม่ได้")
+        if not admin and is_owner(u["email"]):
+            raise AccountError(400, "ผู้ดูแลหลัก (ADMIN_EMAILS) ถอดสิทธิ์ผ่านหน้าเว็บไม่ได้")
+        db.execute("UPDATE users SET admin = ? WHERE id = ?", (int(admin), uid))
+        _log(db, uid, "adjust", note=f"{'ให้' if admin else 'ถอด'}สิทธิ์ผู้ดูแลโดย {by['email']}")
+
+
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
 def _log(db, uid: str, kind: str, credits: int = 0, minutes: int = 0, amount: int = 0,
          ref: Optional[str] = None, note: str = ""):
@@ -280,8 +308,8 @@ def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
 
 def _exempt(db, uid: str) -> bool:
     """ผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ต้องมีเครดิตหรือแพ็กเกจ"""
-    u = db.execute("SELECT email FROM users WHERE id = ?", (uid,)).fetchone()
-    return u is not None and is_admin(u["email"])
+    u = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    return u is not None and is_admin(u)
 
 
 def job_minutes(seconds: float) -> int:
@@ -366,6 +394,69 @@ def subscribe(uid: str, plan_id: str) -> dict:
     if p is None:
         raise AccountError(404, "ไม่พบแพ็กเกจนี้")
     return _start_payment(uid, p.price, plan_id=p.id)
+
+
+# ---------------------------------------------------------------- บัตรที่ผูกไว้
+def _attach_card(uid: str, token: str) -> dict:
+    """ผูกบัตรกับผู้ให้บริการชำระเงิน token มาจากสคริปต์ของผู้ให้บริการในหน้าเว็บ (เลขบัตรไม่ผ่านเซิร์ฟเวอร์เรา)
+    คืน {ref, brand, last4, exp_month, exp_year, fingerprint} fingerprint เหมือนกันทุกครั้งที่ผูกบัตรใบเดิม
+    PAYMENT_PROVIDER=mock รับ token "tok_mock_<เลขท้าย 4 ตัว>[_อะไรก็ได้]" (ทดสอบ) ยังไม่ได้เชื่อมผู้ให้บริการจริง"""
+    if settings.payment_provider != "mock":
+        raise AccountError(503, "ยังไม่ได้เชื่อมช่องทางชำระเงิน ผูกบัตรไม่ได้ตอนนี้")
+    parts = token.split("_")
+    if len(parts) < 3 or parts[:2] != ["tok", "mock"] or not (parts[2].isdigit() and len(parts[2]) == 4):
+        raise AccountError(400, "ข้อมูลบัตรไม่ถูกต้อง")
+    return {"ref": f"card_mock_{secrets.token_hex(6)}", "brand": "Visa", "last4": parts[2],
+            "exp_month": 12, "exp_year": 2030, "fingerprint": f"mock:{token}"}
+
+
+def _detach_card(provider: str, ref: str) -> None:
+    """ลบบัตรที่ผู้ให้บริการ (mock ไม่ต้องทำอะไร)"""
+
+
+def _public_card(row: sqlite3.Row) -> dict:
+    return {k: row[k] for k in ("id", "brand", "last4", "exp_month", "exp_year", "created_at")}
+
+
+def cards(uid: str) -> dict:
+    """บัตรที่ผูกไว้ ยังรับเครดิตฟรีจากการผูกบัตรได้ไหม และผู้ให้บริการ (หน้าเว็บใช้เลือกฟอร์มผูกบัตร ว่าง = ยังไม่เชื่อม)"""
+    with _lock:
+        db = _db()
+        rows = db.execute("SELECT * FROM cards WHERE user_id = ? ORDER BY created_at", (uid,)).fetchall()
+        got = db.execute("SELECT 1 FROM ledger WHERE user_id = ? AND kind = 'bonus'", (uid,)).fetchone()
+    return {"cards": [_public_card(r) for r in rows], "bonus": CARD_BONUS, "bonus_available": got is None,
+            "provider": settings.payment_provider}
+
+
+def add_card(uid: str, token: str) -> dict:
+    """ผูกบัตร ครั้งแรกได้ CARD_BONUS เครดิต (ถ้าผู้ใช้นี้ยังไม่เคยได้ และบัตรใบนี้ยังไม่เคยให้โบนัสกับใคร)"""
+    info = _attach_card(uid, token)
+    with _tx() as db:
+        if db.execute("SELECT 1 FROM cards WHERE user_id = ? AND fingerprint = ?", (uid, info["fingerprint"])).fetchone():
+            raise AccountError(409, "ผูกบัตรใบนี้ไว้แล้ว")
+        cid = secrets.token_hex(8)
+        db.execute("INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   (cid, uid, settings.payment_provider, info["ref"], info["brand"], info["last4"],
+                    info["exp_month"], info["exp_year"], info["fingerprint"], time.time()))
+        bonus = 0
+        if not db.execute("SELECT 1 FROM ledger WHERE kind = 'bonus' AND (user_id = ? OR ref = ?)",
+                          (uid, info["fingerprint"])).fetchone():
+            bonus = CARD_BONUS
+            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (bonus, uid))
+            _log(db, uid, "bonus", credits=bonus, ref=info["fingerprint"],
+                 note=f"ผูกบัตร {info['brand']} ลงท้าย {info['last4']} ครั้งแรก")
+        row = db.execute("SELECT * FROM cards WHERE id = ?", (cid,)).fetchone()
+    return {"card": _public_card(row), "bonus": bonus}
+
+
+def remove_card(uid: str, card_id: str) -> None:
+    """ลบบัตร เครดิตฟรีที่ได้ไปแล้วไม่หัก แต่ผูกใหม่ก็ไม่ได้อีก"""
+    with _tx() as db:
+        row = db.execute("SELECT * FROM cards WHERE id = ? AND user_id = ?", (card_id, uid)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบบัตรนี้")
+        db.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+    _detach_card(row["provider"], row["ref"])
 
 
 def mark_paid(topup_id: str) -> None:

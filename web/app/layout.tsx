@@ -4,7 +4,7 @@ import "@fontsource/ibm-plex-sans-thai/500.css";
 import "@fontsource/ibm-plex-sans-thai/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "./globals.css";
-import Header from "@/components/Header";
+import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
   title: "Dubbing Studio",
@@ -15,8 +15,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="th">
       <body>
-        <Header />
-        {children}
+        <div className="shell">
+          <Sidebar />
+          <div className="shell-main">{children}</div>
+        </div>
       </body>
     </html>
   );

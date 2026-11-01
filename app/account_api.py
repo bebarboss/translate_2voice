@@ -37,7 +37,7 @@ def require_user(request: Request):
 
 
 def require_admin(user=Depends(require_user)):
-    if not accounts.is_admin(user["email"]):
+    if not accounts.is_admin(user):
         raise HTTPException(403, "เฉพาะผู้ดูแลระบบ")
     return user
 
@@ -57,6 +57,14 @@ class Topup(BaseModel):
 class Credit(BaseModel):
     credits: int = Field(..., description="เครดิตเติม ติดลบ = หักออก")
     note: str = Field("", max_length=200)
+
+
+class AddCard(BaseModel):
+    token: str = Field(..., max_length=200, description="token บัตรจากสคริปต์ของผู้ให้บริการชำระเงิน")
+
+
+class SetAdmin(BaseModel):
+    admin: bool
 
 
 class GrantPlan(BaseModel):
@@ -96,7 +104,7 @@ def me(user=Depends(require_user)):
 @router.get("/billing/plans", dependencies=[Depends(_need_billing)])
 def plans():
     return {"plans": [p.__dict__ for p in accounts.PLANS], "credit_price": accounts.CREDIT_PRICE,
-            "credit_packs": list(accounts.CREDIT_PACKS)}
+            "credit_packs": list(accounts.CREDIT_PACKS), "card_bonus": accounts.CARD_BONUS}
 
 
 @router.get("/billing/wallet", dependencies=[Depends(_need_billing)])
@@ -116,6 +124,28 @@ def subscribe(body: Subscribe, user=Depends(require_user)):
 def topup(body: Topup, user=Depends(require_user)):
     try:
         return accounts.buy_credits(user["id"], body.credits)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.get("/billing/cards", dependencies=[Depends(_need_billing)])
+def cards(user=Depends(require_user)):
+    return accounts.cards(user["id"])
+
+
+@router.post("/billing/cards", dependencies=[Depends(_need_billing)])
+def add_card(body: AddCard, user=Depends(require_user)):
+    """ผูกบัตร ครั้งแรกได้เครดิตฟรี (accounts.CARD_BONUS)"""
+    try:
+        return accounts.add_card(user["id"], body.token)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.delete("/billing/cards/{card_id}", status_code=204, dependencies=[Depends(_need_billing)])
+def remove_card(card_id: str, user=Depends(require_user)):
+    try:
+        accounts.remove_card(user["id"], card_id)
     except AccountError as e:
         raise _fail(e)
 
@@ -140,5 +170,14 @@ def admin_plan(user_id: str, body: GrantPlan, admin=Depends(require_admin)):
     """ให้แพ็กเกจโดยไม่ต้องชำระ"""
     try:
         accounts.grant_plan(user_id, body.plan_id, admin["email"])
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/admin/users/{user_id}/admin", status_code=204)
+def admin_set_admin(user_id: str, body: SetAdmin, admin=Depends(require_admin)):
+    """ให้หรือถอดสิทธิ์ผู้ดูแลระบบ"""
+    try:
+        accounts.set_admin(user_id, body.admin, admin)
     except AccountError as e:
         raise _fail(e)

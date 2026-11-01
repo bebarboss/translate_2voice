@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type AdminUser, type Plan, type Wallet } from "@/lib/api";
+import { api, type AdminUser, type Cards, type Plan, type Wallet } from "@/lib/api";
 import { fmtBaht } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
-  topup: "ซื้อเครดิต", subscribe: "ซื้อแพ็กเกจ", charge: "ใช้พากย์", refund: "คืนเครดิต", adjust: "ผู้ดูแลปรับ",
+  topup: "ซื้อเครดิต", subscribe: "ซื้อแพ็กเกจ", charge: "ใช้พากย์", refund: "คืนเครดิต", adjust: "ผู้ดูแลปรับ", bonus: "เครดิตฟรี",
 };
 const fmtDate = (unix: number) =>
   new Date(unix * 1000).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
@@ -19,18 +19,72 @@ type Message = { kind: "error" | "info"; text: string } | null;
 function useRunner(load: () => void) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<Message>(null);
-  const run = async (key: string, fn: () => Promise<unknown>, done: string) => {
+  /** done: ข้อความเมื่อสำเร็จ หรือฟังก์ชันสร้างข้อความจากผลลัพธ์ */
+  const run = async <T,>(key: string, fn: () => Promise<T>, done: string | ((r: T) => string)) => {
     setBusy(key);
     setMessage(null);
     try {
-      await fn();
+      const r = await fn();
       load();
-      setMessage({ kind: "info", text: done });
+      setMessage({ kind: "info", text: typeof done === "string" ? done : done(r) });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally { setBusy(""); }
   };
   return { busy, message, setMessage, run };
+}
+
+/** บัตรที่ผูกไว้ ผูกบัตรครั้งแรกได้เครดิตฟรี ตอนนี้มีแค่ผู้ให้บริการจำลอง (PAYMENT_PROVIDER=mock)
+ * ต่อผู้ให้บริการจริงเมื่อไหร่ ฟอร์มนี้เปลี่ยนเป็นสคริปต์เก็บบัตรของผู้ให้บริการ (ได้ token มา ไม่ส่งเลขบัตรให้เซิร์ฟเวอร์เรา) */
+function CardsSection({ onChange }: { onChange: () => void }) {
+  const [data, setData] = useState<Cards | null>(null);
+  const [last4, setLast4] = useState("4242");
+  const load = () => {
+    api.cards().then(setData).catch((e) => setMessage({ kind: "error", text: e.message }));
+    onChange();
+  };
+  const { busy, message, setMessage, run } = useRunner(load);
+  useEffect(() => { api.cards().then(setData).catch(() => setData(null)); }, []);
+
+  if (!data) return null;
+  const add = () => run("add", () => api.addCard(`tok_mock_${last4}`),
+    (r) => (r.bonus ? `ผูกบัตรแล้ว ได้เครดิตฟรี ${fmtCredits(r.bonus)}` : "ผูกบัตรแล้ว"));
+  return (
+    <section className="card" aria-labelledby="cards-title">
+      <h2 id="cards-title">บัตรที่ผูกไว้</h2>
+      {data.bonus_available && (
+        <div className="alert info">ผูกบัตรเครดิตหรือเดบิตครั้งแรก รับฟรี {fmtCredits(data.bonus)} ยังไม่ตัดเงินตอนผูก</div>
+      )}
+      {data.cards.length > 0 && (
+        <ul className="card-list">
+          {data.cards.map((c) => (
+            <li key={c.id}>
+              <span>{c.brand} •••• {c.last4}</span>
+              <span className="dim">หมดอายุ {String(c.exp_month).padStart(2, "0")}/{String(c.exp_year).slice(-2)}</span>
+              <button type="button" className="btn small" disabled={!!busy}
+                onClick={() => window.confirm(`ลบบัตร ${c.brand} ลงท้าย ${c.last4}?`)
+                  && run(`rm-${c.id}`, () => api.removeCard(c.id), "ลบบัตรแล้ว")}>
+                {busy === `rm-${c.id}` ? "..." : "ลบ"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {data.provider === "mock" ? (
+        <div className="row" style={{ gap: 8 }}>
+          <input className="input" style={{ width: 110 }} inputMode="numeric" maxLength={4} aria-label="เลขท้าย 4 ตัวของบัตรทดสอบ"
+            value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, ""))} />
+          <button type="button" className="btn primary small" disabled={!!busy || last4.length !== 4} onClick={add}>
+            {busy === "add" ? "กำลังผูก..." : "ผูกบัตรทดสอบ"}
+          </button>
+          <span className="dim">โหมดทดสอบ ไม่มีการตัดเงินจริง</span>
+        </div>
+      ) : !data.provider ? (
+        <span className="dim">ยังไม่ได้เชื่อมช่องทางชำระเงิน ผูกบัตรได้เร็ว ๆ นี้</span>
+      ) : null}
+      {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
+    </section>
+  );
 }
 
 function WalletSection({ payments, unlimited }: { payments: boolean; unlimited: boolean }) {
@@ -93,6 +147,8 @@ function WalletSection({ payments, unlimited }: { payments: boolean; unlimited: 
         {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
       </section>
 
+      {!unlimited && <CardsSection onChange={load} />}
+
       <section aria-labelledby="plans-title" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>แพ็กเกจรายเดือน</h2>
         <div className="plans">
@@ -138,7 +194,7 @@ function WalletSection({ payments, unlimited }: { payments: boolean; unlimited: 
 }
 
 /** ผู้ดูแล: ดูผู้ใช้ทุกคน เพิ่ม/หักเครดิต และให้แพ็กเกจ (รับโอนนอกระบบ ชดเชย ฯลฯ) */
-function AdminSection() {
+function AdminSection({ me }: { me: string }) {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
@@ -164,7 +220,7 @@ function AdminSection() {
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
       {!users ? <div className="empty">กำลังโหลด...</div> : (
         <table className="ledger admin-users">
-          <thead><tr><th>ผู้ใช้</th><th>เครดิต</th><th>แพ็กเกจ</th><th>เพิ่ม / หักเครดิต</th><th>ให้แพ็กเกจ</th></tr></thead>
+          <thead><tr><th>ผู้ใช้</th><th>เครดิต</th><th>แพ็กเกจ</th><th>เพิ่ม / หักเครดิต</th><th>ให้แพ็กเกจ</th><th>ผู้ดูแล</th></tr></thead>
           <tbody>
             {shown.map((u) => {
               const plan = plans.find((p) => p.id === u.subscription?.plan_id);
@@ -199,6 +255,18 @@ function AdminSection() {
                       <option value="">เลือกแพ็กเกจ</option>
                       {plans.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.minutes}</option>)}
                     </select>
+                  </td>
+                  <td>
+                    {u.owner ? <span className="dim">ผู้ดูแลหลัก</span> : u.id === me ? <span className="dim">คุณ</span> : (
+                      <button type="button" className="btn small" disabled={!!busy}
+                        onClick={() => window.confirm(u.admin
+                          ? `ถอดสิทธิ์ผู้ดูแลของ ${u.email}?`
+                          : `ให้ ${u.email} เป็นผู้ดูแล? จะพากย์ได้ไม่จำกัด แก้คลังเสียง ค่าตั้งระบบ และสิทธิ์ของผู้ใช้คนอื่นได้`)
+                          && run(`a-${u.id}`, () => api.adminSetAdmin(u.id, !u.admin),
+                            `${u.admin ? "ถอดสิทธิ์ผู้ดูแลของ" : "ให้สิทธิ์ผู้ดูแลกับ"} ${u.email} แล้ว`)}>
+                        {busy === `a-${u.id}` ? "..." : u.admin ? "ถอดสิทธิ์" : "ให้สิทธิ์"}
+                      </button>
+                    )}
                   </td>
                 </tr>
               );
@@ -246,7 +314,7 @@ export default function AccountPage() {
       {config.billing ? <WalletSection payments={config.payments} unlimited={user.admin} /> : (
         <div className="card"><span className="muted">เครดิตและแพ็กเกจยังไม่เปิดใช้งาน</span></div>
       )}
-      {config.billing && user.admin && <AdminSection />}
+      {config.billing && user.admin && <AdminSection me={user.id} />}
     </main>
   );
 }

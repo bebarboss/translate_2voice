@@ -61,3 +61,18 @@ export const PasteIcon = ({ size = 14, color = "currentColor" }: P) =>
 
 export const TrashIcon = ({ size = 14, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></>);
+
+export const ListIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M4 6h.01" /><path d="M4 12h.01" /><path d="M4 18h.01" /></>);
+
+export const WaveIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 10v4" /><path d="M8 6v12" /><path d="M12 3v18" /><path d="M16 7v10" /><path d="M20 10v4" /></>);
+
+export const GearIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>);
+
+export const UserIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>);
+
+export const MenuIcon = ({ size = 20, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>);

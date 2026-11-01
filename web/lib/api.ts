@@ -46,7 +46,8 @@ export type Gender = "male" | "female" | "";
 // ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที เงินเป็นสตางค์
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
 export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; google_client_id: string }
-export interface User { id: string; email: string; name: string; admin: boolean; credits: number }
+/** owner = ผู้ดูแลหลักจาก ADMIN_EMAILS (ถอดสิทธิ์ไม่ได้) */
+export interface User { id: string; email: string; name: string; admin: boolean; owner: boolean; credits: number }
 /** minutes = เครดิตแพ็กเกจต่อรอบ */
 export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
 /** minutes_left = เครดิตแพ็กเกจที่เหลือ หมดอายุพร้อมแพ็กเกจ */
@@ -54,6 +55,9 @@ export interface Subscription { plan_id: string; minutes_left: number; started_a
 /** credits = เครดิตเติมที่เปลี่ยน, minutes = เครดิตแพ็กเกจที่เปลี่ยน, amount = เงินที่จ่าย */
 export interface LedgerEntry { kind: string; credits: number; minutes: number; amount: number; ref: string | null; note: string; created_at: number }
 export interface Wallet { credits: number; subscription: Subscription | null; credit_price: number; ledger: LedgerEntry[] }
+export interface Card { id: string; brand: string; last4: string; exp_month: number; exp_year: number; created_at: number }
+/** bonus = เครดิตฟรีเมื่อผูกบัตรครั้งแรก, provider = ผู้ให้บริการชำระเงิน (ว่าง = ยังไม่เชื่อม, mock = ทดสอบ) */
+export interface Cards { cards: Card[]; bonus: number; bonus_available: boolean; provider: string }
 export interface AdminUser extends User { created_at: number; subscription: Subscription | null }
 
 export type Mood = "angry" | "sad" | "happy" | "whisper" | "scared";
@@ -229,13 +233,18 @@ export const api = {
   /** สมัครหรือเข้าสู่ระบบด้วย ID token จากปุ่ม Google (บัญชีใหม่สร้างให้เลย) */
   googleLogin: (credential: string) => request<{ user: User }>("/auth/google", json("POST", { credential })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
-  plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[] }>("/billing/plans"),
+  plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),
+  cards: () => request<Cards>("/billing/cards"),
+  /** token จากสคริปต์ของผู้ให้บริการชำระเงิน (เลขบัตรไม่ผ่านเซิร์ฟเวอร์เรา) */
+  addCard: (token: string) => request<{ card: Card; bonus: number }>("/billing/cards", json("POST", { token })),
+  removeCard: (id: string) => request<void>(`/billing/cards/${id}`, { method: "DELETE" }),
   buyCredits: (credits: number) => request<{ id: string; status: string }>("/billing/topups", json("POST", { credits })),
   adminUsers: () => request<AdminUser[]>("/admin/users"),
   adminCredit: (userId: string, credits: number, note = "") =>
     request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
+  adminSetAdmin: (userId: string, admin: boolean) => request<void>(`/admin/users/${userId}/admin`, json("POST", { admin })),
   adminPlan: (userId: string, planId: string) => request<void>(`/admin/users/${userId}/plan`, json("POST", { plan_id: planId })),
   health: () => request<{ status: string; mock: boolean; queued: number }>("/health"),
   system: () => request<SystemInfo>("/system"),

@@ -112,7 +112,7 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
         return
     if user is None:
         raise HTTPException(401, "กรุณาเข้าสู่ระบบ")
-    if accounts.is_admin(user["email"]):
+    if accounts.is_admin(user):
         return
     job_id = request.path_params.get("job_id")
     if job_id:
@@ -327,7 +327,7 @@ async def create_job(
 def list_jobs(request: Request):
     user = getattr(request.state, "user", None)
     jobs = store.all()
-    if user is not None and not accounts.is_admin(user["email"]):
+    if user is not None and not accounts.is_admin(user):
         jobs = [j for j in jobs if j.owner == user["id"]]
     pos = worker.positions()
     return [_with_position(j, pos) for j in jobs]
