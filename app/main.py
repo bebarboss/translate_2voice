@@ -23,7 +23,7 @@ from . import accounts, runtime_settings
 from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
-from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LibraryVoiceUpdate, Mood,
+from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
@@ -482,6 +482,47 @@ def merge_line(job_id: str, line_id: int):
     moved = utterances[i + 1].speaker != utterances[i].speaker
     utterances[i:i + 2] = [merge(utterances[i], utterances[i + 1])]
     _save_lines(job, utterances, moved)
+    return utterances
+
+
+@app.post("/jobs/{job_id}/transcript/{line_id}/duplicate", response_model=list[Utterance],
+          dependencies=[Depends(require_key)])
+def duplicate_line(job_id: str, line_id: int, body: LineDuplicate):
+    """ทำสำเนาประโยค (บท อารมณ์ ความยาว) ให้ตัวละครอื่นหรือที่เวลาอื่น
+    ใช้ตอนสองคนพูดพร้อมกันแต่ถอดเสียงได้แค่คนเดียว: วางสำเนาซ้อนเวลาเดิมให้อีกตัวละคร แล้วแก้บท
+    ตัวละครเดียวกันวางทับช่วงที่ตัวเองพูดอยู่แล้วไม่ได้ (คนเดียวพูดทับตัวเองไม่ได้)"""
+    job, utterances = _editable_lines(job_id)
+    src = next((u for u in utterances if u.id == line_id), None)
+    if src is None:
+        raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
+    speaker = body.speaker or src.speaker
+    if speaker not in job.speakers:
+        raise HTTPException(404, f"ไม่รู้จักผู้พูด {speaker}")
+    start = round(src.start if body.start is None else body.start, 3)
+    end = round(start + src.duration, 3)
+    if job.duration and end > job.duration + 0.05:
+        start, end = round(max(0.0, job.duration - src.duration), 3), round(job.duration, 3)
+    if any(u.speaker == speaker and min(end, u.end) - max(start, u.start) > 0.1 for u in utterances):
+        raise HTTPException(409, "ตัวละครนี้มีประโยคช่วงเวลานี้อยู่แล้ว คนเดียวพูดทับตัวเองไม่ได้ "
+                                 "วางให้ตัวละครอื่น หรือเลื่อนหัวอ่านไปช่วงที่ว่างก่อน")
+    new = src.model_copy(update={"id": max(u.id for u in utterances) + 1, "speaker": speaker,
+                                 "start": start, "end": end, "take": 0})
+    utterances = sorted(utterances + [new], key=lambda u: u.start)
+    _save_lines(job, utterances, True)
+    return utterances
+
+
+@app.delete("/jobs/{job_id}/transcript/{line_id}", response_model=list[Utterance],
+            dependencies=[Depends(require_key)])
+def delete_line(job_id: str, line_id: int):
+    """ลบประโยค (เช่นประโยคที่วางผิด หรือเสียงที่ไม่ต้องพากย์) ช่วงนั้นจะไม่มีเสียงพากย์"""
+    job, utterances = _editable_lines(job_id)
+    if not any(u.id == line_id for u in utterances):
+        raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
+    if len(utterances) == 1:
+        raise HTTPException(400, "ต้องเหลืออย่างน้อยหนึ่งประโยค")
+    utterances = [u for u in utterances if u.id != line_id]
+    _save_lines(job, utterances, True)
     return utterances
 
 

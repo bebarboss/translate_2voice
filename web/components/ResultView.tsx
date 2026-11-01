@@ -9,6 +9,7 @@ import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerC
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import SpeakerLanes from "./SpeakerLanes";
+import { VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import SubtitleStylePanel from "./SubtitleStylePanel";
 import { ArrowLeft, ArrowRight, CheckIcon, DownloadIcon, MicIcon, PlayIcon } from "./Icons";
 
@@ -57,8 +58,23 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   }, [sorted, t]);
   const current = sorted.find((u) => u.id === picked) ?? active ?? sorted[0] ?? null;
   const idx = current ? sorted.indexOf(current) : -1;
-  // แก้บทหลังพากย์แล้ว ต้องพากย์ใหม่เสียงถึงจะเปลี่ยน
-  const needsDub = dirty.length > 0 || tr.saved > 0;
+  // เปลี่ยนเสียงพากย์ในหน้านี้: บันทึกทันที แล้วต้องพากย์ใหม่ (ระบบพากย์เฉพาะตัวละครที่เปลี่ยน)
+  const vc = useVoiceCast(job.id);
+  const [voiceMap, setVoiceMap] = useState<Record<string, string | null>>(job.voice_map ?? {});
+  const [voiceChanged, setVoiceChanged] = useState(false);
+  const pickVoice = async (s: string, id: string | null) => {
+    if ((voiceMap[s] ?? null) === id) return;
+    try {
+      const j = await api.setJobVoices(job.id, { [s]: id });
+      setVoiceMap(j.voice_map ?? {});
+      setVoiceChanged(true);
+      tr.setMessage({ kind: "info", text: `เปลี่ยนเสียงพากย์ของ${tr.label(s)}แล้ว กดพากย์ใหม่เพื่อฟังเสียงใหม่` });
+    } catch (e) {
+      tr.setMessage({ kind: "error", text: (e as Error).message });
+    }
+  };
+  // แก้บทหรือเปลี่ยนเสียงหลังพากย์แล้ว ต้องพากย์ใหม่เสียงถึงจะเปลี่ยน
+  const needsDub = dirty.length > 0 || tr.saved > 0 || voiceChanged;
 
   useEffect(() => {
     if (!dirty.length) return;
@@ -233,9 +249,10 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
 
           {sorted.length > 0 && (
             <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={current?.id ?? null} onPick={pick}
-              onRetimed={(sec) => seek(Math.max(0, sec - 1))}
-              stemLabel="เสียงต้นฉบับ" />
+              onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
+              voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceMap[s] ?? null} compact />} />
           )}
+          <VoiceCastPicker vc={vc} job={{ ...job, speakers: tr.speakers, speaker_names: tr.names }} value={voiceMap} onChange={pickVoice} />
           {current && (
             <section className="card tight" aria-label="แก้ช่วงที่เลือก">
               <div className="row" style={{ justifyContent: "space-between" }}>

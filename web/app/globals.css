@@ -252,3 +252,18 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 @keyframes slide-in { from { transform: translateX(100%); } to { transform: none; } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .drawer, .drawer-backdrop { animation: none; } }
+
+/* ไม้บรรทัดเวลา: คลิกหรือลากเพื่อเลื่อนวิดีโอ */
+.lane.ruler .track.scrub { cursor: ew-resize; border-radius: 4px; }
+.lane.ruler .track.scrub:hover { background: var(--surface-2); }
+.lane.ruler .track.scrub:focus-visible { outline: 2px solid var(--accent); }
+.lane.ruler .tick { pointer-events: none; }
+.playhead-knob { position: absolute; top: -2px; left: -5px; width: 12px; height: 10px; background: #fff; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.lane:not(.ruler) .playhead-knob { display: none; }
+
+/* ปุ่มเลือกเสียงพากย์ท้ายเลเยอร์ */
+.lane-voice { flex: none; width: 150px; display: flex; align-items: center; }
+.voice-choice.compact { flex: 1; height: 30px; gap: 6px; padding: 0 8px 0 4px; border-radius: 8px; font-size: 13px; }
+.voice-choice.compact .voice-choice-name { padding-left: 2px; }
+.voice-choice.compact .avatar { border-radius: 6px; font-size: 11px; }
+@media (max-width: 700px) { .lane-voice { width: 96px; } }

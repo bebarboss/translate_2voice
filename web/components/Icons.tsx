@@ -52,3 +52,12 @@ export const ShuffleIcon = ({ size = 14, color = "currentColor" }: P) =>
 
 export const XIcon = ({ size = 14, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>);
+
+export const CopyIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></>);
+
+export const PasteIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><rect x="6" y="4" width="12" height="17" rx="2" /><path d="M9 4V3h6v1" /><path d="M9 10h6" /><path d="M9 14h6" /></>);
+
+export const TrashIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></>);

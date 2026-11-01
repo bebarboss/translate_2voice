@@ -8,34 +8,100 @@ import VoiceAvatar from "./VoiceAvatar";
 import VoicePicker from "./VoicePicker";
 import { PreviewButton, usePreview } from "./VoicePreview";
 
-/** เลือกเสียงจากคลังให้ตัวละครแต่ละตัว (null = เลียนเสียงนักแสดงต้นฉบับ) */
-export default function VoiceCast({ job, value, onChange }: {
-  job: Job;
-  value: Record<string, string | null>;
-  onChange: (speaker: string, voiceId: string | null) => void;
-}) {
+/** เสียงในคลังที่พร้อมใช้ และเสียงที่แนะนำของแต่ละตัวละคร (ใช้ร่วมกันระหว่างรายการเสียงพากย์และเลเยอร์บนเส้นเวลา)
+ *  picking: ตัวละครที่กำลังเปิดแถบเลือกเสียงอยู่ */
+export function useVoiceCast(jobId: string) {
   const [cast, setCast] = useState<SpeakerVoice[] | null>(null);
   const [voices, setVoices] = useState<Record<string, LibraryVoice>>({});
   const [error, setError] = useState("");
-  const [picking, setPicking] = useState<string | null>(null); // ตัวละครที่กำลังเลือกเสียง (เปิดแถบด้านขวา)
-  const preview = usePreview();
+  const [picking, setPicking] = useState<string | null>(null);
 
   useEffect(() => {
     api.listVoices()
       .then((v) => setVoices(Object.fromEntries(v.filter((x) => x.status === "ready").map((x) => [x.id, x]))))
       .catch(() => {});
-    api.jobVoices(job.id).then(setCast).catch((e) => setError(e.message));
-  }, [job.id]);
+    api.jobVoices(jobId).then(setCast).catch((e) => setError(e.message));
+  }, [jobId]);
 
-  const describe = (v: LibraryVoice) => [v.name, v.gender && GENDER_LABEL[v.gender], v.tone].filter(Boolean).join(" · ");
+  return { cast, voices, error, picking, open: setPicking, close: () => setPicking(null) };
+}
+export type VoiceCastState = ReturnType<typeof useVoiceCast>;
+
+const describe = (v: LibraryVoice) => [v.name, v.gender && GENDER_LABEL[v.gender], v.tone].filter(Boolean).join(" · ");
+const scoreOf = (c: SpeakerVoice | undefined, id: string) => c?.suggestions.find((s) => s.voice_id === id)?.score;
+const topOf = (c: SpeakerVoice | undefined, voices: Record<string, LibraryVoice>) =>
+  c?.suggestions.find((s) => voices[s.voice_id])?.voice_id;
+
+/** ปุ่มแสดงเสียงที่ตัวละครใช้อยู่ กดแล้วเปิดแถบเลือกเสียง compact = แบบย่อสำหรับเลเยอร์บนเส้นเวลา */
+export function VoiceChoice({ vc, speaker, label, selected, compact }: {
+  vc: VoiceCastState;
+  speaker: string;
+  label: string;
+  selected: string | null;
+  compact?: boolean;
+}) {
+  const c = vc.cast?.find((x) => x.speaker === speaker);
+  const v = selected ? vc.voices[selected] : undefined;
+  const top = topOf(c, vc.voices);
+  const score = selected ? scoreOf(c, selected) : undefined;
+  return (
+    <button type="button" className={`voice-choice${compact ? " compact" : ""}`} onClick={() => vc.open(speaker)}
+      aria-label={`เลือกเสียงพากย์ของ${label}`} title={v ? `เสียงพากย์: ${describe(v)}` : "เลือกเสียงพากย์จากคลัง"}>
+      {v ? (
+        <>
+          <VoiceAvatar name={v.name} size={compact ? 22 : 32} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
+          <span className="voice-choice-name">
+            {selected === top ? "★ " : ""}{compact ? v.name : describe(v)}
+            {!compact && score != null && <span className="dim"> · ใกล้เคียง {Math.round(score * 100)}%</span>}
+          </span>
+        </>
+      ) : compact ? (
+        <span className="voice-choice-name">เสียงต้นฉบับ</span>
+      ) : (
+        <span className="voice-choice-name">
+          {selected ? "เสียงที่เลือกไว้ถูกลบแล้ว ใช้เสียงต้นฉบับ" : "เสียงต้นฉบับ (เลียนเสียงนักแสดง)"}
+          {top && <span className="dim"> · แนะนำ {vc.voices[top].name}</span>}
+        </span>
+      )}
+      <span className="dim" style={{ marginLeft: "auto", flex: "none" }}>{compact ? "›" : "เปลี่ยน ›"}</span>
+    </button>
+  );
+}
+
+/** แถบเลือกเสียงด้านขวาของตัวละครที่กำลังเลือก (วางไว้ที่เดียวต่อหน้า) */
+export function VoiceCastPicker({ vc, job, value, onChange }: {
+  vc: VoiceCastState;
+  job: Job;
+  value: Record<string, string | null>;
+  onChange: (speaker: string, voiceId: string | null) => void;
+}) {
+  const c = vc.cast?.find((x) => x.speaker === vc.picking);
+  if (!c) return null;
+  const chosen = value[c.speaker];
+  return (
+    // เสียงที่เลือกไว้ถูกลบจากคลังแล้ว = ใช้เสียงต้นฉบับอยู่
+    <VoicePicker cast={c} voices={vc.voices} selected={chosen && vc.voices[chosen] ? chosen : null}
+      label={speakerLabel(c.speaker, job.speaker_names)} color={speakerColor(c.speaker, job.speakers)}
+      stemUrl={fileUrl.stem(job.id, c.speaker)}
+      onPick={(id) => onChange(c.speaker, id)} onClose={vc.close} />
+  );
+}
+
+/** เลือกเสียงจากคลังให้ตัวละครแต่ละตัว (null = เลียนเสียงนักแสดงต้นฉบับ) */
+export default function VoiceCast({ job, vc, value, onChange }: {
+  job: Job;
+  vc: VoiceCastState;
+  value: Record<string, string | null>;
+  onChange: (speaker: string, voiceId: string | null) => void;
+}) {
+  const { cast, voices, error } = vc;
+  const preview = usePreview();
   const hasLibrary = Object.keys(voices).length > 0;
-  const score = (c: SpeakerVoice, id: string) => c.suggestions.find((s) => s.voice_id === id)?.score;
-  const pickingCast = cast?.find((c) => c.speaker === picking);
 
   const useSuggested = () => {
     for (const c of cast ?? []) {
-      const top = c.suggestions.find((s) => voices[s.voice_id]);
-      if (top) onChange(c.speaker, top.voice_id);
+      const top = topOf(c, voices);
+      if (top) onChange(c.speaker, top);
     }
   };
 
@@ -58,9 +124,6 @@ export default function VoiceCast({ job, value, onChange }: {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {cast.map((c) => {
             const selected = value[c.speaker] ?? null;
-            const ranked = c.suggestions.filter((s) => voices[s.voice_id]);
-            const topId = ranked[0]?.voice_id;
-            const missing = selected && !voices[selected]; // เสียงที่เลือกไว้ถูกลบจากคลังไปแล้ว
             return (
               <div key={c.speaker} className="row" style={{ gap: 10, alignItems: "center" }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 2, width: 150, flex: "none" }}>
@@ -74,25 +137,7 @@ export default function VoiceCast({ job, value, onChange }: {
                 </div>
                 <PreviewButton url={fileUrl.stem(job.id, c.speaker)} playing={preview.playing} onToggle={preview.toggle}
                   label="เสียงเดิม" />
-                <button type="button" className="voice-choice" onClick={() => setPicking(c.speaker)}
-                  aria-label={`เลือกเสียงพากย์ของ${speakerLabel(c.speaker, job.speaker_names)}`}>
-                  {selected && voices[selected] ? (
-                    <>
-                      <VoiceAvatar name={voices[selected].name} size={32}
-                        url={voices[selected].image ? fileUrl.voiceImage(selected, voices[selected].updated_at) : ""} />
-                      <span className="voice-choice-name">
-                        {selected === topId ? "★ " : ""}{describe(voices[selected])}
-                        {score(c, selected) != null && <span className="dim"> · ใกล้เคียง {Math.round(score(c, selected)! * 100)}%</span>}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="voice-choice-name">
-                      {missing ? "เสียงที่เลือกไว้ถูกลบแล้ว ใช้เสียงต้นฉบับ" : "เสียงต้นฉบับ (เลียนเสียงนักแสดง)"}
-                      {topId && <span className="dim"> · แนะนำ {voices[topId].name}</span>}
-                    </span>
-                  )}
-                  <span className="dim" style={{ marginLeft: "auto", flex: "none" }}>เปลี่ยน ›</span>
-                </button>
+                <VoiceChoice vc={vc} speaker={c.speaker} label={speakerLabel(c.speaker, job.speaker_names)} selected={selected} />
                 <PreviewButton url={selected && voices[selected] ? fileUrl.voice(selected, voices[selected].updated_at) : ""}
                   playing={preview.playing} onToggle={preview.toggle} disabled={!selected || !voices[selected]} />
               </div>
@@ -102,12 +147,6 @@ export default function VoiceCast({ job, value, onChange }: {
             ★ คือเสียงในคลังที่ระดับเสียงและเนื้อเสียงใกล้ตัวละครที่สุด เปลี่ยนเสียงแล้วกดพากย์ ระบบจะพากย์ใหม่เฉพาะตัวละครที่เปลี่ยน
           </span>
         </div>
-      )}
-      {pickingCast && (
-        <VoicePicker cast={pickingCast} voices={voices} selected={value[pickingCast.speaker] ?? null}
-          label={speakerLabel(pickingCast.speaker, job.speaker_names)} color={speakerColor(pickingCast.speaker, job.speakers)}
-          stemUrl={fileUrl.stem(job.id, pickingCast.speaker)}
-          onPick={(id) => onChange(pickingCast.speaker, id)} onClose={() => setPicking(null)} />
       )}
     </div>
   );

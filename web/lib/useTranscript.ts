@@ -125,6 +125,19 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const merge = (u: Utterance) => restructure(() => api.mergeLine(job.id, u.id), "รวมกับประโยคถัดไปแล้ว");
 
+  /** วางสำเนาประโยคให้ตัวละคร speaker ที่เวลา start (ไม่ระบุ = เวลาเดิม พูดซ้อนกัน) คืนประโยคใหม่ หรือ null ถ้าไม่สำเร็จ */
+  const duplicate = async (u: Utterance, speaker: string, start?: number): Promise<Utterance | null> => {
+    let created: Utterance | null = null;
+    await restructure(async () => {
+      const before = new Set((lines ?? []).map((x) => x.id));
+      const res = await api.duplicateLine(job.id, u.id, { speaker, start });
+      created = res.find((x) => !before.has(x.id)) ?? null;
+    }, `วางสำเนาให้${label(speaker)}แล้ว แก้บทของประโยคใหม่ได้เลย`);
+    return created;
+  };
+
+  const removeLine = (u: Utterance) => restructure(() => api.deleteLine(job.id, u.id), "ลบประโยคแล้ว");
+
   const changeSpeaker = async (u: Utterance, value: string) => {
     if (value !== NEW_SPEAKER) { setDraft(u.id, { speaker: value }); return; }
     setBusy("edit");
@@ -154,7 +167,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
-    saveLines, split, splitAt, merge, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
+    saveLines, split, splitAt, merge, duplicate, removeLine, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
   };
 }
 

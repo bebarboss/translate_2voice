@@ -108,6 +108,11 @@ class JobCreated(BaseModel):
     status: JobStatus
 
 
+class LineDuplicate(BaseModel):
+    speaker: Optional[str] = Field(None, description="ตัวละครของประโยคใหม่ ไม่ระบุ = ตัวละครเดิม")
+    start: Optional[float] = Field(None, ge=0, description="เวลาเริ่มของประโยคใหม่ ไม่ระบุ = เวลาเดิม (พูดซ้อนกัน)")
+
+
 class Retranslate(BaseModel):
     genre: Optional[str] = Field(None, max_length=80)
     glossary: Optional[str] = Field(None, max_length=2000)

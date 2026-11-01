@@ -9,7 +9,7 @@ import LineCard from "./LineCard";
 import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
-import VoiceCast from "./VoiceCast";
+import VoiceCast, { VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import { ArrowLeft, MicIcon } from "./Icons";
 
 export default function ReviewView({ job, onChanged, onCancelEdit }: {
@@ -21,6 +21,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const tr = useTranscript(job, onChanged, () => videoRef.current?.currentTime ?? 0);
   const { lines, sorted, speakers, dirty, busy, setBusy, message, setMessage } = tr;
   const [voiceDraft, setVoiceDraft] = useState<Record<string, string | null>>(job.voice_map ?? {});
+  const vc = useVoiceCast(job.id);
+  const pickVoice = (s: string, id: string | null) => setVoiceDraft((d) => ({ ...d, [s]: id }));
   const [t, setT] = useState(0);
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
@@ -168,10 +170,11 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           </div>
 
           <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
-            onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} />
+            onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
+            voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceDraft[s] ?? null} compact />} />
 
-          <VoiceCast job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft}
-            onChange={(s, id) => setVoiceDraft((d) => ({ ...d, [s]: id }))} />
+          <VoiceCast job={{ ...job, speakers, speaker_names: tr.names }} vc={vc} value={voiceDraft} onChange={pickVoice} />
+          <VoiceCastPicker vc={vc} job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft} onChange={pickVoice} />
         </section>
 
         <aside className="side card" aria-label="บทพากย์" style={{ padding: 0, gap: 0, overflow: "hidden" }}>

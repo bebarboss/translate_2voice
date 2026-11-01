@@ -4,7 +4,7 @@ import type { ReactNode, Ref } from "react";
 import type { Utterance } from "@/lib/api";
 import { MOOD_LABEL, fmtTime, speakerColor } from "@/lib/format";
 import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
-import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon } from "./Icons";
+import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon, TrashIcon } from "./Icons";
 
 /** แก้ประโยคเดียว: ตัวละคร บทพากย์ แยกประโยค รวมกับประโยคถัดไป */
 export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onSeek, onFocusText, boxRef, tools, retake }: {
@@ -107,6 +107,10 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
         <button type="button" className="icon-btn" onClick={() => tr.merge(u)}
           disabled={!!tr.busy || isLast} title="รวมกับประโยคถัดไป">
           <MergeIcon />รวมกับถัดไป
+        </button>
+        <button type="button" className="icon-btn" disabled={!!tr.busy} title="ลบประโยคนี้ ช่วงนั้นจะไม่มีเสียงพากย์"
+          onClick={() => window.confirm("ลบประโยคนี้? ช่วงนั้นจะไม่มีเสียงพากย์") && tr.removeLine(u)}>
+          <TrashIcon />ลบ
         </button>
       </div>
     </div>

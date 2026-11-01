@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { fileUrl, type Job, type Utterance } from "@/lib/api";
 import { fmtTime, speakerColor } from "@/lib/format";
 import type { Transcript } from "@/lib/useTranscript";
-import { ScissorsIcon, XIcon } from "./Icons";
+import { CopyIcon, PasteIcon, ScissorsIcon, XIcon } from "./Icons";
 
 /** เลเยอร์เสียงของแต่ละตัวละครบนเส้นเวลา คลิกบล็อกเพื่อเลือกประโยค ลากบล็อกเพื่อเลื่อนเวลาหรือย้ายไปตัวละครอื่น
  *  เครื่องมือตัดแบ่งประโยคตรงที่คลิก ประโยคของต่างตัวละครวางซ้อนเวลากันได้ (เสียงพากย์จะเล่นทับกัน)
@@ -12,7 +12,7 @@ import { ScissorsIcon, XIcon } from "./Icons";
  *  ลบตัวละครที่ระบบแยกเกินได้ */
 const ZOOMS = [1, 2, 4, 8, 16, 32];
 const TICKS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200];
-export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, stemLabel = "ฟังเสียงแยก" }: {
+export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, onSeek, voiceSlot, stemLabel = "ฟังเสียงแยก" }: {
   job: Job;
   tr: Transcript;
   total: number;
@@ -20,7 +20,9 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   highlight: number | null; // ประโยคที่เน้น (กำลังพูดหรือที่เลือกไว้) มีที่จับให้ลากขอบปรับเวลา
   onPick: (u: Utterance) => void;
   onRetimed?: (sec: number) => void; // ลากขอบเสร็จ (เวลาของขอบที่ลาก) ใช้เลื่อนวิดีโอไปฟังตรงนั้น
+  onSeek?: (sec: number) => void; // คลิกหรือลากบนไม้บรรทัดเวลา เลื่อนวิดีโอไปเวลานั้น
   stemLabel?: string;
+  voiceSlot?: (speaker: string) => React.ReactNode; // ปุ่มเลือกเสียงพากย์ท้ายเลเยอร์ (ไม่ส่ง = ลิงก์ฟังเสียงแยก)
 }) {
   const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
   const [naming, setNaming] = useState<{ speaker: string; name: string } | null>(null);
@@ -28,6 +30,8 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   const [guide, setGuide] = useState<{ speaker: string; sec: number } | null>(null); // เส้นบอกจุดตัด
   const [dropLane, setDropLane] = useState<string | null>(null); // เลเยอร์ที่กำลังลากบล็อกไปวาง
   const dragged = useRef(false); // เพิ่งลากบล็อกเสร็จ ไม่นับเป็นคลิกเลือก
+  const [clip, setClip] = useState<number | null>(null); // ประโยคที่คัดลอกไว้
+  const pointer = useRef<{ x: number; y: number } | null>(null); // ตำแหน่งเมาส์ล่าสุด ใช้หาเลเยอร์ปลายทางของการวาง
   const speakerLabel = tr.label;
   const finishNaming = () => {
     if (naming && naming.name.trim() !== (tr.names[naming.speaker] ?? "")) tr.renameSpeaker(naming.speaker, naming.name.trim());
@@ -63,22 +67,31 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t]);
 
-  // Ctrl/⌘ + ล้อเมาส์ = ซูมรอบตำแหน่งเมาส์, Shift + ล้อเมาส์ หรือปัดแนวนอน = เลื่อนเวลา (ล้อปกติยังเลื่อนหน้าเว็บ)
+  // Ctrl/⌘ + ล้อเมาส์ (หรือหนีบ touchpad) ที่ไหนก็ได้ในการ์ดนี้ = ซูมเส้นเวลา ไม่ใช่ซูมทั้งหน้าเว็บ
+  // ซูมรอบเวลาใต้เมาส์ (เมาส์อยู่นอกแถบ ใช้หัวอ่านถ้าเห็นอยู่ ไม่งั้นกลางจอ)
+  // Shift + ล้อเมาส์ หรือปัดแนวนอนบนแถบ = เลื่อนเวลา (ล้อปกติยังเลื่อนหน้าเว็บ)
   const wheel = useRef<(e: WheelEvent) => void>(() => undefined);
   wheel.current = (e: WheelEvent) => {
-    const track = (e.target as Element).closest(".track");
+    const track = (e.target as Element).closest(".track") ?? lanesRef.current?.querySelector(".track");
     if (!track) return;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      zoomTo(zoom * (e.deltaY < 0 ? 1.25 : 0.8), secAt(e.clientX, track));
-    } else if (zoom > 1 && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+      const rect = track.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right;
+      const anchor = inside ? secAt(e.clientX, track) : t >= view && t <= view + span ? t : undefined;
+      // ล้อเมาส์หนึ่งคลิกราว 100 → ซูม 1.25 เท่า, touchpad ส่งค่าเล็กกว่ามาถี่ ๆ ซูมนุ่มตามนิ้ว
+      const factor = Math.min(2, Math.max(0.5, Math.exp(-e.deltaY * 0.0022)));
+      zoomTo(zoom * factor, anchor);
+    } else if (zoom > 1 && (e.target as Element).closest(".track")
+               && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
       e.preventDefault();
       const d = e.shiftKey ? e.deltaY || e.deltaX : e.deltaX;
       setFrom(clampFrom(view + (d / track.getBoundingClientRect().width) * span));
     }
   };
+  const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = lanesRef.current;
+    const el = cardRef.current;
     if (!el) return;
     const on = (e: WheelEvent) => wheel.current(e);
     el.addEventListener("wheel", on, { passive: false });
@@ -93,6 +106,21 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const x0 = e.clientX;
     const f0 = view;
     const move = (ev: PointerEvent) => setFrom(clampFrom(f0 - ((ev.clientX - x0) / w) * span));
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  // คลิกหรือลากบนไม้บรรทัดเวลา = เลื่อนวิดีโอ (เหมือนแถบเวลาของวิดีโอ)
+  const scrub = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!onSeek || e.button !== 0) return;
+    e.preventDefault();
+    const track = e.currentTarget;
+    onSeek(secAt(e.clientX, track));
+    const move = (ev: PointerEvent) => onSeek(secAt(ev.clientX, track));
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -168,6 +196,53 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     onPick(u);
   };
 
+  // คัดลอก/วางประโยค: ใช้ตอนสองคนพูดพร้อมกันแต่ถอดเสียงได้คนเดียว วางสำเนาซ้อนเวลาเดิมให้อีกตัวละครแล้วแก้บท
+  const copy = () => {
+    if (highlight == null) return;
+    setClip(highlight);
+    tr.setMessage({ kind: "info", text: "คัดลอกประโยคแล้ว ชี้เมาส์ที่เลเยอร์ตัวละครปลายทางแล้วกด Ctrl+V หรือปุ่มวาง" });
+  };
+  const paste = async () => {
+    const src = sorted.find((u) => u.id === clip);
+    if (!src) return;
+    const d = tr.draftOf(src);
+    // ปลายทาง: เลเยอร์ที่เมาส์ชี้ ถ้าไม่ได้ชี้หรือชี้เลเยอร์เดิม ใช้ตัวละครอื่นตัวแรก
+    const hover = pointer.current && laneAt(pointer.current.x, pointer.current.y);
+    const lane = hover && hover !== d.speaker ? hover : speakers.find((s) => s !== d.speaker) ?? d.speaker;
+    // เวลาเดิม (พูดซ้อนกัน) ถ้าตัวละครปลายทางพูดอยู่ช่วงนั้นแล้ว วางที่หัวอ่านแทน
+    const busyAt = (a: number) => sorted.some((u) => {
+      const x = tr.draftOf(u);
+      return x.speaker === lane && Math.min(a + (d.end - d.start), x.end) - Math.max(a, x.start) > 0.1;
+    });
+    const start = busyAt(d.start) ? Math.round(t * 100) / 100 : d.start;
+    const created = await tr.duplicate(src, lane, start);
+    if (created) onPick(created);
+  };
+  const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  keys.current = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const el = e.target as HTMLElement;
+    if (el.closest("input, textarea, select, [contenteditable=true]") || String(window.getSelection())) return;
+    const k = e.key.toLowerCase();
+    if (k === "c" && highlight != null) {
+      e.preventDefault();
+      copy();
+    } else if (k === "v" && clip != null && !busy) {
+      e.preventDefault();
+      paste();
+    }
+  };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => keys.current(e);
+    const track = (e: PointerEvent) => { pointer.current = { x: e.clientX, y: e.clientY }; };
+    window.addEventListener("keydown", on);
+    window.addEventListener("pointermove", track);
+    return () => {
+      window.removeEventListener("keydown", on);
+      window.removeEventListener("pointermove", track);
+    };
+  }, []);
+
   // ตัดประโยคที่หัวอ่านอยู่ (ประโยคที่เลือกไว้ก่อน ถ้าหัวอ่านไม่อยู่ในประโยคนั้น ใช้ประโยคแรกที่ครอบหัวอ่าน)
   const under = sorted.filter((u) => { const d = tr.draftOf(u); return d.start + 0.2 < t && t < d.end - 0.2; });
   const cutTarget = under.find((u) => u.id === highlight) ?? under[0];
@@ -199,7 +274,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   };
 
   return (
-    <div className="card tight">
+    <div ref={cardRef} className="card tight">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h2 style={{ fontSize: 15 }}>เลเยอร์เสียงตัวละคร</h2>
         <div className="row" style={{ gap: 8 }}>
@@ -222,16 +297,32 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
             onClick={() => cutTarget && tr.splitAt(cutTarget, t)} title="ตัดประโยคตรงตำแหน่งที่วิดีโอเล่นอยู่">
             ตัดที่หัวอ่าน
           </button>
+          <div className="seg small" role="group" aria-label="คัดลอกและวางประโยค">
+            <button type="button" onClick={copy} disabled={highlight == null} title="คัดลอกประโยคที่เลือก (Ctrl+C)">
+              <CopyIcon /> คัดลอก
+            </button>
+            <button type="button" onClick={paste} disabled={clip == null || !!busy}
+              title="วางสำเนาให้ตัวละครอื่นที่เวลาเดิม (Ctrl+V ขณะชี้เลเยอร์ปลายทาง)">
+              <PasteIcon /> วาง
+            </button>
+          </div>
         </div>
       </div>
       <div ref={lanesRef} className={`lanes${tool === "cut" ? " cutting" : ""}${zoom > 1 ? " zoomed" : ""}`}>
-        <div className="lane ruler" aria-hidden="true">
+        <div className="lane ruler">
           <div className="who" />
-          <div className="track">
+          <div className={`track${onSeek ? " scrub" : ""}`} onPointerDown={scrub} title={onSeek ? "คลิกหรือลากเพื่อเลื่อนวิดีโอ" : undefined}
+            role={onSeek ? "slider" : undefined} aria-label="ตำแหน่งวิดีโอ" aria-valuemin={0} aria-valuemax={Math.round(total)}
+            aria-valuenow={Math.round(t)} tabIndex={onSeek ? 0 : -1}
+            onKeyDown={(e) => {
+              if (!onSeek) return;
+              const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+              if (d) { e.preventDefault(); onSeek(Math.min(total, Math.max(0, t + d * (e.shiftKey ? 5 : 1)))); }
+            }}>
             {ticks.map((x) => <span key={x} className="tick" style={{ left: pct(x) }}>{fmtTick(x)}</span>)}
-            <div className="playhead" style={{ left: playheadPct }} />
+            <div className="playhead" style={{ left: playheadPct }}><span className="playhead-knob" /></div>
           </div>
-          <span className="dim lane-spacer">{stemLabel}</span>
+          <span className="lane-voice lane-spacer" />
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
         {speakers.map((s) => {
@@ -270,6 +361,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                           width: width(d.end - d.start),
                           background: color,
                           opacity: highlight === u.id ? 1 : 0.45,
+                          outline: clip === u.id ? "2px dashed #fff" : undefined,
                         }} />
                     );
                   })}
@@ -285,7 +377,11 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                   {tool === "cut" && guide?.speaker === s && <div className="cut-guide" style={{ left: pct(guide.sec) }} />}
                   <div className="playhead" style={{ left: playheadPct }} />
                 </div>
-                <a href={fileUrl.stem(job.id, s)} target="_blank" rel="noreferrer" className="dim" style={{ flex: "none", color: "var(--accent)" }}>{stemLabel}</a>
+                <div className="lane-voice">
+                  {voiceSlot ? voiceSlot(s) : (
+                    <a href={fileUrl.stem(job.id, s)} target="_blank" rel="noreferrer" className="dim" style={{ color: "var(--accent)" }}>{stemLabel}</a>
+                  )}
+                </div>
                 <button type="button" className="icon-btn" aria-label={`ลบ${speakerLabel(s)}`} title="ลบตัวละครนี้"
                   disabled={!!busy || speakers.length < 2}
                   onClick={() => own.length ? setRemoving({ speaker: s, into: speakers.find((x) => x !== s) ?? "" })
@@ -315,12 +411,13 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
           <div className="who dim">{fmtTick(view)}–{fmtTick(view + span)}</div>
           <input type="range" className="timeline-scroll" min={0} max={Math.max(0, total - span)} step={0.05} value={view}
             onChange={(e) => setFrom(Number(e.target.value))} aria-label="เลื่อนช่วงเวลาที่แสดง" />
-          <span className="dim lane-spacer">{stemLabel}</span>
+          <span className="lane-voice lane-spacer" />
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
       )}
       <span className="dim">ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ ·
-        ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ</span>
+        ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค
+        · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ</span>
     </div>
   );
 }
