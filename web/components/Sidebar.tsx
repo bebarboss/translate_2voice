@@ -26,7 +26,8 @@ export default function Sidebar() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
-  if (path.startsWith("/welcome")) return null; // หน้าแรกก่อนเข้าสู่ระบบมีเมนูของตัวเอง
+  // หน้าแรกก่อนเข้าสู่ระบบมีเมนูของตัวเอง หน้าเข้าสู่ระบบเป็นหน้าเดี่ยว
+  if (path.startsWith("/welcome") || path.startsWith("/login")) return null;
 
   const brand = (
     <Link href="/" className="brand">

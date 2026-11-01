@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
+import { MicIcon } from "@/components/Icons";
 
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
 type CredentialResponse = { credential: string };
@@ -63,37 +65,44 @@ export default function LoginPage() {
         },
       });
       gid.renderButton(el, {
-        theme: "outline", size: "large", shape: "pill", locale: "th",
+        theme: "filled_black", size: "large", shape: "pill", locale: "th",
         text: signup ? "signup_with" : "signin_with", width: 300,
       });
     }).catch(() => setError("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า"));
   }, [clientId, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
 
-  if (!loaded) return <main className="page narrow"><div className="empty">กำลังโหลด...</div></main>;
-  if (!config?.auth) {
-    return (
-      <main className="page narrow">
-        <div className="card">
-          <h2>ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน</h2>
-          <p className="muted" style={{ margin: 0 }}>ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ</p>
-        </div>
-      </main>
+  let body: React.ReactNode;
+  if (!loaded) body = <div className="empty">กำลังโหลด...</div>;
+  else if (!config?.auth) {
+    body = (
+      <>
+        <h1 className="auth-title">ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน</h1>
+        <p className="muted" style={{ margin: 0 }}>ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ</p>
+        <Link href="/" className="btn primary">ไปหน้าอัปโหลด</Link>
+      </>
+    );
+  } else {
+    body = (
+      <>
+        <h1 id="auth-title" className="auth-title">{signup ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}</h1>
+        <p className="muted" style={{ margin: 0 }}>ใช้บัญชี Google (Gmail) ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน</p>
+        {clientId
+          ? <div ref={button} className="auth-google" aria-busy={busy} style={{ opacity: busy ? 0.5 : 1 }} />
+          : <div className="alert error" role="alert">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ</div>}
+        {busy && <span className="dim" role="status">กำลังเข้าสู่ระบบ...</span>}
+        {error && <div className="alert error" role="alert">{error}</div>}
+      </>
     );
   }
 
   return (
-    <main className="page narrow">
-      <section className="card" aria-labelledby="auth-title" style={{ alignItems: "center", textAlign: "center" }}>
-        <h1 id="auth-title" style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>
-          {signup ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}
-        </h1>
-        <p className="muted" style={{ margin: 0 }}>ใช้บัญชี Google (Gmail) ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน</p>
-        {clientId
-          ? <div ref={button} aria-busy={busy} style={{ minHeight: 44, opacity: busy ? 0.5 : 1 }} />
-          : <div className="alert error" role="alert">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ</div>}
-        {busy && <span className="dim" role="status">กำลังเข้าสู่ระบบ...</span>}
-        {error && <div className="alert error" role="alert">{error}</div>}
-      </section>
+    <main className="auth-page">
+      <Link href="/welcome" className="brand auth-brand">
+        <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
+        Dubbing Studio
+      </Link>
+      <section className="card auth-card" aria-labelledby="auth-title">{body}</section>
+      <Link href="/welcome" className="dim auth-back">← กลับหน้าแรก</Link>
     </main>
   );
 }

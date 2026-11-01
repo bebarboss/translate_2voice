@@ -4,6 +4,7 @@ import "@fontsource/ibm-plex-sans-thai/500.css";
 import "@fontsource/ibm-plex-sans-thai/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "./globals.css";
+import AccountBar from "@/components/AccountBar";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
@@ -17,7 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="shell">
           <Sidebar />
-          <div className="shell-main">{children}</div>
+          <div className="shell-main">
+            <AccountBar />
+            {children}
+          </div>
         </div>
       </body>
     </html>
