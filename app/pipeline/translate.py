@@ -33,28 +33,36 @@ LANG_NAMES_EN = {
 
 SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์ละครมืออาชีพ แปลบทพูดเป็นภาษาไทยสำหรับให้นักพากย์อ่าน
 กฎ:
-1. ใช้ภาษาพูดที่เป็นธรรมชาติแบบคนไทยคุยกันจริง ไม่แปลตรงตัว
-2. เลือกสรรพนามและคำลงท้ายให้เข้ากับตัวละคร ความสัมพันธ์ และแนวเรื่อง และใช้ให้คงที่ตลอดเรื่อง ถ้ามี genre ให้ยึดตาม genre ไม่งั้นเดาจาก title
+1. แปลให้ตรงความหมาย: ทุกท่อนต้องมีใจความครบตามต้นฉบับ ห้ามเติมเนื้อหาที่ต้นฉบับไม่ได้พูด ห้ามตีความเกินหรือเปลี่ยนเรื่อง
+   ชื่อ ตัวเลข เวลา สถานที่ คำปฏิเสธ (ไม่/อย่า/ยัง) และคำถามต้องตรงกับต้นฉบับเสมอ
+2. แปลเป็นคำพูด ไม่ใช่ภาษาเขียน: เขียนแบบที่คนไทยพูดกันจริงในสถานการณ์นั้น ให้นักพากย์อ่านออกเสียงแล้วลื่นปาก
+   ไม่แปลทีละคำ เรียงประโยคแบบไทย ใช้คำลงท้ายและคำอุทานตามธรรมชาติ (นะ สิ เถอะ ล่ะ หรอก เหรอ โอ๊ย เฮ้ย)
+   เลี่ยงคำภาษาเขียนหรือภาษาทางการ เช่น ซึ่ง ดังนั้น อย่างไรก็ตาม กระผม ดิฉัน ท่าน(เมื่อไม่ใช่ยศ) ทำการ มีความ… เว้นแต่ตัวละครพูดแบบนั้นจริง
+   ตัวอย่าง: "I don't think that's a good idea." → "ฉันว่าไม่ดีมั้ง" ไม่ใช่ "ฉันไม่คิดว่านั่นเป็นความคิดที่ดี"
+3. เลือกสรรพนามและคำลงท้ายให้เข้ากับตัวละคร ความสัมพันธ์ และแนวเรื่อง และใช้ให้คงที่ตลอดเรื่อง ถ้ามี genre ให้ยึดตาม genre ไม่งั้นเดาจาก title
    เช่น ละครจีนโบราณ/กำลังภายใน ใช้ ข้า/เจ้า, ละครหรือหนังสมัยใหม่ ใช้ ฉัน/ผม/นาย/เธอ, การ์ตูนเด็ก ใช้ ฉัน/ผม/นาย/เธอ แบบเด็กพูดกัน ห้ามใช้ ข้า/เจ้า
    speaker คือชื่อตัวละครที่พูด (ถ้ารู้) ใช้เลือกสรรพนามให้เข้ากับคนพูด
-3. คงอารมณ์ของต้นฉบับ (โกรธ เยาะเย้ย อ้อนวอน เศร้า ตกใจ) ด้วยคำลงท้ายและคำอุทานที่คนไทยใช้จริง และใส่เครื่องหมาย ! ? … ตามน้ำเสียง เพราะนักพากย์ใช้เครื่องหมายเหล่านี้กำหนดน้ำเสียง
-4. แต่ละท่อนมี max_chars คือจำนวนตัวอักษรไทยมากสุดที่พูดทันในเวลานั้นด้วยความเร็วปกติ (ไม่นับสระบน สระล่าง และวรรณยุกต์) ห้ามเกิน
-   ถ้าต้นฉบับพูดเร็วหรือยาว ให้เก็บใจความหลักแล้วตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นออก บทสั้นที่พูดสบายดีกว่าบทครบที่ต้องรีบพูด
-5. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
-6. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
-7. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+4. คงอารมณ์ของต้นฉบับ (โกรธ เยาะเย้ย อ้อนวอน เศร้า ตกใจ) ด้วยคำลงท้ายและคำอุทานที่คนไทยใช้จริง และใส่เครื่องหมาย ! ? … ตามน้ำเสียง เพราะนักพากย์ใช้เครื่องหมายเหล่านี้กำหนดน้ำเสียง
+5. แต่ละท่อนมี max_chars คือจำนวนตัวอักษรไทยมากสุดที่พูดทันในเวลานั้นด้วยความเร็วปกติ (ไม่นับสระบน สระล่าง และวรรณยุกต์) ห้ามเกิน
+   ถ้าต้นฉบับพูดเร็วหรือยาว ให้พูดให้กระชับขึ้นโดยตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใจความสำคัญต้องครบ บทสั้นที่พูดสบายดีกว่าบทยาวที่ต้องรีบพูด
+6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
+7. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
+8. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
-1. Use natural, conversational English that fits the character and the genre (infer the genre from "title"); do not translate word for word.
-2. Keep the emotion of the original (anger, mockery, pleading, grief, shock) and mark it with ! ? … where the tone calls for it, because the voice actor reads the tone from punctuation.
-3. Each part has "max_words", the most words that can be spoken in its time at a natural pace. Never exceed it: keep the core meaning and drop filler. A short line spoken comfortably beats a complete line that has to be rushed.
-4. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
-5. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
-6. Reply with JSON only, no explanations."""
+1. Be accurate: every part must carry the full meaning of its source. Never add content the source does not say, never reinterpret or change what happens.
+   Names, numbers, times, places, negations and questions must always match the source.
+2. Write speech, not prose: use the conversational English people actually say in that situation, fitting the character and the genre (infer the genre from "title"), so it flows when read aloud.
+   Do not translate word for word; use contractions and natural interjections, and avoid stiff or written phrasing unless the character really talks that way.
+3. Keep the emotion of the original (anger, mockery, pleading, grief, shock) and mark it with ! ? … where the tone calls for it, because the voice actor reads the tone from punctuation.
+4. Each part has "max_words", the most words that can be spoken in its time at a natural pace. Never exceed it: tighten the wording and drop filler first; the key meaning must stay. A short line spoken comfortably beats a long line that has to be rushed.
+5. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
+6. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
+7. Reply with JSON only, no explanations."""
 
 SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
-คงความหมายหลักและอารมณ์ของตัวละครไว้ ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็น ใช้ภาษาพูดที่เป็นธรรมชาติ ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
+ใจความสำคัญต้องครบและตรงเดิม (ชื่อ ตัวเลข คำปฏิเสธ คำถาม) คงอารมณ์ของตัวละคร ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใช้ภาษาพูดแบบที่คนไทยพูดจริง ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
@@ -187,9 +195,15 @@ FOREIGN_SCRIPT = re.compile(r"[぀-ヿ㐀-鿿가-힯豈-﫿]")
 
 
 def _item_text(item) -> str:
-    """ดึงข้อความจากคำตอบโมเดล ซึ่งบางครั้งห่อมาเป็น {"text": ..} หรือ ["..."] แทนข้อความเปล่า"""
+    """ดึงข้อความจากคำตอบโมเดล ซึ่งบางครั้งห่อมาเป็น {"text": ..} หรือ ["..."] แทนข้อความเปล่า
+    หรือเป็น JSON ทั้งก้อนอยู่ในข้อความ ({"parts": ["..."]}) ถ้าไม่แกะออก เสียงพากย์จะอ่านวงเล็บและคำว่า parts"""
+    if isinstance(item, str) and item.lstrip().startswith(("{", "[")):
+        try:
+            item = json.loads(item)
+        except json.JSONDecodeError:
+            pass
     if isinstance(item, dict):
-        item = item.get("text") or item.get("th") or item.get("en") or ""
+        item = item.get("text") or item.get("parts") or item.get("th") or item.get("en") or ""
     if isinstance(item, list):
         return " ".join(t for t in map(_item_text, item) if t)
     return str(item).strip()
@@ -358,6 +372,42 @@ def unload() -> None:
     _local = None
 
 
+_CLOCK = re.compile(r"(?<![\d:])([01]?\d|2[0-4]):([0-5]\d)(?![\d:])(\s*(?:น\.|นาฬิกา))?")
+
+
+def _thai_clock(h: int, m: int) -> str:
+    """ชั่วโมง นาที → เวลาแบบที่คนไทยพูด (22:30 → สี่ทุ่มครึ่ง, 07:15 → เจ็ดโมงเช้าสิบห้านาที)"""
+    from pythainlp.util import num_to_thaiword as n
+
+    h %= 24
+    if h == 0:
+        head = "เที่ยงคืน"
+    elif h <= 5:
+        head = f"ตี{n(h)}"
+    elif h <= 11:
+        head = f"{n(h)}โมงเช้า" if h < 11 else "สิบเอ็ดโมง"
+    elif h == 12:
+        head = "เที่ยง"
+    elif h == 13:
+        head = "บ่ายโมง"
+    elif h <= 15:
+        head = f"บ่าย{n(h - 12)}โมง"
+    elif h <= 18:
+        head = f"{n(h - 12)}โมงเย็น"
+    else:
+        head = f"{n(h - 18)}ทุ่ม"
+    if m == 0:
+        return head
+    if m == 30 and h not in (0, 12):
+        return head + "ครึ่ง"
+    return f"{head}{n(m)}นาที"
+
+
+def speak_times(text: str) -> str:
+    """เวลาแบบตัวเลข (22:00) ในบทไทย → คำพูด นักพากย์และโมเดลเสียงอ่านเลขเวลาไม่ถูก"""
+    return _CLOCK.sub(lambda x: _thai_clock(int(x.group(1)), int(x.group(2))), text)
+
+
 # ---------------- ฟังก์ชันหลัก ----------------
 def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          on_progress: Optional[Callable[[float], None]] = None,
@@ -388,6 +438,10 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
             check_cancel()
         context = [u for u in utts if u.target and u.id < batch[0][0].id][-6:]
         _translate_groups(batch, lang, target, context, title, hints)
+        if target == "th":
+            for g in batch:
+                for u in g:
+                    u.target = speak_times(u.target)
         done += sum(map(len, batch))
         if on_progress:
             on_progress(done / len(utts))
