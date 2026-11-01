@@ -34,6 +34,7 @@ export interface Job {
   duration: number | null;
   synth_stats: { redubbed: number; reused: number } | null;
   voice_map: Record<string, string>;
+  queue_position?: number | null; // ลำดับคิว (เฉพาะตอนรอคิว)
   speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
   error: string | null;
   created_at: string;
@@ -156,7 +157,7 @@ export interface SystemInfo {
   device: string;
   models: Record<string, string>;
   keys: { hf_token: boolean; typhoon: boolean };
-  queue: { running: string | null; queued: number };
+  queue: { running: string | null; running_jobs?: string[]; queued: number; slots?: number; light_slots?: number; user_max_jobs?: number };
   limits: { max_upload_mb: number; max_url_minutes: number };
 }
 

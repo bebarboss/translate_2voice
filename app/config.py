@@ -50,6 +50,10 @@ class Settings:
     modal_app: str = _env("MODAL_APP", "dubbing-gpu")  # ชื่อแอปที่ modal deploy ไว้ (ตรงกับ modal_app.py)
     modal_max_jobs: int = _int("MODAL_MAX_JOBS", 4)  # จำนวนงานที่ส่ง Modal พร้อมกันได้
     modal_tts_batch: int = _int("MODAL_TTS_BATCH", 40)  # ประโยคต่อชุดที่ส่งพากย์ (หลายชุดรันพร้อมกันคนละ GPU)
+    # คิวงานหลายผู้ใช้ (jobs.Worker)
+    light_workers: int = _int("LIGHT_WORKERS", 2)  # งานเบา (ฝังซับ แปลใหม่) รันพร้อมกันได้กี่งาน แยกจากงานหนัก
+    user_max_jobs: int = _int("USER_MAX_JOBS", 2)  # ผู้ใช้หนึ่งคนรันงานหนักพร้อมกันได้กี่งาน (0 = ไม่จำกัด)
+    user_max_queued: int = _int("USER_MAX_QUEUED", 10)  # ผู้ใช้หนึ่งคนมีงานรอคิวรวมที่กำลังรันได้กี่งาน (0 = ไม่จำกัด)
 
     # แยกเสียงพูดกับเพลง: roformer (BS-RoFormer ผ่าน audio-separator ได้เสียงพูดสะอาดกว่ามาก) หรือ demucs
     # roformer โหลดไม่ได้หรือแยกไม่สำเร็จ จะใช้ Demucs แทนอัตโนมัติ

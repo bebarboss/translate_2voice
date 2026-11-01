@@ -31,7 +31,7 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
 
   const title = job.status === "failed" ? "งานล้มเหลว"
     : job.status === "cancelled" ? "ยกเลิกงานแล้ว"
-    : job.status === "queued" ? "รอคิวประมวลผล"
+    : job.status === "queued" ? (job.queue_position ? `รอคิวประมวลผล ลำดับที่ ${job.queue_position}` : "รอคิวประมวลผล")
     : TITLE[job.phase] ?? "กำลังประมวลผล";
 
   return (
@@ -52,7 +52,12 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
                 <span className="mono" style={{ fontSize: 34 }}>{Math.round(job.progress * 100)}%</span>
-                <span className="muted">{job.stage === "cancelling" ? "กำลังยกเลิก รอให้ขั้นปัจจุบันจบก่อน" : stageLabel(job.stage)}</span>
+                <span className="muted">
+                  {job.stage === "cancelling" ? "กำลังยกเลิก รอให้ขั้นปัจจุบันจบก่อน"
+                    : job.status === "queued" && job.queue_position
+                      ? job.queue_position === 1 ? "ได้คิวถัดไป เริ่มทันทีที่มีช่องว่าง" : `มีงานรอก่อนหน้า ${job.queue_position - 1} งาน`
+                      : stageLabel(job.stage)}
+                </span>
               </div>
               <div className="progress" role="progressbar" aria-valuenow={Math.round(job.progress * 100)}
                 aria-valuemin={0} aria-valuemax={100} aria-label="ความคืบหน้ารวม">

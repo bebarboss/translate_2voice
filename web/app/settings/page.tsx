@@ -117,7 +117,10 @@ export default function SettingsPage() {
               {Object.entries(system.models).map(([k, v]) => (
                 <div className="kv" key={k}><span>{MODEL_LABEL[k] ?? k}</span><span className="mono" style={{ fontSize: 13, textAlign: "right" }}>{v}</span></div>
               ))}
-              <div className="kv"><span>งานในคิว</span><span>{system.queue.queued}{system.queue.running ? " · มีงานกำลังทำ 1" : ""}</span></div>
+              <div className="kv"><span>งานในคิว</span><span>{system.queue.queued}{(system.queue.running_jobs?.length ?? (system.queue.running ? 1 : 0)) ? ` · กำลังทำ ${system.queue.running_jobs?.length ?? 1} งาน` : ""}</span></div>
+              {system.queue.slots != null && (
+                <div className="kv"><span>รันพร้อมกัน</span><span>งานหนัก {system.queue.slots} · งานเบา {system.queue.light_slots}{system.queue.user_max_jobs ? ` · ต่อผู้ใช้ไม่เกิน ${system.queue.user_max_jobs}` : ""}</span></div>
+              )}
               <div className="kv"><span>จำกัดขนาด</span><span>ไฟล์ {system.limits.max_upload_mb} MB · ลิงก์ {system.limits.max_url_minutes} นาที</span></div>
             </>
           )}

@@ -179,7 +179,7 @@ app.include_router(account_router, dependencies=[Depends(require_key)])
 # ---------------------------------------------------------------- ระบบ
 @app.get("/health")
 def health():
-    return {"status": "ok", "mock": settings.mock_pipeline, "queued": worker.queue.qsize()}
+    return {"status": "ok", "mock": settings.mock_pipeline, "queued": worker.pending_count()}
 
 
 def _gpu_name() -> Optional[str]:
@@ -221,7 +221,11 @@ def system_info():
         "keys": {"hf_token": bool(settings.hf_token), "typhoon": bool(settings.typhoon_api_key)},
         "queue": {
             "running": worker.current,
+            "running_jobs": worker.running(),
             "queued": sum(1 for j in jobs if j.status == JobStatus.queued),
+            "slots": worker.threads,
+            "light_slots": settings.light_workers,
+            "user_max_jobs": settings.user_max_jobs,
         },
         "limits": {"max_upload_mb": settings.max_upload_mb, "max_url_minutes": settings.max_url_minutes},
     }
@@ -260,6 +264,7 @@ async def create_job(
     glossary: str = Form("", max_length=2000, description="ชื่อเฉพาะและคำแปล บรรทัดละคำ เช่น ドラえもん = โดราเอมอน"),
 ):
     owner = current_user_id(request)
+    _check_quota(owner)
     if owner:
         try:
             accounts.can_start(owner)
@@ -315,14 +320,30 @@ async def create_job(
 @app.get("/jobs", response_model=list[Job], dependencies=[Depends(require_key)])
 def list_jobs(request: Request):
     user = getattr(request.state, "user", None)
-    if user is None or accounts.is_admin(user["email"]):
-        return store.all()
-    return [j for j in store.all() if j.owner == user["id"]]
+    jobs = store.all()
+    if user is not None and not accounts.is_admin(user["email"]):
+        jobs = [j for j in jobs if j.owner == user["id"]]
+    pos = worker.positions()
+    return [_with_position(j, pos) for j in jobs]
 
 
 @app.get("/jobs/{job_id}", response_model=Job, dependencies=[Depends(require_key)])
 def get_job(job_id: str):
-    return get_job_or_404(job_id)
+    return _with_position(get_job_or_404(job_id), worker.positions())
+
+
+def _with_position(job: Job, positions: dict[str, int]) -> Job:
+    """งานที่รอคิว ใส่ลำดับคิวให้หน้าเว็บแสดง (ไม่ได้บันทึกลงไฟล์งาน)"""
+    if job.status == JobStatus.queued and job.id in positions:
+        return job.model_copy(update={"queue_position": positions[job.id]})
+    return job
+
+
+def _check_quota(owner: Optional[str]) -> None:
+    """ผู้ใช้หนึ่งคนมีงานรอคิวรวมที่กำลังรันได้ไม่เกิน USER_MAX_QUEUED งาน กันคนเดียวส่งงานรัวจนคนอื่นรอนาน"""
+    limit = settings.user_max_queued
+    if owner and limit > 0 and worker.queued_by(owner) >= limit:
+        raise HTTPException(429, f"มีงานรอคิวหรือกำลังทำอยู่ {limit} งานแล้ว รอให้งานเดิมเสร็จก่อนแล้วค่อยส่งเพิ่ม")
 
 
 @app.delete("/jobs/{job_id}", status_code=204, dependencies=[Depends(require_key)])
@@ -356,6 +377,7 @@ def retry_job(job_id: str):
         phase = "analyze"
     if phase == "render" and not (store.dir(job_id) / "output.mp4").exists():
         phase = "synthesize"
+    _check_quota(job.owner)
     worker.submit(job_id, phase)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
@@ -597,6 +619,7 @@ def synthesize(job_id: str):
         raise HTTPException(409, "งานกำลังทำงานอยู่")
     if not store.load_transcript(job_id):
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแปลเสร็จก่อน")
+    _check_quota(job.owner)
     worker.submit(job_id, "synthesize")
     return JobCreated(id=job_id, status=JobStatus.queued)
 

@@ -1,12 +1,13 @@
 """เก็บสถานะงาน และคิวงาน (การ์ดจอใบเดียวรันทีละงาน โหมด modal รันพร้อมกันได้หลายงาน)"""
 import json
 import logging
-import queue
 import shutil
 import threading
 import time
 import traceback
 import uuid
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Optional
 
@@ -57,7 +58,7 @@ class JobStore:
             except Exception:
                 log.warning("skip broken job file %s", job_file)
                 continue
-            if job.status in ACTIVE:
+            if job.status == JobStatus.running:  # งานที่รอคิวอยู่ Worker.start เอาเข้าคิวต่อให้
                 job.status = JobStatus.failed
                 job.error = "เซิร์ฟเวอร์รีสตาร์ตระหว่างทำงาน กดลองใหม่ได้เลย"
                 self._write(job)
@@ -141,84 +142,195 @@ class JobStore:
         return [Utterance.model_validate(u) for u in json.loads(path.read_text(encoding="utf-8"))]
 
 
+HEAVY = "gpu"  # สายงานหนัก: วิเคราะห์ พากย์ (และเตรียมเสียงในคลังเมื่อใช้การ์ดจอเครื่องนี้)
+LIGHT = "light"  # สายงานเบา: ฝังซับ แปลใหม่ (ไม่ใช้การ์ดจอ หรือส่งไปการ์ดจอบน Modal) ไม่ต้องรอหลังงานหนัก
+
+
+@dataclass
+class Task:
+    job_id: str  # งาน หรือ "voice_id:mood" ของเสียงในคลัง
+    phase: str
+    owner: Optional[str]
+    seq: int  # ลำดับที่เข้าคิว
+
+
 class Worker:
-    """รับงานจากคิว
+    """จัดคิวงานหลายงาน หลายผู้ใช้
 
     phase: analyze (ดาวน์โหลด/แยกเสียง/ถอดเสียง/แปล), synthesize (พากย์และรวมวิดีโอ),
-    render (ฝังซับลงวิดีโอใหม่อย่างเดียว), translate (แปลบทใหม่จากบทถอดเสียงเดิม), voice (เตรียมเสียงในคลัง ใช้การ์ดจอเหมือนกันจึงเข้าคิวเดียวกัน)
-    WORKER=local รันทีละงาน (การ์ดจอใบเดียว) WORKER=modal รันพร้อมกันได้ MODAL_MAX_JOBS งาน แต่ละงานได้ GPU ของตัวเอง
+    render (ฝังซับลงวิดีโอใหม่อย่างเดียว), translate (แปลบทใหม่จากบทถอดเสียงเดิม), voice (เตรียมเสียงในคลัง)
+
+    แบ่งเป็นสองสาย แต่ละสายมีเธรดของตัวเอง งานเบาจึงไม่ต้องรองานวิเคราะห์ยาว ๆ
+    - สายงานหนัก (HEAVY): WORKER=local รันทีละงาน (การ์ดจอใบเดียว) WORKER=modal รันพร้อมกันได้ MODAL_MAX_JOBS งาน
+    - สายงานเบา (LIGHT): LIGHT_WORKERS งานพร้อมกัน
+    เลือกงานถัดไปแบบวนตามผู้ใช้: คนที่มีงานรันอยู่น้อยที่สุดได้ก่อน เท่ากันใช้งานที่เข้าคิวก่อน
+    ผู้ใช้หนึ่งคนรันงานหนักพร้อมกันได้ไม่เกิน USER_MAX_JOBS งาน (งานที่ไม่มีเจ้าของ = ระบบบัญชีปิดอยู่ ไม่จำกัด)
     """
 
     def __init__(self, store: JobStore, voices=None, threads: Optional[int] = None):
         self.store = store
         self.voices = voices  # VoiceStore
-        self.queue: "queue.Queue[tuple[str, str]]" = queue.Queue()
-        remote = settings.worker == "modal" and not settings.mock_pipeline
-        self.threads = threads or (max(1, settings.modal_max_jobs) if remote else 1)
-        self._running: dict[str, str] = {}  # ชื่อเธรด → งานที่กำลังรัน
+        self.remote = settings.worker == "modal" and not settings.mock_pipeline
+        self.threads = threads or (max(1, settings.modal_max_jobs) if self.remote else 1)
+        self._cond = threading.Condition()
+        self._pending: list[Task] = []
+        self._running: dict[str, Task] = {}  # ชื่อเธรด → งานที่กำลังรัน
+        self._seq = 0
 
+    # ---------- สถานะคิว ----------
     @property
     def current(self) -> Optional[str]:
         """งานที่กำลังรันอยู่ (ถ้ารันหลายงาน คืนงานแรก)"""
-        return next(iter(self._running.values()), None)
+        with self._cond:
+            return next((t.job_id for t in self._running.values() if t.phase != "voice"), None)
 
+    def running(self) -> list[str]:
+        with self._cond:
+            return [t.job_id for t in self._running.values() if t.phase != "voice"]
+
+    def pending_count(self) -> int:
+        with self._cond:
+            return len(self._pending)
+
+    def _pool(self, phase: str) -> str:
+        if phase in ("render", "translate"):
+            return LIGHT
+        if phase == "voice":  # โหมด modal เตรียมเสียงบนการ์ดจอของ Modal เอง ไม่แย่งช่องงานหนัก
+            return LIGHT if self.remote else HEAVY
+        return HEAVY
+
+    def _order(self, pool: str) -> list[Task]:
+        """ลำดับที่น่าจะได้รัน: วนตามผู้ใช้ (งานที่ 1 ของทุกคน แล้วงานที่ 2 ของทุกคน ...) แต่ละรอบเรียงตามเวลาเข้าคิว"""
+        rank: dict[Optional[str], int] = defaultdict(int)
+        keyed = []
+        for t in sorted((t for t in self._pending if self._pool(t.phase) == pool), key=lambda t: t.seq):
+            keyed.append(((rank[t.owner], t.seq), t))
+            rank[t.owner] += 1
+        return [t for _, t in sorted(keyed, key=lambda x: x[0])]
+
+    def positions(self) -> dict[str, int]:
+        """งานที่รอคิว → ลำดับคิว (1 = ได้รันเป็นงานถัดไปในสายนั้น)"""
+        with self._cond:
+            out = {}
+            for pool in (HEAVY, LIGHT):
+                for i, t in enumerate(self._order(pool)):
+                    out[t.job_id] = i + 1
+            return out
+
+    def queued_by(self, owner: str) -> int:
+        """จำนวนงานของผู้ใช้นี้ที่รอคิวหรือกำลังรัน (ใช้จำกัดไม่ให้คนเดียวส่งงานรัว ๆ)"""
+        with self._cond:
+            return sum(1 for t in [*self._pending, *self._running.values()] if t.owner == owner and t.phase != "voice")
+
+    # ---------- รับงาน ----------
     def start(self) -> None:
-        for n in range(self.threads):
-            threading.Thread(target=self.run, daemon=True, name=f"dubbing-worker-{n}").start()
+        # งานที่รอคิวอยู่ตอนปิดเซิร์ฟเวอร์ (ยังไม่ได้เริ่ม) เข้าคิวต่อตามลำดับเดิม
+        waiting = {t.job_id for t in self._pending}
+        for job in sorted((j for j in self.store.all() if j.status == JobStatus.queued and j.id not in waiting),
+                          key=lambda j: j.updated_at):
+            log.info("requeue %s (%s)", job.id, job.phase)
+            self._put(job.id, job.phase, job.owner)
+        pools = [HEAVY] * self.threads + [LIGHT] * max(1, settings.light_workers)
+        for n, pool in enumerate(pools):
+            threading.Thread(target=self.run, args=(pool,), daemon=True, name=f"dubbing-{pool}-{n}").start()
+
+    def _put(self, job_id: str, phase: str, owner: Optional[str]) -> None:
+        with self._cond:
+            self._pending = [t for t in self._pending if t.job_id != job_id]  # ส่งซ้ำ = ใช้คำขอล่าสุด
+            self._seq += 1
+            self._pending.append(Task(job_id, phase, owner, self._seq))
+            self._cond.notify_all()
 
     def submit(self, job_id: str, phase: str) -> None:
         self.store.clear_cancel(job_id)
-        self.store.update(job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None)
-        self.queue.put((job_id, phase))
+        job = self.store.update(job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None)
+        self._put(job_id, phase, job.owner)
 
     def submit_voice(self, voice_id: str, mood: str = "") -> None:
-        self.queue.put((f"{voice_id}:{mood}" if mood else voice_id, "voice"))
+        self._put(f"{voice_id}:{mood}" if mood else voice_id, "voice", None)
 
-    def run(self) -> None:
-        from .pipeline import library, runner
+    def _next(self, pool: str) -> Optional[Task]:
+        """งานถัดไปของสายนี้ (เรียกขณะถือ _cond) ข้ามงานที่ถูกยกเลิกหรือลบระหว่างรอ"""
+        busy: dict[Optional[str], int] = defaultdict(int)
+        for t in self._running.values():
+            if self._pool(t.phase) == HEAVY:
+                busy[t.owner] += 1
+        cap = settings.user_max_jobs
+        best = None
+        for t in list(self._pending):
+            if self._pool(t.phase) != pool:
+                continue
+            if t.phase != "voice":
+                job = self.store.get(t.job_id)
+                if job is None or job.status != JobStatus.queued:
+                    self._pending.remove(t)
+                    continue
+            if pool == HEAVY and cap > 0 and t.owner and busy[t.owner] >= cap:
+                continue
+            key = (busy[t.owner], t.seq)
+            if best is None or key < best[0]:
+                best = (key, t)
+        if best is None:
+            return None
+        self._pending.remove(best[1])
+        return best[1]
+
+    def run(self, pool: str = HEAVY) -> None:
+        name = threading.current_thread().name
         while True:
-            job_id, phase = self.queue.get()
+            with self._cond:
+                task = self._next(pool)
+                while task is None:
+                    self._cond.wait()
+                    task = self._next(pool)
+                self._running[name] = task
             try:
-                if phase == "voice":
-                    voice_id, _, mood = job_id.partition(":")
-                    library.prepare(self.voices, voice_id, mood or None)
-                    continue
-                job = self.store.get(job_id)
-                if job is None or job.status != JobStatus.queued:  # ถูกลบหรือถูกยกเลิกระหว่างรอคิว
-                    continue
-                self._running[threading.current_thread().name] = job_id
-                self.store.update(job_id, status=JobStatus.running)
-                if phase == "render":
-                    runner.run_render(self.store, job_id)
-                    self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
-                    continue
-                if phase == "translate":  # แปลบทใหม่ แล้วรอให้ตรวจก่อนพากย์ใหม่เสมอ
-                    runner.run_translate(self.store, job_id)
-                    self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
-                    continue
-                if phase == "analyze":
-                    runner.run_analyze(self.store, job_id)
-                    job = self.store.get(job_id)
-                    if job and job.review:
-                        self.store.update(job_id, status=JobStatus.awaiting_review,
-                                          stage="awaiting_review")
-                        continue
-                    self.store.update(job_id, phase="synthesize")
-                runner.run_synthesize(self.store, job_id, self.voices)
-                self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
-            except Cancelled:
-                log.info("job %s cancelled", job_id)
-                if self.store.get(job_id):
-                    self.store.update(job_id, status=JobStatus.cancelled, stage="cancelled", error=None)
-            except Exception as exc:  # noqa: BLE001
-                log.error("job %s failed:\n%s", job_id, traceback.format_exc())
-                job = self.store.get(job_id)
-                if job:
-                    self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
-                    if phase == "analyze" and job.owner:  # วิเคราะห์ไม่สำเร็จ คืนนาทีที่ตัดไป
-                        from . import accounts
-                        accounts.refund_job(job.owner, job_id)
+                self._execute(task.job_id, task.phase)
             finally:
-                self._running.pop(threading.current_thread().name, None)
+                with self._cond:
+                    self._running.pop(name, None)
+                    self._cond.notify_all()  # ช่องว่างแล้ว ผู้ใช้ที่ติดเพดานอาจได้คิวต่อ
+
+    def _execute(self, job_id: str, phase: str) -> None:
+        from .pipeline import library, runner
+        try:
+            if phase == "voice":
+                voice_id, _, mood = job_id.partition(":")
+                library.prepare(self.voices, voice_id, mood or None)
+                return
+            job = self.store.get(job_id)
+            if job is None or job.status != JobStatus.queued:  # ถูกลบหรือถูกยกเลิกระหว่างรอคิว
+                return
+            self.store.update(job_id, status=JobStatus.running)
+            if phase == "render":
+                runner.run_render(self.store, job_id)
+                self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+                return
+            if phase == "translate":  # แปลบทใหม่ แล้วรอให้ตรวจก่อนพากย์ใหม่เสมอ
+                runner.run_translate(self.store, job_id)
+                self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
+                return
+            if phase == "analyze":
+                runner.run_analyze(self.store, job_id)
+                job = self.store.get(job_id)
+                if job and job.review:
+                    self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
+                    return
+                self.store.update(job_id, phase="synthesize")
+            runner.run_synthesize(self.store, job_id, self.voices)
+            self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+        except Cancelled:
+            log.info("job %s cancelled", job_id)
+            if self.store.get(job_id):
+                self.store.update(job_id, status=JobStatus.cancelled, stage="cancelled", error=None)
+        except Exception as exc:  # noqa: BLE001
+            log.error("job %s failed:\n%s", job_id, traceback.format_exc())
+            job = self.store.get(job_id)
+            if job and phase != "voice":
+                self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
+                if phase == "analyze" and job.owner:  # วิเคราะห์ไม่สำเร็จ คืนนาทีที่ตัดไป
+                    from . import accounts
+                    accounts.refund_job(job.owner, job_id)
+        finally:
+            if phase != "voice":
                 self.store.clear_cancel(job_id)
-                self.queue.task_done()

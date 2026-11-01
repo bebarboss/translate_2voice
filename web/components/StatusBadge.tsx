@@ -3,6 +3,7 @@ import { STATUS_LABEL, stageLabel } from "@/lib/format";
 
 export default function StatusBadge({ job, detail = false }: { job: Job; detail?: boolean }) {
   let text = STATUS_LABEL[job.status];
+  if (job.status === "queued" && job.queue_position) text = `รอคิว #${job.queue_position}`;
   if (detail && job.status === "running") {
     text = job.stage === "cancelling"
       ? "กำลังยกเลิก"
