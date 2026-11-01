@@ -52,6 +52,15 @@ export interface Wallet { balance: number; subscription: Subscription | null; pa
 
 export type Mood = "angry" | "sad" | "happy" | "whisper" | "scared";
 
+/** ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์ ตอนเตรียมเสียงในคลัง */
+export interface VoiceAnalysis {
+  source_sec: number | null;
+  speech_sec: number | null;
+  windows: number | null;
+  other_voices: number | null; // สัดส่วนเสียงคนอื่นที่ปนมา 0–1
+  best_quality: number | null;
+}
+
 /** เสียงตัวอย่างอารมณ์หนึ่งของเสียงในคลัง (คนพากย์คนเดิม) */
 export interface VoiceMood {
   mood: Mood;
@@ -62,6 +71,7 @@ export interface VoiceMood {
   text: string;
   duration: number | null;
   quality: number | null;
+  analysis?: VoiceAnalysis | null;
 }
 
 export interface LibraryVoice {
@@ -80,6 +90,7 @@ export interface LibraryVoice {
   duration: number | null;
   pitch_hz: number | null;
   quality: number | null;
+  analysis?: VoiceAnalysis | null;
   moods: VoiceMood[];
   created_at: string;
   updated_at: string;

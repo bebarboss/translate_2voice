@@ -132,6 +132,15 @@ class VoiceStatus(str, Enum):
     failed = "failed"
 
 
+class VoiceAnalysis(BaseModel):
+    """ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์ ตอนเตรียมเสียงในคลัง"""
+    source_sec: Optional[float] = None  # ความยาวไฟล์ที่ประเมิน
+    speech_sec: Optional[float] = None  # ความยาวเสียงพูดที่ถอดได้
+    windows: Optional[int] = None  # จำนวนท่อนพูด 3–10 วินาทีที่ประเมิน
+    other_voices: Optional[float] = None  # สัดส่วนท่อนที่เป็นเสียงคนอื่น (ไม่ใช่เสียงหลักของไฟล์) 0–1
+    best_quality: Optional[float] = None  # ความสะอาดของท่อนที่ดีที่สุด
+
+
 class VoiceMood(BaseModel):
     """เสียงตัวอย่างอารมณ์หนึ่งของเสียงในคลัง (คนพากย์คนเดียวกับเสียงหลัก) เก็บใน data/voices/<id>/moods/<mood>/"""
     mood: Mood
@@ -142,6 +151,7 @@ class VoiceMood(BaseModel):
     text: str = ""
     duration: Optional[float] = None
     quality: Optional[float] = None
+    analysis: Optional[VoiceAnalysis] = None
 
 
 class LibraryVoice(BaseModel):
@@ -161,6 +171,7 @@ class LibraryVoice(BaseModel):
     duration: Optional[float] = None  # ความยาวเสียงตัวอย่าง (วินาที)
     pitch_hz: Optional[float] = None  # ระดับเสียงกลาง
     quality: Optional[float] = None  # ความสะอาด (ประมาณ PESQ 1–4.5)
+    analysis: Optional[VoiceAnalysis] = None  # ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์
     moods: list[VoiceMood] = Field(default_factory=list)  # เสียงตัวอย่างอารมณ์อื่น ๆ
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)

@@ -1,8 +1,10 @@
 """เตรียมเสียงในคลังและจับคู่เสียงในคลังกับตัวละคร
 
-prepare : คลิปเสียงไทยที่อัปโหลด → แยกเพลง/เสียงรบกวนออก (Demucs) → ถอดข้อความพร้อมเวลาแต่ละคำ (Whisper)
-          → ตัดท่อนพูดต่อเนื่องที่สะอาดที่สุดยาว 3–10 วินาที (ตัดตรงช่วงหยุดหายใจ ไม่ตัดกลางคำ) → ปรับความดัง
-          → วัดระดับเสียงและลายเสียงไว้ใช้แนะนำ
+prepare : คลิปเสียงไทยที่อัปโหลด (ทั้งไฟล์ ไม่เกิน VOICE_MAX_INPUT_MIN นาที) → แยกเพลง/เสียงรบกวนออก
+          → ถอดข้อความพร้อมเวลาแต่ละคำ (Whisper) → แบ่งเป็นท่อนพูดต่อเนื่อง 3–10 วินาทีทั้งไฟล์ (ตัดตรงช่วงหยุดหายใจ)
+          → ประเมินทุกท่อน: ความสะอาด และลายเสียง หาเสียงหลักของไฟล์ (คนที่พูดมากที่สุด) ตัดท่อนของคนอื่นทิ้ง
+          → เลือกท่อนที่สะอาดที่สุดของเสียงหลักเป็นเสียงตัวอย่าง → ปรับความดัง
+          → วัดระดับเสียงและลายเสียงจากทุกท่อนของเสียงหลัก (แม่นกว่าวัดจากท่อนเดียว) ไว้ใช้แนะนำ
 suggest : ให้คะแนนความใกล้เคียงระหว่างเสียงตัวละครกับเสียงในคลัง
           ระดับเสียงบอกเพศและวัยได้ดีแม้ต่างภาษา จึงให้น้ำหนักมากกว่า ลายเสียงช่วยแยกเนื้อเสียงที่ระดับใกล้กัน
 """
@@ -17,7 +19,7 @@ import numpy as np
 import soundfile as sf
 
 from ..config import settings
-from ..schemas import Utterance, VoiceStatus
+from ..schemas import Utterance, VoiceAnalysis, VoiceStatus
 from ..voice_library import VoiceStore
 from . import audio, gpu
 from .voices import EMBED_MODEL, Voice, _pitch
@@ -25,7 +27,8 @@ from .voices import EMBED_MODEL, Voice, _pitch
 log = logging.getLogger("dubbing.library")
 
 MIN_SEC = 3.0  # เสียงตัวอย่างสั้นกว่านี้ F5-TTS เก็บน้ำเสียงได้ไม่ดี
-MAX_INPUT_SEC = 300  # ใช้แค่ 5 นาทีแรกของไฟล์ที่อัปโหลด พอให้หาท่อนดี ๆ ได้ และไม่กินเวลาแยกเสียงนาน
+MAX_WINDOWS = 400  # ประเมินไม่เกินเท่านี้ท่อน (ไฟล์ยาวมากเลือกท่อนกระจายทั้งไฟล์)
+SAME_VOICE = 0.5  # ลายเสียงคล้ายเสียงหลักอย่างน้อยเท่านี้ถือเป็นคนเดียวกัน
 MALE_BELOW_HZ = 165.0  # เส้นแบ่งคร่าว ๆ ระหว่างเสียงผู้ชายกับผู้หญิง
 
 _embedder = None
@@ -90,32 +93,80 @@ def _windows(words: list, lo: float, hi: float, gap: float) -> list[tuple[int, i
     return out
 
 
-def _pick(words: list, vocals: np.ndarray, sr: int) -> tuple[float, float, str]:
-    """ท่อนที่ใช้เป็นเสียงตัวอย่าง: ยาวพอและสะอาดที่สุด คืน (เริ่ม, จบ, ข้อความ)"""
+def _spread(windows: list[tuple[int, int]], words: list) -> list[tuple[int, int]]:
+    """ท่อนที่ไม่ทับกันครอบคลุมทั้งไฟล์ (เลือกท่อนแรกที่เริ่มได้ แล้วข้ามไปหลังท่อนนั้นจบ) ไม่เกิน MAX_WINDOWS ท่อน"""
+    out, until = [], -1.0
+    for i, j in windows:
+        if words[i].start >= until:
+            out.append((i, j))
+            until = words[j].end
+    if len(out) > MAX_WINDOWS:
+        step = len(out) / MAX_WINDOWS
+        out = [out[int(k * step)] for k in range(MAX_WINDOWS)]
+    return out
+
+
+def _pick(words: list, vocals: np.ndarray, sr: int) -> dict:
+    """ประเมินท่อนพูดทั้งไฟล์ เลือกท่อนที่ใช้เป็นเสียงตัวอย่าง และวัดเสียงหลักของไฟล์
+
+    คืน start, end, text ของท่อนที่เลือก, pitch (เซมิโทน) และ emb ของเสียงหลักจากทุกท่อน,
+    stats: จำนวนท่อนที่ประเมิน ความยาวเสียงพูด และสัดส่วนเสียงคนอื่นที่ปนมา"""
     hi = settings.ref_max_sec
     cands = _windows(words, MIN_SEC, hi, 0.2) or _windows(words, MIN_SEC, hi, 0.0)
     if not cands:
         raise RuntimeError(f"ไม่พบช่วงพูดต่อเนื่อง {MIN_SEC:.0f}–{hi:.0f} วินาที ลองใช้คลิปที่พูดยาวกว่านี้")
+    cands = _spread(cands, words)
     span = lambda c: words[c[1]].end - words[c[0]].start  # noqa: E731
-    cands = sorted(cands, key=span, reverse=True)[:6]
-    if len(cands) > 1 and not settings.mock_pipeline:
-        from . import quality
-        q = {c: quality.score(vocals[int(words[c[0]].start * sr): int(words[c[1]].end * sr)], sr) for c in cands}
+    seg = lambda c: vocals[int(words[c[0]].start * sr): int(words[c[1]].end * sr)]  # noqa: E731
+    speech = round(sum(w.end - w.start for w in words), 1)
+    stats = {"windows": len(cands), "speech_sec": speech, "other_voices": 0.0}
+    main, pitch, emb = cands, float("nan"), None
+    q = {c: 0.0 for c in cands}
+
+    if not settings.mock_pipeline:
+        from types import SimpleNamespace
+
+        from . import quality, voices
+
+        # ลายเสียงและระดับเสียงทุกท่อน → เสียงหลัก = ท่อนที่คล้ายท่อนอื่นมากที่สุด (ถ่วงด้วยความยาว)
+        items = [SimpleNamespace(id=k, start=words[i].start, end=words[j].end) for k, (i, j) in enumerate(cands)]
+        prof = voices.profile(items, vocals, sr)
+        gpu.release("voices")
+        known = [k for k in range(len(cands)) if prof[k].emb is not None]
+        if len(known) >= 3:
+            e = np.stack([prof[k].emb for k in known])
+            w = np.array([span(cands[k]) for k in known])
+            medoid = known[int(np.argmax((e @ e.T) @ w))]
+            near = {k for k in known if float(prof[k].emb @ prof[medoid].emb) >= SAME_VOICE}
+            main = [cands[k] for k in range(len(cands)) if k in near or prof[k].emb is None]
+            total = sum(span(c) for c in cands)
+            stats["other_voices"] = round(1 - sum(span(c) for c in main) / max(total, 1e-6), 2)
+            v = sum(prof[k].emb * span(cands[k]) for k in near)
+            emb = v / (np.linalg.norm(v) or 1.0)
+        ps = [(prof[k].pitch, span(cands[k])) for k, c in enumerate(cands) if c in main and np.isfinite(prof[k].pitch)]
+        if ps:
+            order = sorted(ps)
+            half, acc = sum(x for _, x in order) / 2, 0.0
+            for p, x in order:  # มัธยฐานถ่วงความยาว ไม่หลุดเพราะท่อนตะโกนหรือกระซิบไม่กี่ท่อน
+                acc += x
+                if acc >= half:
+                    pitch = p
+                    break
+        q = {c: quality.score(seg(c), sr) for c in main}
         gpu.release("quality")
-        log.info("voice windows: %s", {(round(words[i].start, 1), round(span((i, j)), 1)): round(s, 2)
-                                       for (i, j), s in q.items()})
-        # ความสะอาดมาก่อน ความยาวช่วยเล็กน้อย (ยาวกว่า 1 วินาที เท่ากับสะอาดกว่า 0.1)
-        best = max(cands, key=lambda c: q[c] + 0.1 * span(c))
-    else:
-        best = cands[0]
-    i, j = best
+        top = sorted(q.items(), key=lambda kv: -kv[1])[:5]
+        log.info("voice windows: %d evaluated, %d main voice (%.0f%% other), best %s", len(cands), len(main),
+                 stats["other_voices"] * 100, [(round(words[i].start, 1), round(s, 2)) for (i, _), s in top])
+    stats["best_quality"] = round(max(q.values()), 2) if q else None
+    # ความสะอาดมาก่อน ความยาวช่วยเล็กน้อย (ยาวกว่า 1 วินาที เท่ากับสะอาดกว่า 0.1)
+    i, j = max(main, key=lambda c: q.get(c, 0.0) + 0.1 * span(c))
     # เผื่อหัวท้ายไว้ให้ลมหายใจและหางเสียง แต่ไม่ล้ำเข้าคำข้างเคียง
     start = max(0.0, words[i].start - 0.1, words[i - 1].end if i > 0 else 0.0)
     end = words[j].end + 0.2
     if j + 1 < len(words):
         end = min(end, words[j + 1].start)
     text = "".join(w.text for w in words[i: j + 1]).strip()
-    return start, end, text
+    return {"start": start, "end": end, "text": text, "pitch": pitch, "emb": emb, "stats": stats}
 
 
 def _normalize(wav: np.ndarray, target_db: float = -20.0, peak: float = 0.95) -> np.ndarray:
@@ -153,7 +204,8 @@ def clean_voice(raw: Path, work: Path, stage) -> dict:
         raise RuntimeError("ไม่พบเสียงพูดในคลิปนี้")
 
     stage("trim", 0.0)
-    start, end, text = _pick(words, clean, sr)
+    pick = _pick(words, clean, sr)
+    start, end, text = pick["start"], pick["end"], pick["text"]
     ref = work / "ref_cut.wav"  # ไม่ใช่ ref.wav ซึ่งเป็นไฟล์จริงของเสียงในคลัง (VoiceStore.ref_path)
     audio.cut_clip(vocals, start, end, ref, tts.SAMPLE_RATE)
     wav, rsr = sf.read(ref, dtype="float32")
@@ -172,8 +224,11 @@ def clean_voice(raw: Path, work: Path, stage) -> dict:
         from . import quality
         q = round(quality.score(wav, rsr), 2)
         gpu.release("quality")
-    return {"wav": wav, "sr": rsr, "text": text, "pitch_hz": _hz(_pitch(wav, rsr)), "quality": q,
-            "emb": _embed(wav, rsr)}
+    stats = {**pick["stats"], "source_sec": round(len(clean) / sr, 1)}
+    # ระดับเสียงและลายเสียงจากทุกท่อนของเสียงหลัก ถ้าวัดไม่ได้ใช้ของท่อนที่ตัด
+    pitch = pick["pitch"] if np.isfinite(pick["pitch"]) else _pitch(wav, rsr)
+    emb = pick["emb"] if pick["emb"] is not None else _embed(wav, rsr)
+    return {"wav": wav, "sr": rsr, "text": text, "pitch_hz": _hz(pitch), "quality": q, "emb": emb, "stats": stats}
 
 
 def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> None:
@@ -190,13 +245,14 @@ def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> Non
         src = next(d.glob("original.*"))
         update(stage="clean")
         raw = tmp[0]
-        audio.run(["ffmpeg", "-y", "-i", src, "-vn", "-t", MAX_INPUT_SEC, "-ac", "2", "-ar", 44100,
-                   "-c:a", "pcm_s16le", raw])
+        limit = ["-t", settings.voice_max_input_min * 60] if settings.voice_max_input_min > 0 else []
+        audio.run(["ffmpeg", "-y", "-i", src, "-vn", *limit, "-ac", "2", "-ar", 44100, "-c:a", "pcm_s16le", raw])
         r = gpu.prepare_voice(raw, d, lambda name, _progress: update(stage=name))
         wav, rsr = r["wav"], r["sr"]
         sf.write(store.ref_path(voice_id, mood), wav, rsr)
         done = dict(status=VoiceStatus.ready, stage="ready", text=r["text"], duration=round(len(wav) / rsr, 2),
-                    quality=r["quality"], error=None)
+                    quality=r["quality"], error=None,
+                    analysis=VoiceAnalysis(**r["stats"]) if r.get("stats") else None)
         if mood:
             update(**done)
         else:

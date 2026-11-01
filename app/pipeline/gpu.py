@@ -40,7 +40,7 @@ REMOTE_FIELDS = (
     "separator", "separator_model", "separator_overlap", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
-    "diar_refine", "diar_merge_sim", "voice_drift", "voice_retries",
+    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries",
 )
 
 
@@ -274,7 +274,8 @@ def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: O
             from .library import clean_voice
             r = clean_voice(mixed, work, report)
             return {"ref_flac": _encode(r["wav"], r["sr"]), "text": r["text"], "pitch_hz": r["pitch_hz"],
-                    "quality": r["quality"], "emb": None if r["emb"] is None else r["emb"].tolist()}
+                    "quality": r["quality"], "emb": None if r["emb"] is None else r["emb"].tolist(),
+                    "stats": r.get("stats")}
         res = analyze_core(mixed, work, source_lang, num_speakers, report)
         report("transcribe", 0.5)
         features = features_core(res["utterances"], res["vocals"], res["lang"])
@@ -403,7 +404,7 @@ def prepare_voice(raw: Path, work: Path, stage: Stage) -> dict:
     wav, sr = _decode(res["ref_flac"])
     emb = None if res["emb"] is None else np.asarray(res["emb"], dtype=np.float32)
     return {"wav": wav, "sr": sr, "text": res["text"], "pitch_hz": res["pitch_hz"], "quality": res["quality"],
-            "emb": emb}
+            "emb": emb, "stats": res.get("stats")}
 
 
 def _ref_track(lines: list[dict], orig: np.ndarray, sr: int, gap: float = 0.5) -> bytes:

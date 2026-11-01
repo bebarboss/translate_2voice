@@ -634,14 +634,14 @@ def list_voices():
 @app.post("/voices", response_model=LibraryVoice, status_code=202,
           dependencies=[Depends(require_key_or_upload_token)])
 async def create_voice(
-    file: UploadFile = File(..., description="คลิปเสียงภาษาไทย (หรือวิดีโอ) ของเจ้าของเสียง ใช้แค่ 5 นาทีแรก"),
+    file: UploadFile = File(..., description="คลิปเสียงภาษาไทย (หรือวิดีโอ) ของเจ้าของเสียง ประเมินทั้งไฟล์ (ไม่เกิน VOICE_MAX_INPUT_MIN นาที)"),
     name: str = Form(..., min_length=1, max_length=80),
     gender: Gender = Form("", description="male, female หรือว่างไว้ให้ระบบเดาจากระดับเสียง"),
     tone: str = Form("", max_length=80, description="โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส"),
     description: str = Form("", max_length=1000, description="รายละเอียด เช่น ประวัติคนพากย์ บทที่เหมาะ"),
     categories: list[str] = Form([], description="หมวดหมู่ ส่งได้หลายค่า เช่น ละคร หนัง การ์ตูน"),
 ):
-    """อัปโหลดเสียงเข้าคลัง ระบบจะแยกเสียงรบกวน ตัดท่อนพูดที่สะอาดที่สุด 3–10 วินาที และถอดข้อความให้"""
+    """อัปโหลดเสียงเข้าคลัง ระบบแยกเสียงรบกวน ประเมินทุกท่อนพูดในไฟล์ เลือกท่อนที่สะอาดที่สุดของเสียงหลัก 3–10 วินาที และถอดข้อความให้"""
     ext = Path(file.filename or "").suffix.lower()
     if ext not in AUDIO_EXT:
         raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")

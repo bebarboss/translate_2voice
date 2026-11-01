@@ -102,6 +102,7 @@ input[type="color"] { width: 44px; height: 36px; border: 1px solid var(--border-
 .alert { padding: 12px 14px; border-radius: 11px; font-size: 14px; }
 .alert.error { background: var(--danger-soft); color: var(--danger); border: 1px solid #4a2a2a; }
 .alert.info { background: #1b2433; color: #a9d0ff; border: 1px solid #263a55; }
+.alert.warn { background: #2e2416; color: #f5c27a; border: 1px solid #4a3a20; }
 
 .progress { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .progress > div { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s; }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceMood } from "@/lib/api";
+import { api, fileUrl, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceAnalysis, type VoiceMood } from "@/lib/api";
 import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
@@ -47,6 +47,30 @@ function CategoryPicker({ value, onChange, known, id }: {
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
         onBlur={addCustom} />
     </div>
+  );
+}
+
+const OTHER_VOICES_WARN = 0.2; // ท่อนเสียงคนอื่นเกินสัดส่วนนี้ เตือนว่าไฟล์มีหลายคนพูด
+
+const fmtMin = (sec: number) => (sec >= 90 ? `${(sec / 60).toFixed(1)} นาที` : `${Math.round(sec)} วินาที`);
+
+/** ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์: ประเมินกี่ท่อน และมีเสียงคนอื่นปนแค่ไหน */
+function AnalysisNote({ a }: { a: VoiceAnalysis }) {
+  const other = a.other_voices ?? 0;
+  return (
+    <>
+      <span className="dim">
+        ประเมินทั้งไฟล์{a.source_sec ? ` ${fmtMin(a.source_sec)}` : ""}
+        {a.speech_sec ? ` · เสียงพูด ${fmtMin(a.speech_sec)}` : ""}
+        {a.windows ? ` · ${a.windows} ท่อน เลือกท่อนที่ชัดที่สุด` : ""}
+      </span>
+      {other >= OTHER_VOICES_WARN && (
+        <div className="alert warn">
+          พบเสียงคนอื่นปนราว {Math.round(other * 100)}% ของไฟล์ ระบบเลือกเฉพาะเสียงของคนที่พูดมากที่สุด
+          ถ้าเสียงตัวอย่างไม่ใช่คนที่ต้องการ ใช้ไฟล์ที่มีแค่เสียงคนนั้น
+        </div>
+      )}
+    </>
   );
 }
 
@@ -157,7 +181,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
             <>
               <span style={{ fontSize: 17, fontWeight: 500 }}>ลากคลิปเสียงภาษาไทยมาวาง</span>
               <span className="muted">หรือ <span style={{ color: "var(--accent)", textDecoration: "underline" }}>เลือกไฟล์</span></span>
-              <span className="dim">เสียงคนเดียวพูดต่อเนื่อง 10 วินาทีขึ้นไป · ใช้แค่ 5 นาทีแรก</span>
+              <span className="dim">เสียงคนเดียวพูด 10 วินาทีขึ้นไป · ระบบประเมินทั้งไฟล์ (ไม่เกิน 60 นาที) ยิ่งยาวยิ่งได้ท่อนที่ดี</span>
             </>
           )}
           <input type="file" accept={ACCEPT} aria-label="เลือกไฟล์เสียง" onChange={(e) => pickFile(e.target.files?.[0])}
@@ -246,6 +270,7 @@ function MoodRow({ v, m, preview, run }: {
         {m.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[m.stage] ?? m.stage}...</span>}
         {m.status === "failed" && <span className="badge failed">เตรียมเสียงไม่สำเร็จ</span>}
         {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">มีเสียงรบกวน</span>}
+        {m.status === "ready" && (m.analysis?.other_voices ?? 0) >= OTHER_VOICES_WARN && <span className="badge warn">มีเสียงคนอื่นปน</span>}
         <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
           {m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>แก้ข้อความ</button>}
           {m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>ลองใหม่</button>}
@@ -449,6 +474,7 @@ function VoiceCard({ v, preview, onChanged, known }: {
           {v.quality != null ? ` · ความชัด ${v.quality.toFixed(1)}/4.5` : ""} · เพิ่มเมื่อ {fmtWhen(v.created_at)}
         </span>
       )}
+      {v.status === "ready" && v.analysis && <AnalysisNote a={v.analysis} />}
       {v.status === "ready" && !editing && <MoodSection v={v} preview={preview} run={run} />}
       {error && <div className="alert error" role="alert">{error}</div>}
 
