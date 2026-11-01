@@ -148,7 +148,7 @@ export function isActive(job: Job): boolean {
   return job.status === "queued" || job.status === "running";
 }
 
-/** จำนวนเครดิต ทศนิยมสูงสุด 2 ตำแหน่ง (1.25, 3, 1,200.5) */
+/** จำนวนเครดิต ทศนิยม 2 ตำแหน่งเสมอ (1.25, 3.00, 1,200.50) */
 export function fmtNum(n: number): string {
-  return n.toLocaleString("th-TH", { maximumFractionDigits: 2 });
+  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

@@ -170,8 +170,8 @@ def credits_out(units: int) -> float:
 
 
 def fmt_credits(units: int) -> str:
-    """หน่วยย่อย → ข้อความ เช่น 1.25, 3, 1,200.5"""
-    return f"{units / UNIT:,.2f}".rstrip("0").rstrip(".")
+    """หน่วยย่อย → ข้อความ ทศนิยม 2 ตำแหน่งเสมอ เช่น 1.25, 3.00, 1,200.50"""
+    return f"{units / UNIT:,.2f}"
 
 
 def _sub_out(sub) -> Optional[dict]:
