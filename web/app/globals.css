@@ -267,3 +267,4 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .voice-choice.compact .voice-choice-name { padding-left: 2px; }
 .voice-choice.compact .avatar { border-radius: 6px; font-size: 11px; }
 @media (max-width: 700px) { .lane-voice { width: 96px; } }
+.lane-voice-btn { flex: 1; height: 26px; padding: 0 8px; font-size: 12px; white-space: nowrap; justify-content: center; }

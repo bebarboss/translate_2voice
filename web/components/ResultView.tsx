@@ -9,7 +9,7 @@ import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerC
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import SpeakerLanes from "./SpeakerLanes";
-import { VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
+import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import SubtitleStylePanel from "./SubtitleStylePanel";
 import { ArrowLeft, ArrowRight, CheckIcon, DownloadIcon, MicIcon, PlayIcon } from "./Icons";
 
@@ -62,17 +62,20 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const vc = useVoiceCast(job.id);
   const [voiceMap, setVoiceMap] = useState<Record<string, string | null>>(job.voice_map ?? {});
   const [voiceChanged, setVoiceChanged] = useState(false);
-  const pickVoice = async (s: string, id: string | null) => {
-    if ((voiceMap[s] ?? null) === id) return;
+  const pickVoices = async (choice: Record<string, string | null>) => {
+    const changed = Object.keys(choice).filter((s) => (voiceMap[s] ?? null) !== choice[s]);
+    if (!changed.length) return;
     try {
-      const j = await api.setJobVoices(job.id, { [s]: id });
+      const j = await api.setJobVoices(job.id, Object.fromEntries(changed.map((s) => [s, choice[s]])));
       setVoiceMap(j.voice_map ?? {});
       setVoiceChanged(true);
-      tr.setMessage({ kind: "info", text: `เปลี่ยนเสียงพากย์ของ${tr.label(s)}แล้ว กดพากย์ใหม่เพื่อฟังเสียงใหม่` });
+      const who = changed.length === 1 ? tr.label(changed[0]) : `${changed.length} ตัวละคร`;
+      tr.setMessage({ kind: "info", text: `เปลี่ยนเสียงพากย์ของ${who}แล้ว กดพากย์ใหม่เพื่อฟังเสียงใหม่` });
     } catch (e) {
       tr.setMessage({ kind: "error", text: (e as Error).message });
     }
   };
+  const pickVoice = (s: string, id: string | null) => pickVoices({ [s]: id });
   // แก้บทหรือเปลี่ยนเสียงหลังพากย์แล้ว ต้องพากย์ใหม่เสียงถึงจะเปลี่ยน
   const needsDub = dirty.length > 0 || tr.saved > 0 || voiceChanged;
 
@@ -250,7 +253,8 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
           {sorted.length > 0 && (
             <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={current?.id ?? null} onPick={pick}
               onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
-              voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceMap[s] ?? null} compact />} />
+              voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceMap[s] ?? null} compact />}
+              voiceHead={<UseSuggested vc={vc} value={voiceMap} onApply={pickVoices} />} />
           )}
           <VoiceCastPicker vc={vc} job={{ ...job, speakers: tr.speakers, speaker_names: tr.names }} value={voiceMap} onChange={pickVoice} />
           {current && (

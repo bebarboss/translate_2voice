@@ -9,7 +9,7 @@ import LineCard from "./LineCard";
 import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
-import VoiceCast, { VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
+import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import { ArrowLeft, MicIcon } from "./Icons";
 
 export default function ReviewView({ job, onChanged, onCancelEdit }: {
@@ -171,9 +171,9 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
           <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
             onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
-            voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceDraft[s] ?? null} compact />} />
+            voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceDraft[s] ?? null} compact />}
+            voiceHead={<UseSuggested vc={vc} value={voiceDraft} onApply={(c) => setVoiceDraft((d) => ({ ...d, ...c }))} />} />
 
-          <VoiceCast job={{ ...job, speakers, speaker_names: tr.names }} vc={vc} value={voiceDraft} onChange={pickVoice} />
           <VoiceCastPicker vc={vc} job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft} onChange={pickVoice} />
         </section>
 

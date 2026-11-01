@@ -12,7 +12,7 @@ import { CopyIcon, PasteIcon, ScissorsIcon, XIcon } from "./Icons";
  *  ลบตัวละครที่ระบบแยกเกินได้ */
 const ZOOMS = [1, 2, 4, 8, 16, 32];
 const TICKS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200];
-export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, onSeek, voiceSlot, stemLabel = "ฟังเสียงแยก" }: {
+export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, onSeek, voiceSlot, voiceHead, stemLabel = "ฟังเสียงแยก" }: {
   job: Job;
   tr: Transcript;
   total: number;
@@ -23,6 +23,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   onSeek?: (sec: number) => void; // คลิกหรือลากบนไม้บรรทัดเวลา เลื่อนวิดีโอไปเวลานั้น
   stemLabel?: string;
   voiceSlot?: (speaker: string) => React.ReactNode; // ปุ่มเลือกเสียงพากย์ท้ายเลเยอร์ (ไม่ส่ง = ลิงก์ฟังเสียงแยก)
+  voiceHead?: React.ReactNode; // หัวคอลัมน์เสียง (แถวเดียวกับไม้บรรทัดเวลา) เช่นปุ่มใช้เสียงแนะนำทั้งหมด
 }) {
   const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
   const [naming, setNaming] = useState<{ speaker: string; name: string } | null>(null);
@@ -322,7 +323,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
             {ticks.map((x) => <span key={x} className="tick" style={{ left: pct(x) }}>{fmtTick(x)}</span>)}
             <div className="playhead" style={{ left: playheadPct }}><span className="playhead-knob" /></div>
           </div>
-          <span className="lane-voice lane-spacer" />
+          {voiceHead ? <div className="lane-voice">{voiceHead}</div> : <span className="lane-voice lane-spacer" />}
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
         {speakers.map((s) => {
