@@ -38,6 +38,11 @@ class Settings:
     mock_pipeline: bool = _bool("MOCK_PIPELINE")  # ทดสอบ API โดยไม่โหลดโมเดลจริง
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")  # การ์ดจอเล็ก: ปล่อยโมเดลทิ้งหลังใช้แต่ละขั้น ไม่โหลดค้างพร้อมกัน
+    # ที่เก็บข้อมูล: files = ไฟล์ JSON ใน data/ (เดิม), supabase = ฐานข้อมูล Supabase (supabase_db.py)
+    # ตอนนี้ย้ายแล้ว: ค่าตั้งระบบ และคลังเสียง (ยังเขียนไฟล์ JSON ไว้ด้วยเป็นสำรอง)
+    db_backend: str = _env("DB_BACKEND", "files").lower()
+    supabase_url: str = _env("SUPABASE_URL")
+    supabase_key: str = _env("SUPABASE_SERVICE_ROLE_KEY")
 
     # บัญชีผู้ใช้และการเก็บเงิน (accounts.py) ยังไม่เปิดใช้งาน
     auth_enabled: bool = _bool("AUTH_ENABLED")  # ต้องล็อกอิน แต่ละคนเห็นเฉพาะงานของตัวเอง

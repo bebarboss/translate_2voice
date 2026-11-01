@@ -17,9 +17,9 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
-from . import accounts, runtime_settings
+from . import accounts, runtime_settings, supabase_db
 from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -56,6 +56,12 @@ app = FastAPI(
 # หน้าเว็บ Next.js เรียกผ่าน proxy ของตัวเองอยู่แล้ว CORS จำเป็นเฉพาะตอนเรียกจากเบราว์เซอร์ตรง ๆ
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=_origins, allow_methods=["*"], allow_headers=["*"])
+
+
+@app.exception_handler(supabase_db.DBError)
+def _db_error(_: Request, exc: supabase_db.DBError):
+    logging.getLogger("dubbing.db").error("Supabase: %s", exc)
+    return JSONResponse({"detail": "บันทึกลงฐานข้อมูลไม่ได้ชั่วคราว ลองใหม่อีกครั้ง"}, status_code=503)
 
 
 def require_key(x_api_key: Optional[str] = Header(default=None)) -> None:

@@ -1,5 +1,8 @@
 """คลังเสียงภาษาไทย: เก็บใน data/voices/<id>/ (voice.json, original.*, ref.wav, embedding.npy)
-เสียงตัวอย่างอารมณ์อื่นเก็บใน data/voices/<id>/moods/<mood>/ (original.*, ref.wav)"""
+เสียงตัวอย่างอารมณ์อื่นเก็บใน data/voices/<id>/moods/<mood>/ (original.*, ref.wav)
+
+DB_BACKEND=supabase: ข้อมูลเสียงอ่านจากตาราง voices / voice_moods และบันทึกลงทั้งสองที่
+(voice.json และ embedding.npy ยังเขียนไว้เป็นสำรอง ไฟล์เสียงอยู่ในเครื่องเหมือนเดิม)"""
 import logging
 import shutil
 import threading
@@ -9,6 +12,7 @@ from typing import Optional, get_args
 
 import numpy as np
 
+from . import supabase_db as db
 from .jobs import _atomic_write
 from .schemas import LibraryVoice, Mood, VoiceMood, VoiceStatus, now
 
@@ -23,12 +27,7 @@ class VoiceStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._voices: dict[str, LibraryVoice] = {}
-        for f in self.root.glob("*/voice.json"):
-            try:
-                v = LibraryVoice.model_validate_json(f.read_text(encoding="utf-8"))
-            except Exception:
-                log.warning("skip broken voice file %s", f)
-                continue
+        for v in self._load():
             stuck = [x for x in [v, *v.moods] if x.status == VoiceStatus.processing]
             for x in stuck:
                 x.status, x.error = VoiceStatus.failed, "เซิร์ฟเวอร์รีสตาร์ตระหว่างเตรียมเสียง กดลองใหม่ได้เลย"
@@ -36,8 +35,24 @@ class VoiceStore:
                 self._write(v)
             self._voices[v.id] = v
 
+    def _load(self) -> list[LibraryVoice]:
+        if db.enabled():
+            try:
+                return [from_row(r) for r in db.select("voices", select=f"{VOICE_COLS},voice_moods(*)")]
+            except db.DBError as e:
+                log.warning("อ่านคลังเสียงจาก Supabase ไม่ได้ ใช้ไฟล์ voice.json แทน: %s", e)
+        voices = []
+        for f in self.root.glob("*/voice.json"):
+            try:
+                voices.append(LibraryVoice.model_validate_json(f.read_text(encoding="utf-8")))
+            except Exception:
+                log.warning("skip broken voice file %s", f)
+        return voices
+
     def _write(self, v: LibraryVoice) -> None:
         _atomic_write(self.dir(v.id) / "voice.json", v.model_dump_json(indent=2))
+        if db.enabled():
+            push(v)
 
     def dir(self, voice_id: str) -> Path:
         return self.root / voice_id
@@ -117,6 +132,8 @@ class VoiceStore:
     def delete(self, voice_id: str) -> None:
         with self._lock:
             self._voices.pop(voice_id, None)
+            if db.enabled():
+                db.delete("voices", id=f"eq.{voice_id}")
             shutil.rmtree(self.dir(voice_id), ignore_errors=True)
 
     def save_embedding(self, voice_id: str, emb: Optional[np.ndarray]) -> None:
@@ -125,7 +142,51 @@ class VoiceStore:
             path.unlink(missing_ok=True)
         else:
             np.save(path, emb.astype(np.float32))
+        if db.enabled():
+            db.update("voices", {"embedding": db.vector(emb)}, id=f"eq.{voice_id}")
 
     def embedding(self, voice_id: str) -> Optional[np.ndarray]:
         path = self.dir(voice_id) / "embedding.npy"
         return np.load(path) if path.exists() else None
+
+
+# ---------------------------------------------------------------- แปลงกับแถวในตาราง voices / voice_moods
+VOICE_COLS = ("id,name,gender,tone,description,categories,image,status,stage,error,source_name,ref_text,"
+              "ref_duration,pitch_hz,quality,analysis,created_at,updated_at")
+
+
+def _mood_row(voice_id: str, m: VoiceMood) -> dict:
+    return {"voice_id": voice_id, "mood": m.mood, "status": m.status.value, "stage": m.stage, "error": m.error,
+            "source_name": m.filename, "ref_text": m.text, "ref_duration": m.duration, "quality": m.quality,
+            "analysis": m.analysis.model_dump() if m.analysis else None}
+
+
+def to_row(v: LibraryVoice) -> dict:
+    return {"id": v.id, "name": v.name, "gender": v.gender, "tone": v.tone, "description": v.description,
+            "categories": v.categories, "image": v.image, "status": v.status.value, "stage": v.stage,
+            "error": v.error, "source_name": v.filename, "ref_text": v.text, "ref_duration": v.duration,
+            "pitch_hz": v.pitch_hz, "quality": v.quality,
+            "analysis": v.analysis.model_dump() if v.analysis else None,
+            "created_at": v.created_at.isoformat(), "updated_at": v.updated_at.isoformat()}
+
+
+def from_row(r: dict) -> LibraryVoice:
+    moods = [VoiceMood(mood=m["mood"], status=m["status"], stage=m["stage"], error=m["error"],
+                       filename=m["source_name"], text=m["ref_text"], duration=m["ref_duration"],
+                       quality=m["quality"], analysis=m["analysis"]) for m in r.get("voice_moods") or []]
+    return LibraryVoice(
+        id=r["id"], name=r["name"], gender=r["gender"], tone=r["tone"], description=r["description"],
+        categories=r["categories"], image=r["image"], status=r["status"], stage=r["stage"], error=r["error"],
+        filename=r["source_name"], text=r["ref_text"], duration=r["ref_duration"], pitch_hz=r["pitch_hz"],
+        quality=r["quality"], analysis=r["analysis"], created_at=r["created_at"], updated_at=r["updated_at"],
+        moods=sorted(moods, key=lambda m: MOODS.index(m.mood)))
+
+
+def push(v: LibraryVoice) -> None:
+    """บันทึกเสียงและเสียงอารมณ์ทั้งหมดลง Supabase (อารมณ์ที่ไม่อยู่ใน v.moods ถูกลบ)"""
+    db.upsert("voices", to_row(v), on_conflict="id")
+    if v.moods:
+        db.upsert("voice_moods", [_mood_row(v.id, m) for m in v.moods], on_conflict="voice_id,mood")
+        db.delete("voice_moods", voice_id=f"eq.{v.id}", mood=f"not.in.({','.join(m.mood for m in v.moods)})")
+    else:
+        db.delete("voice_moods", voice_id=f"eq.{v.id}")
