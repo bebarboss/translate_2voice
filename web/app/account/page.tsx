@@ -158,7 +158,7 @@ export default function AccountPage() {
   const { config, user, loaded } = useAuth();
 
   useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/login?next=/account";
+    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/account";
   }, [loaded, config, user]);
 
   const logout = async () => {

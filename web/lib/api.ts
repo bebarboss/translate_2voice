@@ -202,8 +202,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => null);
     // ระบบบัญชีเปิดอยู่แต่ยังไม่ล็อกอิน (หรือหมดอายุ) → ไปหน้าเข้าสู่ระบบ แล้วกลับมาหน้าเดิม
     if (res.status === 401 && (body as { detail?: string } | null)?.detail === "กรุณาเข้าสู่ระบบ"
-      && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-      window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+      && typeof window !== "undefined" && !/^\/(login|welcome)/.test(window.location.pathname)) {
+      // ยังไม่ได้เข้าสู่ระบบ → หน้าแรก (มีปุ่มสมัครและเข้าสู่ระบบ) แล้วกลับมาหน้านี้หลังเข้าสู่ระบบ
+      window.location.href = `/welcome?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     throw new ApiError(errorMessage(res.status, body), res.status);
   }

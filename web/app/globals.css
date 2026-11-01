@@ -268,3 +268,74 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .voice-choice.compact .avatar { border-radius: 6px; font-size: 11px; }
 @media (max-width: 700px) { .lane-voice { width: 96px; } }
 .lane-voice-btn { flex: 1; height: 26px; padding: 0 8px; font-size: 12px; white-space: nowrap; justify-content: center; }
+
+/* ---------- หน้าแรกก่อนเข้าสู่ระบบ (/welcome) โทนสว่าง แยกจากสตูดิโอ ---------- */
+.landing {
+  --lp-bg: #d9d0c1; --lp-ink: #17120d; --lp-ink-2: #4a4239; --lp-ink-3: #6f665b; --lp-card: rgba(255, 255, 255, .55);
+  --lp-line: rgba(23, 18, 13, .12); --lp-accent: #ff8a4c;
+  position: relative; min-height: 100vh; overflow: hidden; background: var(--lp-bg); color: var(--lp-ink);
+}
+.lp-glow { position: absolute; inset: -20% -10% auto; height: 1100px; pointer-events: none; filter: blur(40px); opacity: .9;
+  background:
+    radial-gradient(60% 40% at 38% 22%, rgba(255, 252, 240, .95), transparent 70%),
+    linear-gradient(162deg, transparent 38%, rgba(255, 120, 120, .35) 44%, rgba(255, 210, 120, .45) 48%, rgba(170, 240, 170, .4) 52%,
+      rgba(120, 200, 255, .4) 56%, rgba(200, 160, 255, .35) 60%, transparent 66%); }
+.landing > *:not(.lp-glow) { position: relative; }
+.lp-nav { max-width: 1200px; margin: 0 auto; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.lp-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--lp-ink); text-decoration: none; }
+.lp-brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--lp-ink); display: grid; place-items: center; }
+.lp-nav nav { display: flex; align-items: center; gap: 22px; font-size: 14px; }
+.lp-nav nav a { color: var(--lp-ink-2); text-decoration: none; }
+.lp-nav nav a:hover { color: var(--lp-ink); }
+.lp-pill { display: inline-flex; align-items: center; gap: 10px; height: 36px; padding: 0 16px; border-radius: 999px; font-weight: 600; font-size: 14px; text-decoration: none; white-space: nowrap; }
+.lp-pill-lg { height: 52px; padding: 0 26px; font-size: 17px; }
+.lp-pill-dark { background: var(--lp-ink); color: #fff !important; }
+.lp-pill-dark:hover { background: #2c241b; }
+.lp-pill-light { background: rgba(255, 255, 255, .6); color: var(--lp-ink) !important; border: 1px solid var(--lp-line); }
+.lp-pill-light:hover { background: rgba(255, 255, 255, .85); }
+.lp-pill-accent { background: var(--lp-accent); color: #1a0e06 !important; }
+.lp-hero { max-width: 1200px; margin: 0 auto; padding: 48px 24px 0; display: grid; grid-template-columns: 1.4fr 1fr; column-gap: 40px; }
+.lp-hero h1 { margin: 0; display: flex; flex-direction: column; line-height: 1.22; } /* ภาษาไทยต้องเผื่อที่ให้วรรณยุกต์และสระบน */
+.lp-h-bold { font-weight: 700; font-size: clamp(56px, 9.5vw, 128px); }
+.lp-h-thin { font-weight: 300; font-size: clamp(56px, 9.5vw, 128px); }
+.lp-tagline { margin: 34px 0 0; font-size: clamp(22px, 2.4vw, 32px); line-height: 1.45; color: var(--lp-ink); }
+.lp-cta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+.lp-note { grid-column: 1 / -1; margin: 14px 0 0; color: var(--lp-ink-3); font-size: 15px; }
+.lp-demo { grid-column: 1 / -1; justify-self: center; width: min(640px, 100%); margin: 44px 0 0; border-radius: 22px 22px 0 0; overflow: hidden;
+  background: #14171d; color: #e8eaee; box-shadow: 0 30px 80px rgba(23, 18, 13, .35); }
+.lp-demo-bar { display: flex; align-items: center; gap: 6px; padding: 12px 16px; border-bottom: 1px solid #262a33; }
+.lp-demo-bar span { width: 10px; height: 10px; border-radius: 50%; background: #343a45; }
+.lp-demo-bar em { margin-left: 8px; font-style: normal; font-size: 12px; color: #8a919d; }
+.lp-demo-video { height: 200px; display: flex; align-items: flex-end; justify-content: center; padding: 16px;
+  background: radial-gradient(80% 90% at 50% 20%, #3a5a7a, #1a2633 70%); }
+.lp-demo-caption { max-width: 92%; padding: 6px 12px; border-radius: 8px; background: rgba(0, 0, 0, .6); font-size: 15px; text-align: center; }
+.lp-demo-lanes { display: flex; flex-direction: column; gap: 8px; padding: 16px 16px 22px; }
+.lp-lane { display: flex; align-items: center; gap: 12px; }
+.lp-lane-name { width: 92px; flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #c7cbd3; }
+.lp-lane-name i { width: 8px; height: 8px; border-radius: 50%; }
+.lp-track { position: relative; flex: 1; height: 22px; border-radius: 6px; background: #1c2028; }
+.lp-track span { position: absolute; top: 4px; bottom: 4px; border-radius: 4px; transition: opacity .2s; }
+.lp-playhead { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #fff; }
+.lp-section { max-width: 1200px; margin: 0 auto; padding: 88px 24px 0; }
+.lp-section h2 { margin: 0 0 28px; font-size: clamp(28px, 3.4vw, 44px); font-weight: 700; }
+.lp-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.lp-card { padding: 22px; border-radius: 18px; background: var(--lp-card); border: 1px solid var(--lp-line); backdrop-filter: blur(6px); }
+.lp-card h3, .lp-steps h3 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+.lp-card p, .lp-steps p { margin: 0; color: var(--lp-ink-2); font-size: 15px; line-height: 1.6; }
+.lp-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.lp-steps li { padding: 22px; border-top: 2px solid var(--lp-ink); }
+.lp-step-n { display: block; font-size: 40px; font-weight: 300; line-height: 1; margin-bottom: 10px; }
+.lp-footer { max-width: 1200px; margin: 0 auto; padding: 88px 24px 40px; color: var(--lp-ink-3); font-size: 13px; }
+@media (max-width: 900px) {
+  .lp-hero { grid-template-columns: 1fr; }
+  .lp-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .lp-nav { padding: 14px 16px; }
+  .lp-nav nav a:not(.lp-pill) { display: none; }
+  .lp-hero, .lp-section, .lp-footer { padding-left: 16px; padding-right: 16px; }
+  .lp-grid, .lp-steps { grid-template-columns: 1fr; }
+  .lp-pill-lg { height: 48px; padding: 0 20px; font-size: 16px; }
+  .lp-demo-video { height: 150px; }
+  .lp-lane-name { width: 70px; font-size: 12px; }
+}

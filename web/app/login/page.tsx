@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 
@@ -15,6 +15,10 @@ function nextPath(): string {
 export default function LoginPage() {
   const { config, loaded } = useAuth();
   const [mode, setMode] = useState<Mode>("login");
+  // ปุ่ม "เริ่มพากย์คลิปแรก" ในหน้าแรกส่ง ?mode=signup มา เปิดแท็บสมัครให้เลย
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("mode") === "signup") setMode("signup");
+  }, []);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");

@@ -16,6 +16,7 @@ export default function Header() {
   const path = usePathname();
   const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   const { config, user } = useAuth();
+  if (path.startsWith("/welcome")) return null; // หน้าแรกก่อนเข้าสู่ระบบมีเมนูของตัวเอง
   return (
     <header className="header">
       <Link href="/" className="brand">
