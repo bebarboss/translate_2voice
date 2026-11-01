@@ -36,8 +36,13 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
 
   const init: RequestInit & { duplex?: "half" } = { method: req.method, headers, redirect: "manual" };
   if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = req.body;
-    init.duplex = "half"; // สตรีมไฟล์อัปโหลดต่อไปเลย ไม่ต้องพักไว้ในหน่วยความจำ
+    if (req.headers.get("content-type")?.startsWith("application/json")) {
+      // JSON เล็ก ๆ อ่านทั้งก้อน: fetch ของ Node ตีคำตอบ 401 ของ body แบบสตรีมเป็น network error
+      init.body = await req.arrayBuffer();
+    } else {
+      init.body = req.body;
+      init.duplex = "half"; // สตรีมไฟล์อัปโหลดต่อไปเลย ไม่ต้องพักไว้ในหน่วยความจำ
+    }
   }
 
   let res: Response;

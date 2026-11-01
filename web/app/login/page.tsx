@@ -67,7 +67,7 @@ export default function LoginPage() {
         text: signup ? "signup_with" : "signin_with", width: 300,
       });
     }).catch(() => setError("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า"));
-  }, [clientId, signup]);
+  }, [clientId, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
 
   if (!loaded) return <main className="page narrow"><div className="empty">กำลังโหลด...</div></main>;
   if (!config?.auth) {
