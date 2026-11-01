@@ -6,6 +6,7 @@ import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_L
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
 import VoiceAvatar from "@/components/VoiceAvatar";
+import { useAuth } from "@/lib/useAuth";
 
 const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
@@ -240,9 +241,10 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
 }
 
 /** เสียงอารมณ์หนึ่ง: ฟัง แก้ข้อความ ลองใหม่ ลบ */
-function MoodRow({ v, m, preview, run }: {
+function MoodRow({ v, m, preview, run, canEdit }: {
   v: LibraryVoice;
   m: VoiceMood;
+  canEdit: boolean;
   preview: ReturnType<typeof usePreview>;
   run: (fn: () => Promise<unknown>) => Promise<boolean>;
 }) {
@@ -261,9 +263,9 @@ function MoodRow({ v, m, preview, run }: {
         {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">มีเสียงรบกวน</span>}
         {m.status === "ready" && (m.analysis?.other_voices ?? 0) >= OTHER_VOICES_WARN && <span className="badge warn">มีเสียงคนอื่นปน</span>}
         <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
-          {m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>แก้ข้อความ</button>}
-          {m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>ลองใหม่</button>}
-          {!(m.status === "processing" && m.stage !== "queued") && (
+          {canEdit && m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>แก้ข้อความ</button>}
+          {canEdit && m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>ลองใหม่</button>}
+          {canEdit && !(m.status === "processing" && m.stage !== "queued") && (
             <button type="button" className="icon-btn" aria-label={`ลบอารมณ์${MOOD_LABEL[m.mood]}`}
               onClick={() => window.confirm(`ลบเสียงอารมณ์${MOOD_LABEL[m.mood]}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ`)
                 && run(() => api.deleteVoiceMood(v.id, m.mood))}>ลบ</button>
@@ -291,8 +293,9 @@ function MoodRow({ v, m, preview, run }: {
 }
 
 /** เสียงตัวอย่างอารมณ์อื่นของเสียงนี้ เลือกใช้ทีละประโยคในหน้าแก้บท */
-function MoodSection({ v, preview, run }: {
+function MoodSection({ v, preview, run, canEdit }: {
   v: LibraryVoice;
+  canEdit: boolean;
   preview: ReturnType<typeof usePreview>;
   run: (fn: () => Promise<unknown>) => Promise<boolean>;
 }) {
@@ -308,8 +311,8 @@ function MoodSection({ v, preview, run }: {
   return (
     <div className="moods">
       <span className="label">เสียงอารมณ์อื่น</span>
-      {v.moods.map((m) => <MoodRow key={m.mood} v={v} m={m} preview={preview} run={run} />)}
-      {missing.length > 0 && (
+      {v.moods.map((m) => <MoodRow key={m.mood} v={v} m={m} preview={preview} run={run} canEdit={canEdit} />)}
+      {canEdit && missing.length > 0 && (
         <div className="row" style={{ gap: 8 }}>
           <label className="sr-only" htmlFor={`am-${v.id}`}>อารมณ์ที่จะเพิ่ม</label>
           <select id={`am-${v.id}`} className="spk-select" value={pick} onChange={(e) => setMood(e.target.value as Mood)}
@@ -327,13 +330,14 @@ function MoodSection({ v, preview, run }: {
           )}
         </div>
       )}
-      <span className="dim">ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้วเลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท</span>
+      <span className="dim">{canEdit ? "ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้ว" : ""}เลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท</span>
     </div>
   );
 }
 
-function VoiceCard({ v, preview, onChanged, known }: {
+function VoiceCard({ v, preview, onChanged, known, canEdit }: {
   v: LibraryVoice;
+  canEdit: boolean;
   preview: ReturnType<typeof usePreview>;
   onChanged: () => void;
   known: string[];
@@ -464,10 +468,10 @@ function VoiceCard({ v, preview, onChanged, known }: {
         </span>
       )}
       {v.status === "ready" && v.analysis && <AnalysisNote a={v.analysis} />}
-      {v.status === "ready" && !editing && <MoodSection v={v} preview={preview} run={run} />}
+      {v.status === "ready" && !editing && (canEdit || v.moods.length > 0) && <MoodSection v={v} preview={preview} run={run} canEdit={canEdit} />}
       {error && <div className="alert error" role="alert">{error}</div>}
 
-      <div className="row" style={{ gap: 8 }}>
+      {canEdit && <div className="row" style={{ gap: 8 }}>
         {editing ? (
           <>
             <button type="button" className="btn small primary" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</button>
@@ -482,7 +486,7 @@ function VoiceCard({ v, preview, onChanged, known }: {
             )}
           </>
         )}
-      </div>
+      </div>}
     </article>
   );
 }
@@ -492,6 +496,9 @@ export default function VoicesPage() {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState(""); // "" = ทุกหมวด
   const preview = usePreview();
+  const { config, user, loaded } = useAuth();
+  // เปิดระบบบัญชีแล้ว เพิ่ม แก้ และลบเสียงได้เฉพาะผู้ดูแล ผู้ใช้ทั่วไปดูและฟังได้อย่างเดียว (API ตรวจซ้ำอีกชั้น)
+  const canEdit = loaded && (!config?.auth || !!user?.admin);
   // หมวดที่ใช้อยู่ในคลัง (เรียงตามจำนวนเสียงมากไปน้อย) ใช้ทำปุ่มกรองและเป็นตัวเลือกตอนตั้งหมวด
   const known = useMemo(() => {
     const count = new Map<string, number>();
@@ -524,7 +531,7 @@ export default function VoicesPage() {
         </p>
       </div>
 
-      <UploadCard onUploaded={refresh} known={known} />
+      {canEdit && <UploadCard onUploaded={refresh} known={known} />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
       <section aria-label="เสียงในคลัง" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -543,7 +550,7 @@ export default function VoicesPage() {
           : voices?.length === 0 ? <div className="empty">ยังไม่มีเสียงในคลัง</div>
           : (
             <div className="grid-2">
-              {shown.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} known={known} />)}
+              {shown.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} known={known} canEdit={canEdit} />)}
             </div>
           )}
       </section>

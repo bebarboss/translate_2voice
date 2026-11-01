@@ -43,13 +43,17 @@ export interface Job {
 
 export type Gender = "male" | "female" | "";
 
-// ---- บัญชีผู้ใช้ กระเป๋าเงิน แพ็กเกจ (ยังไม่เปิดใช้งาน: ดู AuthConfig) เงินเป็นสตางค์
+// ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที เงินเป็นสตางค์
 export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean }
-export interface User { id: string; email: string; name: string; admin: boolean; balance: number }
+export interface User { id: string; email: string; name: string; admin: boolean; credits: number }
+/** minutes = เครดิตแพ็กเกจต่อรอบ */
 export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
+/** minutes_left = เครดิตแพ็กเกจที่เหลือ หมดอายุพร้อมแพ็กเกจ */
 export interface Subscription { plan_id: string; minutes_left: number; started_at: number; expires_at: number }
-export interface LedgerEntry { kind: string; amount: number; minutes: number; ref: string | null; note: string; created_at: number }
-export interface Wallet { balance: number; subscription: Subscription | null; payg_per_minute: number; ledger: LedgerEntry[] }
+/** credits = เครดิตเติมที่เปลี่ยน, minutes = เครดิตแพ็กเกจที่เปลี่ยน, amount = เงินที่จ่าย */
+export interface LedgerEntry { kind: string; credits: number; minutes: number; amount: number; ref: string | null; note: string; created_at: number }
+export interface Wallet { credits: number; subscription: Subscription | null; credit_price: number; ledger: LedgerEntry[] }
+export interface AdminUser extends User { created_at: number; subscription: Subscription | null }
 
 export type Mood = "angry" | "sad" | "happy" | "whisper" | "scared";
 
@@ -226,10 +230,14 @@ export const api = {
     request<{ user: User }>("/auth/signup", json("POST", { email, password, name })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   changePassword: (old: string, next: string) => request<void>("/auth/password", json("POST", { old, new: next })),
-  plans: () => request<{ plans: Plan[]; payg_per_minute: number }>("/billing/plans"),
+  plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[] }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
-  subscribe: (planId: string) => request<Wallet>("/billing/subscribe", json("POST", { plan_id: planId })),
-  topup: (amount: number) => request<{ id: string; status: string; amount: number }>("/billing/topups", json("POST", { amount })),
+  subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),
+  buyCredits: (credits: number) => request<{ id: string; status: string }>("/billing/topups", json("POST", { credits })),
+  adminUsers: () => request<AdminUser[]>("/admin/users"),
+  adminCredit: (userId: string, credits: number, note = "") =>
+    request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
+  adminPlan: (userId: string, planId: string) => request<void>(`/admin/users/${userId}/plan`, json("POST", { plan_id: planId })),
   health: () => request<{ status: string; mock: boolean; queued: number }>("/health"),
   system: () => request<SystemInfo>("/system"),
   fonts: () => request<Fonts>("/fonts"),

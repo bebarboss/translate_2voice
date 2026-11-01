@@ -339,3 +339,5 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
   .lp-demo-video { height: 150px; }
   .lp-lane-name { width: 70px; font-size: 12px; }
 }
+.admin-users td { vertical-align: middle; }
+@media (max-width: 640px) { .admin-users { display: block; overflow-x: auto; } .admin-users th:nth-child(3), .admin-users td:nth-child(3) { display: table-cell; } }

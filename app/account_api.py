@@ -1,4 +1,4 @@
-"""เส้นทาง API ของบัญชีผู้ใช้ กระเป๋าเงิน และแพ็กเกจ (accounts.py) ปิดอยู่จนกว่าจะตั้ง AUTH_ENABLED / BILLING_ENABLED
+"""เส้นทาง API ของบัญชีผู้ใช้ เครดิต และแพ็กเกจ (accounts.py) ปิดอยู่จนกว่าจะตั้ง AUTH_ENABLED / BILLING_ENABLED
 
 หน้าเว็บส่ง token ของผู้ใช้มาใน header X-User-Token (proxy อ่านจากคุกกี้ httpOnly ให้)
 main.access_guard หาผู้ใช้จาก token แล้วเก็บไว้ที่ request.state.user ทุกคำขอ
@@ -25,7 +25,7 @@ def _need_auth() -> None:
 
 def _need_billing() -> None:
     if not accounts.billing_enabled():
-        raise HTTPException(404, "ระบบกระเป๋าเงินและแพ็กเกจยังไม่เปิดใช้งาน")
+        raise HTTPException(404, "ระบบเครดิตและแพ็กเกจยังไม่เปิดใช้งาน")
 
 
 def require_user(request: Request):
@@ -63,12 +63,16 @@ class Subscribe(BaseModel):
 
 
 class Topup(BaseModel):
-    amount: int = Field(..., description="สตางค์")
+    credits: int = Field(..., description="จำนวนเครดิตที่ซื้อ")
 
 
 class Credit(BaseModel):
-    amount: int = Field(..., description="สตางค์ ติดลบ = หักออก")
+    credits: int = Field(..., description="เครดิตเติม ติดลบ = หักออก")
     note: str = Field("", max_length=200)
+
+
+class GrantPlan(BaseModel):
+    plan_id: str
 
 
 # ---------------------------------------------------------------- บัญชี
@@ -115,10 +119,11 @@ def change_password(body: PasswordChange, user=Depends(require_user)):
         raise _fail(e)
 
 
-# ---------------------------------------------------------------- กระเป๋าเงินและแพ็กเกจ
+# ---------------------------------------------------------------- เครดิตและแพ็กเกจ
 @router.get("/billing/plans", dependencies=[Depends(_need_billing)])
 def plans():
-    return {"plans": [p.__dict__ for p in accounts.PLANS], "payg_per_minute": accounts.PAYG_PER_MINUTE}
+    return {"plans": [p.__dict__ for p in accounts.PLANS], "credit_price": accounts.CREDIT_PRICE,
+            "credit_packs": list(accounts.CREDIT_PACKS)}
 
 
 @router.get("/billing/wallet", dependencies=[Depends(_need_billing)])
@@ -137,7 +142,7 @@ def subscribe(body: Subscribe, user=Depends(require_user)):
 @router.post("/billing/topups", dependencies=[Depends(_need_billing)])
 def topup(body: Topup, user=Depends(require_user)):
     try:
-        return accounts.create_topup(user["id"], body.amount)
+        return accounts.buy_credits(user["id"], body.credits)
     except AccountError as e:
         raise _fail(e)
 
@@ -150,8 +155,17 @@ def admin_users(_=Depends(require_admin)):
 
 @router.post("/admin/users/{user_id}/credit", status_code=204, dependencies=[Depends(_need_billing)])
 def admin_credit(user_id: str, body: Credit, admin=Depends(require_admin)):
-    """ปรับยอดกระเป๋าเงินด้วยมือ (โอนเงินนอกระบบ ชดเชย ฯลฯ)"""
+    """เพิ่มหรือหักเครดิตเติมด้วยมือ (รับโอนนอกระบบ ชดเชย ฯลฯ)"""
     try:
-        accounts.credit(user_id, body.amount, kind="adjust", note=body.note or f"ปรับยอดโดย {admin['email']}")
+        accounts.credit(user_id, body.credits, kind="adjust", note=body.note or f"ปรับเครดิตโดย {admin['email']}")
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/admin/users/{user_id}/plan", status_code=204, dependencies=[Depends(_need_billing)])
+def admin_plan(user_id: str, body: GrantPlan, admin=Depends(require_admin)):
+    """ให้แพ็กเกจโดยไม่ต้องชำระ"""
+    try:
+        accounts.grant_plan(user_id, body.plan_id, admin["email"])
     except AccountError as e:
         raise _fail(e)
