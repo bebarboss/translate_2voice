@@ -5,22 +5,11 @@ import { api, fileUrl, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gend
 import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
+import VoiceAvatar from "@/components/VoiceAvatar";
 
 const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
-
-/** รูปของเสียง ไม่มีรูปแสดงตัวอักษรแรกของชื่อ */
-function VoiceAvatar({ name, url, size = 56 }: { name: string; url: string; size?: number }) {
-  return url ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img className="avatar" src={url} alt="" width={size} height={size} />
-  ) : (
-    <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4 }} aria-hidden="true">
-      {name.trim().replace(/^[เแโใไ]/, "").charAt(0) || "?"}
-    </span>
-  );
-}
 
 /** เลือกหมวดหมู่ได้หลายหมวด: หมวดตั้งต้น หมวดที่ใช้อยู่ในคลัง และพิมพ์หมวดใหม่เองได้ */
 function CategoryPicker({ value, onChange, known, id }: {
