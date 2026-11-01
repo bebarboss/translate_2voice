@@ -1,6 +1,7 @@
 """บัญชีผู้ใช้ เครดิต และแพ็กเกจ เก็บใน data/accounts.db (SQLite)
 
-AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำขอต้องล็อกอิน เห็นเฉพาะงานของตัวเอง)
+AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำขอต้องล็อกอิน เห็นเฉพาะงานของตัวเอง) สมัครและเข้าสู่ระบบด้วยบัญชี Google
+(GOOGLE_CLIENT_ID) เท่านั้น ไม่มีรหัสผ่าน
 BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (ตัดเครดิตเมื่อเริ่มวิเคราะห์งาน) ต้องเปิดคู่กับ AUTH_ENABLED
 ผู้ดูแลระบบ (ADMIN_EMAILS) พากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต
 
@@ -11,7 +12,6 @@ BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (
 ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน กันตัดซ้ำ
 """
 import hashlib
-import hmac
 import math
 import secrets
 import sqlite3
@@ -20,10 +20,11 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+import requests
+
 from .config import settings
 
 SESSION_DAYS = 30
-MIN_PASSWORD = 8
 TOPUP_MIN, TOPUP_MAX = 5, 2000  # ซื้อเครดิตเติมได้ครั้งละกี่เครดิต
 
 
@@ -137,16 +138,8 @@ def _read(sql: str, *args) -> list[sqlite3.Row]:
         return _db().execute(sql, args).fetchall()
 
 
-# ---------------------------------------------------------------- ผู้ใช้และการล็อกอิน
-def _hash_password(password: str, salt: Optional[bytes] = None) -> str:
-    salt = salt or secrets.token_bytes(16)
-    h = hashlib.scrypt(password.encode(), salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
-    return f"scrypt${salt.hex()}${h.hex()}"
-
-
-def _check_password(password: str, stored: str) -> bool:
-    _, salt, _ = stored.split("$")
-    return hmac.compare_digest(_hash_password(password, bytes.fromhex(salt)), stored)
+# ---------------------------------------------------------------- ผู้ใช้และการล็อกอิน (บัญชี Google เท่านั้น)
+GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 
 
 def _token_hash(token: str) -> str:
@@ -162,32 +155,40 @@ def public_user(row: sqlite3.Row) -> dict:
             "credits": row["credits"]}
 
 
-def signup(email: str, password: str, name: str) -> dict:
-    email = email.strip().lower()
-    if "@" not in email or len(email) > 200:
-        raise AccountError(400, "อีเมลไม่ถูกต้อง")
-    if len(password) < MIN_PASSWORD:
-        raise AccountError(400, f"รหัสผ่านต้องยาวอย่างน้อย {MIN_PASSWORD} ตัว")
-    with _tx() as db:
-        if db.execute("SELECT 1 FROM users WHERE email = ?", (email,)).fetchone():
-            raise AccountError(409, "อีเมลนี้สมัครไว้แล้ว เข้าสู่ระบบแทนได้เลย")
-        uid = secrets.token_hex(8)
-        db.execute("INSERT INTO users (id, email, name, pw_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-                   (uid, email, name.strip() or email.split("@")[0], _hash_password(password), time.time()))
-    return login(email, password)
+def _verify_google(credential: str) -> dict:
+    """ตรวจ ID token จากปุ่ม "เข้าสู่ระบบด้วย Google" กับ Google คืนข้อมูลในโทเคน (email, name, ...)"""
+    if not settings.google_client_id:
+        raise AccountError(503, "ยังไม่ได้ตั้ง GOOGLE_CLIENT_ID เข้าสู่ระบบด้วย Google ไม่ได้")
+    try:
+        r = requests.get("https://oauth2.googleapis.com/tokeninfo", params={"id_token": credential}, timeout=10)
+    except requests.RequestException:
+        raise AccountError(502, "ติดต่อ Google ไม่ได้ ลองใหม่อีกครั้ง")
+    info = r.json() if r.ok else {}
+    if (info.get("aud") != settings.google_client_id or info.get("iss") not in GOOGLE_ISSUERS
+            or float(info.get("exp", 0)) < time.time()):
+        raise AccountError(401, "ยืนยันบัญชี Google ไม่สำเร็จ ลองใหม่อีกครั้ง")
+    if info.get("email_verified") not in (True, "true") or not info.get("email"):
+        raise AccountError(401, "บัญชี Google นี้ยังไม่ได้ยืนยันอีเมล")
+    return info
 
 
-def login(email: str, password: str) -> dict:
-    """คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)"""
-    rows = _read("SELECT * FROM users WHERE email = ?", email.strip().lower())
-    if not rows or not _check_password(password, rows[0]["pw_hash"]):
-        raise AccountError(401, "อีเมลหรือรหัสผ่านไม่ถูกต้อง")
+def google_login(credential: str) -> dict:
+    """เข้าสู่ระบบด้วย Google ครั้งแรกสร้างบัญชีให้เลย (สมัครกับล็อกอินคือขั้นเดียวกัน)
+    คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)"""
+    info = _verify_google(credential)
+    email = info["email"].strip().lower()
     token = secrets.token_urlsafe(32)
     with _tx() as db:
+        row = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        if row is None:
+            uid = secrets.token_hex(8)
+            db.execute("INSERT INTO users (id, email, name, pw_hash, created_at) VALUES (?, ?, ?, '', ?)",
+                       (uid, email, (info.get("name") or email.split("@")[0])[:80], time.time()))
+            row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
         db.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
         db.execute("INSERT INTO sessions VALUES (?, ?, ?)",
-                   (_token_hash(token), rows[0]["id"], time.time() + SESSION_DAYS * 86400))
-    return {"token": token, "user": public_user(rows[0])}
+                   (_token_hash(token), row["id"], time.time() + SESSION_DAYS * 86400))
+    return {"token": token, "user": public_user(row)}
 
 
 def logout(token: str) -> None:
@@ -206,16 +207,6 @@ def user_by_token(token: Optional[str]) -> Optional[sqlite3.Row]:
 def user_by_id(uid: str) -> Optional[sqlite3.Row]:
     rows = _read("SELECT * FROM users WHERE id = ?", uid)
     return rows[0] if rows else None
-
-
-def change_password(uid: str, old: str, new: str) -> None:
-    u = user_by_id(uid)
-    if u is None or not _check_password(old, u["pw_hash"]):
-        raise AccountError(400, "รหัสผ่านเดิมไม่ถูกต้อง")
-    if len(new) < MIN_PASSWORD:
-        raise AccountError(400, f"รหัสผ่านต้องยาวอย่างน้อย {MIN_PASSWORD} ตัว")
-    with _tx() as db:
-        db.execute("UPDATE users SET pw_hash = ? WHERE id = ?", (_hash_password(new), uid))
 
 
 def all_users() -> list[dict]:

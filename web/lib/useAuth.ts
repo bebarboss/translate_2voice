@@ -15,7 +15,7 @@ export function useAuth() {
       setConfig(c);
       setUser(c.auth ? await api.me().catch(() => null) : null);
     } catch {
-      setConfig({ auth: false, billing: false, payments: false });
+      setConfig({ auth: false, billing: false, payments: false, google_client_id: "" });
     } finally { setLoaded(true); }
   };
 

@@ -210,39 +210,6 @@ function AdminSection() {
   );
 }
 
-function PasswordSection() {
-  const [old, setOld] = useState("");
-  const [next, setNext] = useState("");
-  const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.changePassword(old, next);
-      setOld(""); setNext("");
-      setMessage({ kind: "info", text: "เปลี่ยนรหัสผ่านแล้ว" });
-    } catch (err) {
-      setMessage({ kind: "error", text: (err as Error).message });
-    }
-  };
-  return (
-    <form className="card" onSubmit={submit} aria-labelledby="pw-title">
-      <h2 id="pw-title">เปลี่ยนรหัสผ่าน</h2>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="pw-old">รหัสผ่านเดิม</label>
-          <input id="pw-old" className="input" type="password" required autoComplete="current-password" value={old} onChange={(e) => setOld(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="pw-new">รหัสผ่านใหม่</label>
-          <input id="pw-new" className="input" type="password" required minLength={8} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
-        </div>
-      </div>
-      {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
-      <button type="submit" className="btn small" style={{ alignSelf: "flex-start" }}>เปลี่ยนรหัสผ่าน</button>
-    </form>
-  );
-}
-
 export default function AccountPage() {
   const { config, user, loaded } = useAuth();
 
@@ -280,7 +247,6 @@ export default function AccountPage() {
         <div className="card"><span className="muted">เครดิตและแพ็กเกจยังไม่เปิดใช้งาน</span></div>
       )}
       {config.billing && user.admin && <AdminSection />}
-      <PasswordSection />
     </main>
   );
 }

@@ -57,9 +57,9 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
   }
   out.set("cache-control", "no-store");
 
-  // ล็อกอิน/สมัคร: เก็บ token ลงคุกกี้ httpOnly ไม่ส่ง token ให้สคริปต์ในหน้าเว็บ
+  // เข้าสู่ระบบด้วย Google: เก็บ token ลงคุกกี้ httpOnly ไม่ส่ง token ให้สคริปต์ในหน้าเว็บ
   const route = path.join("/");
-  if (res.ok && (route === "auth/login" || route === "auth/signup")) {
+  if (res.ok && route === "auth/google") {
     const { token, user } = (await res.json()) as { token: string; user: unknown };
     out.delete("content-length");
     out.append("set-cookie", sessionCookie(token));

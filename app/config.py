@@ -47,6 +47,7 @@ class Settings:
     # บัญชีผู้ใช้และการเก็บเงิน (accounts.py) ยังไม่เปิดใช้งาน
     auth_enabled: bool = _bool("AUTH_ENABLED")  # ต้องล็อกอิน แต่ละคนเห็นเฉพาะงานของตัวเอง
     billing_enabled: bool = _bool("BILLING_ENABLED")  # กระเป๋าเงิน แพ็กเกจ และตัดนาทีต่องาน (ต้องเปิด AUTH_ENABLED ด้วย)
+    google_client_id: str = _env("GOOGLE_CLIENT_ID")  # OAuth Client ID (Web) สำหรับปุ่มเข้าสู่ระบบด้วย Google
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
     payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ)
 

@@ -44,7 +44,8 @@ export interface Job {
 export type Gender = "male" | "female" | "";
 
 // ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที เงินเป็นสตางค์
-export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean }
+/** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
+export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; google_client_id: string }
 export interface User { id: string; email: string; name: string; admin: boolean; credits: number }
 /** minutes = เครดิตแพ็กเกจต่อรอบ */
 export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
@@ -225,11 +226,9 @@ const json = (method: string, body: unknown): RequestInit => ({
 export const api = {
   authConfig: () => request<AuthConfig>("/auth/config"),
   me: () => request<User>("/auth/me"),
-  login: (email: string, password: string) => request<{ user: User }>("/auth/login", json("POST", { email, password })),
-  signup: (email: string, password: string, name: string) =>
-    request<{ user: User }>("/auth/signup", json("POST", { email, password, name })),
+  /** สมัครหรือเข้าสู่ระบบด้วย ID token จากปุ่ม Google (บัญชีใหม่สร้างให้เลย) */
+  googleLogin: (credential: string) => request<{ user: User }>("/auth/google", json("POST", { credential })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
-  changePassword: (old: string, next: string) => request<void>("/auth/password", json("POST", { old, new: next })),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[] }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),

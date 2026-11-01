@@ -42,20 +42,8 @@ def require_admin(user=Depends(require_user)):
     return user
 
 
-class Signup(BaseModel):
-    email: str = Field(..., max_length=200)
-    password: str = Field(..., max_length=200)
-    name: str = Field("", max_length=80)
-
-
-class Login(BaseModel):
-    email: str = Field(..., max_length=200)
-    password: str = Field(..., max_length=200)
-
-
-class PasswordChange(BaseModel):
-    old: str = Field(..., max_length=200)
-    new: str = Field(..., max_length=200)
+class GoogleLogin(BaseModel):
+    credential: str = Field(..., max_length=4096, description="ID token จากปุ่มเข้าสู่ระบบด้วย Google")
 
 
 class Subscribe(BaseModel):
@@ -81,21 +69,14 @@ def auth_config():
     """ระบบไหนเปิดอยู่ หน้าเว็บใช้ซ่อนหรือแสดงเมนูเข้าสู่ระบบ"""
     from .config import settings
     return {"auth": accounts.auth_enabled(), "billing": accounts.billing_enabled(),
-            "payments": bool(settings.payment_provider)}
+            "payments": bool(settings.payment_provider), "google_client_id": settings.google_client_id}
 
 
-@router.post("/auth/signup", dependencies=[Depends(_need_auth)])
-def signup(body: Signup):
+@router.post("/auth/google", dependencies=[Depends(_need_auth)])
+def google_login(body: GoogleLogin):
+    """สมัครหรือเข้าสู่ระบบด้วยบัญชี Google (ไม่มีรหัสผ่าน)"""
     try:
-        return accounts.signup(body.email, body.password, body.name)
-    except AccountError as e:
-        raise _fail(e)
-
-
-@router.post("/auth/login", dependencies=[Depends(_need_auth)])
-def login(body: Login):
-    try:
-        return accounts.login(body.email, body.password)
+        return accounts.google_login(body.credential)
     except AccountError as e:
         raise _fail(e)
 
@@ -109,14 +90,6 @@ def logout(x_user_token: Optional[str] = Header(default=None)):
 @router.get("/auth/me")
 def me(user=Depends(require_user)):
     return accounts.public_user(user)
-
-
-@router.post("/auth/password", status_code=204)
-def change_password(body: PasswordChange, user=Depends(require_user)):
-    try:
-        accounts.change_password(user["id"], body.old, body.new)
-    except AccountError as e:
-        raise _fail(e)
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
