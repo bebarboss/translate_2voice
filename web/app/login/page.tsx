@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
-import { MicIcon } from "@/components/Icons";
+import { MicIcon, XIcon } from "@/components/Icons";
 
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
 type CredentialResponse = { credential: string };
@@ -28,6 +28,60 @@ function loadGsi(): Promise<GoogleId> {
   });
 }
 
+/** สิ่งที่ได้จากระบบ แสดงทีละข้อบนการ์ดฝั่งซ้าย (ข้อที่ไฮไลต์ = การ์ดที่แสดง) */
+const OFFERS = [
+  { title: "แยกเสียงตัวละครอัตโนมัติ", text: "รู้เองว่าใครพูดประโยคไหน ไม่ต้องบอกจำนวนคน" },
+  { title: "แปลไทยให้พอดีปาก", text: "ย่อบทให้พูดทันเวลา ตามแนวเรื่องและชื่อตัวละคร" },
+  { title: "เลียนเสียงนักแสดงต้นฉบับ", text: "หรือเลือกเสียงพากย์ไทยจากคลัง พร้อมหลายอารมณ์" },
+  { title: "แก้บนไทม์ไลน์", text: "ลาก ตัด วางเสียงซ้อน แล้วพากย์ใหม่เฉพาะตรงที่แก้" },
+  { title: "ซับไทยและเสียงแยกเลเยอร์", text: "ดาวน์โหลดวิดีโอพากย์ ซับ และเสียงแต่ละตัวละคร" },
+  { title: "คิดเครดิตตามความยาวจริง", text: "คลิป 1:15 นาที ใช้ 1.25 เครดิต ไม่ปัดขึ้น" },
+];
+// ความสูงแท่งคลื่นเสียง (0–1) คงที่ ไม่สุ่มตอนเรนเดอร์ หน้าเซิร์ฟเวอร์กับเบราว์เซอร์จะได้ตรงกัน
+const WAVE = Array.from({ length: 44 }, (_, i) => 0.18 + 0.82 * Math.abs(Math.sin(i * 0.55) * Math.cos(i * 0.21)));
+
+/** ฝั่งซ้าย: การ์ดซ้อนที่เปลี่ยนตามข้อที่ไฮไลต์ และรายการสิ่งที่ได้ */
+function Showcase({ bonus }: { bonus: number }) {
+  const offers = bonus ? [...OFFERS, { title: `ผูกบัตรรับฟรี ${bonus} เครดิต`, text: "ผูกบัตรครั้งแรก รับเครดิตไว้ลองพากย์ได้ทันที" }] : OFFERS;
+  const [i, setI] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const id = window.setInterval(() => setI((x) => (x + 1) % offers.length), 3200);
+    return () => window.clearInterval(id);
+  }, [paused, offers.length]);
+  const cur = offers[i % offers.length];
+  return (
+    <section className="auth-show" aria-label="สิ่งที่ได้จาก Dubbing Studio">
+      <div className="auth-stack" aria-hidden="true">
+        <div className="auth-sheet back" />
+        <div className="auth-sheet mid" />
+        <div className="auth-sheet front">
+          <div key={i} className="auth-sheet-body">
+            <b>{cur.title}</b>
+            <span>{cur.text}</span>
+            <div className="auth-wave">
+              {WAVE.map((h, n) => <i key={n} style={{ height: `${Math.round(h * 100)}%`, animationDelay: `${n * 40}ms` }} />)}
+            </div>
+          </div>
+        </div>
+        <span className="auth-badge"><MicIcon size={20} color="#1A0E06" /></span>
+      </div>
+      <div className="auth-offers" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+        <h2>สมัครแล้วใช้ได้เลย</h2>
+        <ul>
+          {offers.map((o, n) => (
+            <li key={o.title}>
+              <button type="button" aria-current={n === i % offers.length} onClick={() => setI(n)}
+                onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>{o.title}</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 /** หน้าที่จะกลับไปหลังล็อกอิน (เฉพาะในเว็บนี้) */
 function nextPath(): string {
   const next = new URLSearchParams(window.location.search).get("next") ?? "/";
@@ -43,6 +97,11 @@ export default function LoginPage() {
   // ปุ่ม "เริ่มพากย์คลิปแรก" ในหน้าแรกส่ง ?mode=signup มา
   const [signup, setSignup] = useState(false);
   useEffect(() => { setSignup(new URLSearchParams(window.location.search).get("mode") === "signup"); }, []);
+
+  const [bonus, setBonus] = useState(0);
+  useEffect(() => {
+    if (config?.billing) api.plans().then((p) => setBonus(p.card_bonus)).catch(() => {});
+  }, [config?.billing]);
 
   const clientId = config?.google_client_id ?? "";
   useEffect(() => {
@@ -65,8 +124,8 @@ export default function LoginPage() {
         },
       });
       gid.renderButton(el, {
-        theme: "filled_black", size: "large", shape: "pill", locale: "th",
-        text: signup ? "signup_with" : "signin_with", width: 300,
+        theme: "outline", size: "large", shape: "pill", locale: "th",
+        text: signup ? "signup_with" : "signin_with", width: 320,
       });
     }).catch(() => setError("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า"));
   }, [clientId, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
@@ -76,8 +135,8 @@ export default function LoginPage() {
   else if (!config?.auth) {
     body = (
       <>
-        <h1 className="auth-title">ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน</h1>
-        <p className="muted" style={{ margin: 0 }}>ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ</p>
+        <h1 id="auth-title" className="auth-title">ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน</h1>
+        <p className="auth-note">ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ</p>
         <Link href="/" className="btn primary">ไปหน้าอัปโหลด</Link>
       </>
     );
@@ -85,24 +144,29 @@ export default function LoginPage() {
     body = (
       <>
         <h1 id="auth-title" className="auth-title">{signup ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}</h1>
-        <p className="muted" style={{ margin: 0 }}>ใช้บัญชี Google (Gmail) ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน</p>
         {clientId
           ? <div ref={button} className="auth-google" aria-busy={busy} style={{ opacity: busy ? 0.5 : 1 }} />
           : <div className="alert error" role="alert">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ</div>}
         {busy && <span className="dim" role="status">กำลังเข้าสู่ระบบ...</span>}
         {error && <div className="alert error" role="alert">{error}</div>}
+        <p className="auth-note">ใช้บัญชี Google (Gmail) เท่านั้น ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน</p>
       </>
     );
   }
 
   return (
     <main className="auth-page">
-      <Link href="/welcome" className="brand auth-brand">
-        <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
-        Dubbing Studio
-      </Link>
-      <section className="card auth-card" aria-labelledby="auth-title">{body}</section>
-      <Link href="/welcome" className="dim auth-back">← กลับหน้าแรก</Link>
+      <Showcase bonus={config?.billing ? bonus : 0} />
+      <section className="auth-panel" aria-labelledby="auth-title">
+        <Link href="/welcome" className="icon-only auth-close" aria-label="กลับหน้าแรก"><XIcon size={18} /></Link>
+        <div className="auth-box">
+          <Link href="/welcome" className="brand auth-brand">
+            <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
+            <span className="auth-brand-text">Dubbing Studio<small>พากย์ไทยด้วย AI</small></span>
+          </Link>
+          {body}
+        </div>
+      </section>
     </main>
   );
 }
