@@ -55,7 +55,7 @@ class Topup(BaseModel):
 
 
 class Credit(BaseModel):
-    credits: int = Field(..., description="เครดิตเติม ติดลบ = หักออก")
+    credits: float = Field(..., description="เครดิตเติม ทศนิยมได้ 2 ตำแหน่ง ติดลบ = หักออก")
     note: str = Field("", max_length=200)
 
 

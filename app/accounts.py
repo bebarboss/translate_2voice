@@ -5,10 +5,11 @@ AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำข
 BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (ตัดเครดิตเมื่อเริ่มวิเคราะห์งาน) ต้องเปิดคู่กับ AUTH_ENABLED
 ผู้ดูแลระบบ (ADMIN_EMAILS) พากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต
 
-1 เครดิต = คลิป 1 นาที (ปัดขึ้น) มีสองแบบ:
+1 เครดิต = คลิป 1 นาที คิดตามความยาวจริงละเอียดถึงทศนิยม 2 ตำแหน่ง (ปัดขึ้น) มีสองแบบ:
 - เครดิตแพ็กเกจ (subscriptions.minutes_left) ได้จากแพ็กเกจรายเดือน หมดอายุพร้อมแพ็กเกจ ใช้ก่อน
 - เครดิตเติม (users.credits) ซื้อเพิ่มหรือผู้ดูแลให้ ไม่หมดอายุ
 เงินเก็บเป็นสตางค์ (จำนวนเต็ม) ใช้แค่ตอนชำระเงิน
+ในฐานข้อมูลเก็บเครดิตเป็นหน่วยย่อย (1 เครดิต = UNIT = 100 หน่วย) เป็นจำนวนเต็ม แปลงเป็นทศนิยมตอนส่งออกเท่านั้น
 ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน กันตัดซ้ำ
 """
 import hashlib
@@ -45,6 +46,7 @@ PLANS = [
 ]
 CREDIT_PRICE = 15_00  # ราคาเครดิตเติม (สตางค์ต่อเครดิต) แพ็กเกจรายเดือนตกเครดิตละถูกกว่า
 CREDIT_PACKS = (10, 30, 100, 300)  # จำนวนเครดิตที่หน้าเว็บให้เลือกซื้อ
+UNIT = 100  # หน่วยย่อยต่อ 1 เครดิต (คิดละเอียด 0.01 เครดิต)
 CARD_BONUS = 5  # เครดิตฟรีเมื่อผูกบัตรครั้งแรก (ได้ครั้งเดียวต่อผู้ใช้ และต่อบัตรหนึ่งใบ)
 
 
@@ -121,6 +123,14 @@ def _migrate(db: sqlite3.Connection) -> None:
                        (u["id"], n, f"แปลงเงิน {u['balance'] / 100:,.0f} บาทเป็นเครดิต", time.time()))
     if "admin" not in cols("users"):
         db.execute("ALTER TABLE users ADD COLUMN admin INTEGER NOT NULL DEFAULT 0")
+    if db.execute("PRAGMA user_version").fetchone()[0] < 1:
+        # เครดิตเป็นทศนิยมได้: ยอดเดิม (เครดิตเต็ม) คูณเป็นหน่วยย่อย topups.credits ยังเป็นเครดิตเต็มที่ซื้อ
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(f"UPDATE users SET credits = credits * {UNIT}")
+        db.execute(f"UPDATE subscriptions SET minutes_left = minutes_left * {UNIT}")
+        db.execute(f"UPDATE ledger SET credits = credits * {UNIT}, minutes = minutes * {UNIT}")
+        db.execute("PRAGMA user_version = 1")
+        db.execute("COMMIT")
     if "credits" not in cols("topups"):
         db.execute("ALTER TABLE topups ADD COLUMN credits INTEGER NOT NULL DEFAULT 0")
         db.execute("ALTER TABLE topups ADD COLUMN plan_id TEXT")
@@ -154,6 +164,20 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def credits_out(units: int) -> float:
+    """หน่วยย่อย → เครดิต (ทศนิยม 2 ตำแหน่ง) สำหรับส่งออกทาง API"""
+    return round(units / UNIT, 2)
+
+
+def fmt_credits(units: int) -> str:
+    """หน่วยย่อย → ข้อความ เช่น 1.25, 3, 1,200.5"""
+    return f"{units / UNIT:,.2f}".rstrip("0").rstrip(".")
+
+
+def _sub_out(sub) -> Optional[dict]:
+    return {**dict(sub), "minutes_left": credits_out(sub["minutes_left"])} if sub else None
+
+
 def is_owner(email: str) -> bool:
     """ผู้ดูแลจาก ADMIN_EMAILS ถอดสิทธิ์ผ่านหน้าเว็บไม่ได้"""
     return email.lower() in settings.admin_emails
@@ -166,7 +190,7 @@ def is_admin(user: sqlite3.Row) -> bool:
 
 def public_user(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row),
-            "owner": is_owner(row["email"]), "credits": row["credits"]}
+            "owner": is_owner(row["email"]), "credits": credits_out(row["credits"])}
 
 
 def _verify_google(credential: str) -> dict:
@@ -229,7 +253,7 @@ def all_users() -> list[dict]:
         db = _db()
         rows = db.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
         return [{**public_user(r), "created_at": r["created_at"],
-                 "subscription": dict(sub) if (sub := _subscription(db, r["id"])) else None} for r in rows]
+                 "subscription": _sub_out(_subscription(db, r["id"]))} for r in rows]
 
 
 def set_admin(uid: str, admin: bool, by: sqlite3.Row) -> None:
@@ -267,22 +291,24 @@ def wallet(uid: str) -> dict:
         ledger = db.execute("SELECT kind, credits, minutes, amount, ref, note, created_at FROM ledger "
                             "WHERE user_id = ? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
     return {
-        "credits": u["credits"] if u else 0,
-        "subscription": dict(sub) if sub else None,
+        "credits": credits_out(u["credits"]) if u else 0,
+        "subscription": _sub_out(sub),
         "credit_price": CREDIT_PRICE,
-        "ledger": [dict(r) for r in ledger],
+        "ledger": [{**dict(r), "credits": credits_out(r["credits"]), "minutes": credits_out(r["minutes"])}
+                   for r in ledger],
     }
 
 
-def credit(uid: str, credits: int, kind: str = "topup", amount: int = 0, ref: Optional[str] = None,
+def credit(uid: str, credits: float, kind: str = "topup", amount: int = 0, ref: Optional[str] = None,
            note: str = "") -> None:
-    """เพิ่ม (หรือหักถ้าติดลบ) เครดิตเติม: ชำระเงินสำเร็จ หรือผู้ดูแลให้"""
+    """เพิ่ม (หรือหักถ้าติดลบ) เครดิตเติม (เป็นเครดิต ทศนิยมได้ 2 ตำแหน่ง): ชำระเงินสำเร็จ หรือผู้ดูแลให้"""
+    credits = round(credits * UNIT)
     with _tx() as db:
         u = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()
         if u is None:
             raise AccountError(404, "ไม่พบผู้ใช้นี้")
         if u["credits"] + credits < 0:
-            raise AccountError(400, f"หักได้ไม่เกิน {u['credits']} เครดิต")
+            raise AccountError(400, f"หักได้ไม่เกิน {fmt_credits(u['credits'])} เครดิต")
         db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (credits, uid))
         _log(db, uid, kind, credits=credits, amount=amount, ref=ref, note=note)
 
@@ -291,8 +317,8 @@ def _activate(db, uid: str, p: Plan, kind: str, amount: int, note: str) -> None:
     """เริ่มแพ็กเกจใหม่วันนี้ เครดิตแพ็กเกจที่เหลือของรอบเดิมไม่ทบ"""
     now = time.time()
     db.execute("INSERT OR REPLACE INTO subscriptions VALUES (?, ?, ?, ?, ?)",
-               (uid, p.id, p.minutes, now, now + p.days * 86400))
-    _log(db, uid, kind, minutes=p.minutes, amount=amount, ref=p.id, note=note)
+               (uid, p.id, p.minutes * UNIT, now, now + p.days * 86400))
+    _log(db, uid, kind, minutes=p.minutes * UNIT, amount=amount, ref=p.id, note=note)
 
 
 def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
@@ -312,8 +338,9 @@ def _exempt(db, uid: str) -> bool:
     return u is not None and is_admin(u)
 
 
-def job_minutes(seconds: float) -> int:
-    return max(1, math.ceil(seconds / 60))
+def job_credits(seconds: float) -> int:
+    """เครดิตของงาน (หน่วยย่อย) ตามความยาวคลิปจริง ปัดขึ้นที่ 0.01 เครดิต"""
+    return max(1, math.ceil(round(seconds / 60 * UNIT, 6)))
 
 
 def can_start(uid: str) -> None:
@@ -335,7 +362,8 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
     """ตัดเครดิตของงานเมื่อรู้ความยาวคลิป (ต้นขั้นวิเคราะห์) ตัดครั้งเดียวต่องาน พากย์ซ้ำหรือแก้บทไม่ตัดเพิ่ม"""
     if not billing_enabled():
         return
-    need = job_minutes(seconds)
+    need = job_credits(seconds)
+    length = f"{int(seconds // 60)}:{int(seconds % 60):02d}"
     with _tx() as db:
         if _exempt(db, uid) or db.execute("SELECT 1 FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref = ?",
                                           (uid, job_id)).fetchone():
@@ -345,13 +373,13 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
         rest = need - from_plan
         have = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()["credits"]
         if rest > have:
-            raise AccountError(402, f"คลิปนี้ยาว {need} นาที ใช้ {need} เครดิต แต่มีเพียง {from_plan + have} เครดิต "
-                                    f"(ขาด {rest - have} เครดิต)")
+            raise AccountError(402, f"คลิปนี้ยาว {length} นาที ใช้ {fmt_credits(need)} เครดิต แต่มีเพียง "
+                                    f"{fmt_credits(from_plan + have)} เครดิต (ขาด {fmt_credits(rest - have)} เครดิต)")
         if from_plan:
             db.execute("UPDATE subscriptions SET minutes_left = minutes_left - ? WHERE user_id = ?", (from_plan, uid))
         if rest:
             db.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (rest, uid))
-        _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=job_id, note=f"งานพากย์ {need} นาที")
+        _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=job_id, note=f"งานพากย์ {length} นาที")
 
 
 def refund_job(uid: str, job_id: str) -> None:
@@ -442,8 +470,8 @@ def add_card(uid: str, token: str) -> dict:
         if not db.execute("SELECT 1 FROM ledger WHERE kind = 'bonus' AND (user_id = ? OR ref = ?)",
                           (uid, info["fingerprint"])).fetchone():
             bonus = CARD_BONUS
-            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (bonus, uid))
-            _log(db, uid, "bonus", credits=bonus, ref=info["fingerprint"],
+            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (bonus * UNIT, uid))
+            _log(db, uid, "bonus", credits=bonus * UNIT, ref=info["fingerprint"],
                  note=f"ผูกบัตร {info['brand']} ลงท้าย {info['last4']} ครั้งแรก")
         row = db.execute("SELECT * FROM cards WHERE id = ?", (cid,)).fetchone()
     return {"card": _public_card(row), "bonus": bonus}
@@ -470,6 +498,6 @@ def mark_paid(topup_id: str) -> None:
         if p:
             _activate(db, t["user_id"], p, "subscribe", t["amount"], f"แพ็กเกจ{p.name} {p.minutes} เครดิต")
         else:
-            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (t["credits"], t["user_id"]))
-            _log(db, t["user_id"], "topup", credits=t["credits"], amount=t["amount"], ref=topup_id,
+            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (t["credits"] * UNIT, t["user_id"]))
+            _log(db, t["user_id"], "topup", credits=t["credits"] * UNIT, amount=t["amount"], ref=topup_id,
                  note=f"ซื้อ {t['credits']:,} เครดิต ผ่าน {t['provider']}")

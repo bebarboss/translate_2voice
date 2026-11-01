@@ -147,3 +147,8 @@ export const VOICE_STAGE_LABEL: Record<string, string> = {
 export function isActive(job: Job): boolean {
   return job.status === "queued" || job.status === "running";
 }
+
+/** จำนวนเครดิต ทศนิยมสูงสุด 2 ตำแหน่ง (1.25, 3, 1,200.5) */
+export function fmtNum(n: number): string {
+  return n.toLocaleString("th-TH", { maximumFractionDigits: 2 });
+}

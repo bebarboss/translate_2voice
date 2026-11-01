@@ -43,7 +43,7 @@ export interface Job {
 
 export type Gender = "male" | "female" | "";
 
-// ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที เงินเป็นสตางค์
+// ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที (ทศนิยมได้ 2 ตำแหน่ง) เงินเป็นสตางค์
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
 export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; google_client_id: string }
 /** owner = ผู้ดูแลหลักจาก ADMIN_EMAILS (ถอดสิทธิ์ไม่ได้) */

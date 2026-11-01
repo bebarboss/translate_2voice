@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type AdminUser, type Cards, type Plan, type Wallet } from "@/lib/api";
-import { fmtBaht } from "@/lib/format";
+import { fmtBaht, fmtNum } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
@@ -11,8 +11,8 @@ const KIND_LABEL: Record<string, string> = {
 const fmtDate = (unix: number) =>
   new Date(unix * 1000).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
 const PAID = new Set(["topup", "subscribe"]); // รายการที่ผู้ใช้จ่ายเงินจริง
-const fmtCredits = (n: number) => `${n.toLocaleString()} เครดิต`;
-const signed = (n: number) => (n > 0 ? `+${n.toLocaleString()}` : `−${Math.abs(n).toLocaleString()}`);
+const fmtCredits = (n: number) => `${fmtNum(n)} เครดิต`;
+const signed = (n: number) => (n > 0 ? `+${fmtNum(n)}` : `−${fmtNum(Math.abs(n))}`);
 
 type Message = { kind: "error" | "info"; text: string } | null;
 
@@ -125,7 +125,7 @@ function WalletSection({ payments, unlimited }: { payments: boolean; unlimited: 
           </div>
         </div>
         {unlimited && <div className="alert info">บัญชีผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต</div>}
-        <span className="dim">1 เครดิต = คลิป 1 นาที (ปัดขึ้น) ตัดตอนเริ่มวิเคราะห์คลิป ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม
+        <span className="dim">1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง (คลิป 1:15 นาที = 1.25 เครดิต) ตัดตอนเริ่มวิเคราะห์คลิป ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม
           พากย์ซ้ำหรือแก้บทไม่เสียเพิ่ม งานที่วิเคราะห์ไม่สำเร็จได้เครดิตคืน</span>
         {wallet && (
           <div className="field">
@@ -224,17 +224,17 @@ function AdminSection({ me }: { me: string }) {
           <tbody>
             {shown.map((u) => {
               const plan = plans.find((p) => p.id === u.subscription?.plan_id);
-              const n = parseInt(amounts[u.id] ?? "", 10);
+              const n = Math.round(parseFloat(amounts[u.id] ?? "") * 100) / 100;
               return (
                 <tr key={u.id}>
                   <td>{u.name}{u.admin ? " · ผู้ดูแล" : ""}<div className="dim">{u.email}</div></td>
-                  <td className="mono">{u.credits.toLocaleString()}</td>
+                  <td className="mono">{fmtNum(u.credits)}</td>
                   <td>{u.subscription && plan
-                    ? <>{plan.name} · {u.subscription.minutes_left}<div className="dim">ถึง {fmtDate(u.subscription.expires_at)}</div></>
+                    ? <>{plan.name} · {fmtNum(u.subscription.minutes_left)}<div className="dim">ถึง {fmtDate(u.subscription.expires_at)}</div></>
                     : <span className="dim">ไม่มี</span>}</td>
                   <td>
                     <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                      <input className="input" style={{ width: 84 }} type="number" step={1} placeholder="เช่น 30"
+                      <input className="input" style={{ width: 84 }} type="number" step={0.01} placeholder="เช่น 30"
                         aria-label={`จำนวนเครดิตของ ${u.email} (ติดลบ = หัก)`}
                         value={amounts[u.id] ?? ""} onChange={(e) => setAmounts({ ...amounts, [u.id]: e.target.value })} />
                       <button type="button" className="btn small" disabled={!!busy || !Number.isFinite(n) || n === 0}
