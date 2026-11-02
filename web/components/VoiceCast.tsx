@@ -74,8 +74,10 @@ export function VoiceCastPicker({ vc, job, value, onChange }: {
   value: Record<string, string | null>;
   onChange: (speaker: string, voiceId: string | null) => void;
 }) {
-  const c = vc.cast?.find((x) => x.speaker === vc.picking);
-  if (!c) return null;
+  if (!vc.picking) return null;
+  // ตัวละครที่เพิ่มบนเส้นเวลาหลังโหลดหน้า ยังไม่มีผลวัดเสียง เลือกจากคลังได้แต่ไม่มีคะแนนความใกล้เคียง
+  const c = vc.cast?.find((x) => x.speaker === vc.picking)
+    ?? { speaker: vc.picking, voice_id: null, pitch_hz: null, gender: "" as const, suggestions: [] };
   const chosen = value[c.speaker];
   return (
     // เสียงที่เลือกไว้ถูกลบจากคลังแล้ว = ใช้เสียงต้นฉบับอยู่
