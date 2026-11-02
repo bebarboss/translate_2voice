@@ -203,6 +203,10 @@ class LibraryVoice(BaseModel):
     quality: Optional[float] = None  # ความสะอาด (ประมาณ PESQ 1–4.5)
     analysis: Optional[VoiceAnalysis] = None  # ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์
     moods: list[VoiceMood] = Field(default_factory=list)  # เสียงตัวอย่างอารมณ์อื่น ๆ
+    # เสียงที่นักพากย์อัด (actors.py) เติมตอนส่งออกทาง API ไม่ได้เก็บกับเสียง
+    actor: Optional[str] = None  # ชื่อในวงการของนักพากย์
+    review: Optional[str] = None  # pending / approved / rejected ผู้ใช้ทั่วไปเห็นเฉพาะ approved
+    review_note: str = ""
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 

@@ -50,6 +50,10 @@ class Settings:
     google_client_id: str = _env("GOOGLE_CLIENT_ID")  # OAuth Client ID (Web) สำหรับปุ่มเข้าสู่ระบบด้วย Google
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
     payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ)
+    # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
+    actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
+    controller_name: str = _env("PDPA_CONTROLLER_NAME", "[ชื่อผู้ให้บริการ]")
+    controller_contact: str = _env("PDPA_CONTROLLER_CONTACT", "[อีเมลหรือช่องทางติดต่อ]")
 
     # ที่รันขั้นที่ใช้การ์ดจอ (pipeline/gpu.py): local = เครื่องนี้, modal = Modal GPU L4 (ไฟล์งานยังอยู่ใน data/)
     worker: str = _env("WORKER", "local").lower()

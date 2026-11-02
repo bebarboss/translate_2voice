@@ -448,7 +448,10 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
         <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, flex: 1 }}>
           <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-word" }}>{v.name}</span>
+          {v.actor && <span className="dim" style={{ fontSize: 13 }}>พากย์โดย {v.actor}</span>}
           <div className="row" style={{ gap: 6 }}>
+            {v.review === "pending" && <span className="badge awaiting_review">รอผู้ดูแลตรวจ</span>}
+            {v.review === "rejected" && <span className="badge failed">ไม่ผ่านการตรวจ</span>}
             {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
             {v.gender && <span className="badge queued">{GENDER_LABEL[v.gender]}</span>}
             {v.tone && <span className="badge awaiting_review">{v.tone}</span>}

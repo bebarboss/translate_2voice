@@ -30,6 +30,11 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
     if (value) headers.set(name, value);
   }
   if (API_KEY) headers.set("x-api-key", API_KEY);
+  // หลักฐานการกดยอมรับหนังสือยินยอมของนักพากย์ (API บันทึก IP และเบราว์เซอร์)
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim();
+  if (ip) headers.set("x-client-ip", ip);
+  const ua = req.headers.get("user-agent");
+  if (ua) headers.set("x-client-ua", ua);
   const session = req.cookies.get(SESSION_COOKIE)?.value;
   if (session) headers.set("x-user-token", session);
   headers.set("ngrok-skip-browser-warning", "1"); // ngrok แบบฟรีจะไม่แทรกหน้าเตือน

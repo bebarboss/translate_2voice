@@ -56,6 +56,12 @@ export default function Sidebar() {
               {l.icon}{l.label}
             </Link>
           ))}
+          {config?.auth && user && (
+            <Link href="/actor" aria-current={path === "/actor" ? "page" : undefined}><MicIcon />นักพากย์</Link>
+          )}
+          {config?.auth && user?.admin && (
+            <Link href="/actors" aria-current={isActive("/actors") ? "page" : undefined}><UserIcon />ตรวจนักพากย์</Link>
+          )}
         </nav>
         {config?.auth && (
           <div className="side-foot">

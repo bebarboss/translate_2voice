@@ -17,10 +17,11 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 
-from . import accounts, runtime_settings, supabase_db
-from .account_api import router as account_router
+from . import accounts, actors, runtime_settings, supabase_db
+from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood,
@@ -119,6 +120,9 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
         job = store.get(job_id)
         if job is not None and job.owner != user["id"]:
             raise HTTPException(404, "ไม่พบงานนี้")
+    voice_id = request.path_params.get("voice_id")
+    if voice_id and voice_id in hidden_voices(request):
+        raise HTTPException(404, "ไม่พบเสียงนี้ในคลัง")
     if path.startswith(("/admin", "/system")) or (
             path.startswith(ADMIN_WRITES) and request.method not in ("GET", "HEAD")):
         raise HTTPException(403, "เฉพาะผู้ดูแลระบบ")
@@ -126,6 +130,21 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
 
 # ใช้กับทุกเส้นทาง (ต้องเพิ่มก่อนประกาศเส้นทางแรก)
 app.router.dependencies.append(Depends(access_guard))
+
+
+def hidden_voices(request: Request) -> set[str]:
+    """เสียงของนักพากย์ที่ผู้ดูแลยังไม่อนุมัติ: ซ่อนจากทุกคน ยกเว้นผู้ดูแลและนักพากย์เจ้าของเสียง"""
+    user = getattr(request.state, "user", None)
+    if user is None or accounts.is_admin(user):
+        return set()
+    return {v for v, a in actors.voice_actors().items() if a["review"] != "approved" and a["user_id"] != user["id"]}
+
+
+def with_actor(v: LibraryVoice, info: Optional[dict]) -> LibraryVoice:
+    """เติมชื่อนักพากย์และสถานะตรวจ (ไม่เก็บกับเสียง)"""
+    if info is None:
+        return v
+    return v.model_copy(update={"actor": info["stage_name"], "review": info["review"], "review_note": info["note"]})
 
 
 def current_user_id(request: Request) -> Optional[str]:
@@ -736,7 +755,7 @@ def synthesize(job_id: str):
 
 # ---------------------------------------------------------------- เสียงของตัวละคร
 @app.get("/jobs/{job_id}/voices", response_model=list[SpeakerVoice], dependencies=[Depends(require_key)])
-def get_job_voices(job_id: str):
+def get_job_voices(job_id: str, request: Request):
     """เสียงที่เลือกไว้และเสียงในคลังที่แนะนำ (ใกล้ที่สุดก่อน) ของแต่ละตัวละคร
     ครั้งแรกต้องวัดเสียงตัวละครบน CPU ใช้เวลาราวสิบวินาที หลังจากนั้นใช้ค่าที่เก็บไว้"""
     from .pipeline import library
@@ -746,7 +765,8 @@ def get_job_voices(job_id: str):
     if not utterances:
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแยกผู้พูดเสร็จก่อน")
     profiles = library.speaker_profiles(store.dir(job_id), utterances)
-    ready = [v for v in voice_store.all() if v.status == VoiceStatus.ready]
+    hidden = hidden_voices(request)
+    ready = [v for v in voice_store.all() if v.status == VoiceStatus.ready and v.id not in hidden]
     embs = {v.id: voice_store.embedding(v.id) for v in ready}
     out = []
     for speaker in job.speakers:
@@ -762,20 +782,21 @@ def get_job_voices(job_id: str):
 
 
 @app.put("/jobs/{job_id}/voices", response_model=Job, dependencies=[Depends(require_key)])
-def set_job_voices(job_id: str, choice: dict[str, Optional[str]]):
+def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Request):
     """เลือกเสียงจากคลังให้ตัวละคร {"speaker_01": "<id เสียง>", "speaker_02": null}
     null = กลับไปใช้เสียงต้นฉบับ ตัวละครที่ไม่ได้ส่งมาคงค่าเดิม มีผลตอนพากย์รอบถัดไป"""
     job = get_job_or_404(job_id)
     if job.status not in EDITABLE:
         raise HTTPException(409, "เปลี่ยนเสียงได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
     voice_map = dict(job.voice_map)
+    hidden = hidden_voices(request)
     for speaker, voice_id in choice.items():
         if speaker not in job.speakers:
             raise HTTPException(400, f"ไม่รู้จักผู้พูด {speaker} มีแค่ {job.speakers}")
         if voice_id is None:
             voice_map.pop(speaker, None)
             continue
-        v = voice_store.get(voice_id)
+        v = voice_store.get(voice_id) if voice_id not in hidden else None
         if v is None or v.status != VoiceStatus.ready:
             raise HTTPException(400, f"เสียง {voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
         voice_map[speaker] = voice_id
@@ -801,8 +822,9 @@ def _clean_categories(values: list[str]) -> list[str]:
 
 
 @app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
-def list_voices():
-    return voice_store.all()
+def list_voices(request: Request):
+    info, hidden = actors.voice_actors(), hidden_voices(request)
+    return [with_actor(v, info.get(v.id)) for v in voice_store.all() if v.id not in hidden]
 
 
 @app.post("/voices", response_model=LibraryVoice, status_code=202,
@@ -845,7 +867,7 @@ async def create_voice(
 
 @app.get("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
 def get_voice(voice_id: str):
-    return get_voice_or_404(voice_id)
+    return with_actor(get_voice_or_404(voice_id), actors.voice_actors().get(voice_id))
 
 
 @app.patch("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
@@ -866,6 +888,7 @@ def delete_voice(voice_id: str):
     if any(x.status == VoiceStatus.processing and x.stage != "queued" for x in [v, *v.moods]):
         raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
     voice_store.delete(voice_id)
+    actors.remove_voice(voice_id)
 
 
 @app.post("/voices/{voice_id}/retry", response_model=LibraryVoice, status_code=202,
@@ -1003,6 +1026,240 @@ def retry_voice_mood(voice_id: str, mood: Mood):
 def get_voice_mood_audio(voice_id: str, mood: Mood):
     v, _ = get_mood_or_404(voice_id, mood)
     return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
+
+
+# ---------------------------------------------------------------- นักพากย์ (actors.py)
+class ActorApply(BaseModel):
+    stage_name: str = Field(..., min_length=1, max_length=60)
+    gender: Gender = ""
+    bio: str = Field("", max_length=1000)
+    contact: str = Field("", max_length=200)
+    consent_version: str = Field(..., max_length=20, description="เวอร์ชันหนังสือยินยอมที่อ่านและกดยอมรับ")
+
+
+class ConsentAccept(BaseModel):
+    version: str = Field(..., max_length=20)
+
+
+class Review(BaseModel):
+    approve: bool
+    note: str = Field("", max_length=300)
+
+
+class Payout(BaseModel):
+    month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
+    note: str = Field("", max_length=200)
+
+
+def _actor_fail(e: accounts.AccountError) -> HTTPException:
+    return HTTPException(e.status, str(e))
+
+
+def _client(request: Request) -> tuple[str, str]:
+    """IP และเบราว์เซอร์ของผู้กดยอมรับ (หน้าเว็บส่งต่อมาใน x-client-ip / x-client-ua)"""
+    ip = request.headers.get("x-client-ip") or (request.client.host if request.client else "")
+    return ip, request.headers.get("x-client-ua") or request.headers.get("user-agent") or ""
+
+
+def _approved_actor(user) -> dict:
+    a = actors.actor(user["id"])
+    if a is None or a["status"] != "approved":
+        raise HTTPException(403, "ต้องเป็นนักพากย์ที่ผู้ดูแลอนุมัติแล้ว")
+    if not actors.has_consent(user["id"]):
+        raise HTTPException(409, "หนังสือยินยอมมีเวอร์ชันใหม่ กดยอมรับก่อนส่งเสียง")
+    return a
+
+
+def _own_voice(user, voice_id: str) -> LibraryVoice:
+    info = actors.voice_actors().get(voice_id)
+    if info is None or info["user_id"] != user["id"]:
+        raise HTTPException(404, "ไม่พบเสียงนี้")
+    return with_actor(get_voice_or_404(voice_id), info)
+
+
+@app.get("/actor/consent", dependencies=[Depends(require_key)])
+def actor_consent(_=Depends(require_user)):
+    """หนังสือยินยอม PDPA และสิทธิ์ใช้เสียงเวอร์ชันปัจจุบัน"""
+    return {"version": actors.CONSENT_VERSION, "text": actors.consent_text(), "rate": settings.actor_rate}
+
+
+@app.get("/actor/me", dependencies=[Depends(require_key)])
+def actor_me(user=Depends(require_user)):
+    """สถานะนักพากย์ของผู้ใช้ ความยินยอม เสียงที่ส่ง และยอดค่าตอบแทนย้อนหลัง 6 เดือน"""
+    info = actors.voice_actors()
+    voices = [with_actor(v, info[v.id]) for v in voice_store.all()
+              if v.id in info and info[v.id]["user_id"] == user["id"]]
+    c = actors.consent(user["id"])
+    return {"actor": actors.actor(user["id"]),
+            "consent": {"version": c["version"], "accepted_at": c["accepted_at"]} if c else None,
+            "consent_current": actors.has_consent(user["id"]), "consent_version": actors.CONSENT_VERSION,
+            "rate": settings.actor_rate, "voices": [v.model_dump(mode="json") for v in voices],
+            "usage": actors.summary(user["id"]), "payouts": actors.payouts(user["id"])}
+
+
+@app.post("/actor/apply", dependencies=[Depends(require_key)])
+def actor_apply(body: ActorApply, request: Request, user=Depends(require_user)):
+    """สมัครเป็นนักพากย์พร้อมยอมรับหนังสือยินยอม รอผู้ดูแลอนุมัติ"""
+    try:
+        return actors.apply(user["id"], body.stage_name.strip(), body.gender, body.bio.strip(), body.contact.strip(),
+                            body.consent_version, *_client(request))
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+
+
+@app.post("/actor/consent", status_code=204, dependencies=[Depends(require_key)])
+def actor_accept(body: ConsentAccept, request: Request, user=Depends(require_user)):
+    """ยอมรับหนังสือยินยอมเวอร์ชันใหม่"""
+    try:
+        actors.accept_consent(user["id"], body.version, *_client(request))
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+
+
+@app.get("/actor/usage", dependencies=[Depends(require_key)])
+def actor_usage(month: str, user=Depends(require_user)):
+    """รายการงานที่ใช้เสียงของนักพากย์ในเดือนนั้น (YYYY-MM)"""
+    return actors.usage_rows(user["id"], month)
+
+
+@app.post("/actor/voices", response_model=LibraryVoice, status_code=202, dependencies=[Depends(require_key)])
+async def actor_record(
+    file: UploadFile = File(..., description="เสียงที่อัดจากเบราว์เซอร์ (webm/m4a) หรือไฟล์เสียง"),
+    voice_id: Optional[str] = Form(None, description="ว่าง = เสียงใหม่, มีค่า = อัดแทนเสียงหลัก หรือเพิ่มเสียงอารมณ์ของเสียงนั้น"),
+    mood: Optional[Mood] = Form(None),
+    denoise: bool = Form(True),
+    user=Depends(require_user),
+):
+    """นักพากย์ส่งเสียงเข้าคลัง เตรียมเสียงเหมือนอัปโหลดทั่วไป แล้วรอผู้ดูแลตรวจฟังก่อนผู้อื่นจะเห็น"""
+    a = _approved_actor(user)
+    ext = Path(file.filename or "").suffix.lower() or ".webm"
+    if ext not in AUDIO_EXT:
+        raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")
+    label = f"อัดโดย {a['stage_name']}"
+    if voice_id:
+        v = _own_voice(user, voice_id)
+        busy = next((m for m in v.moods if m.mood == mood), None) if mood else v
+        if busy and busy.status == VoiceStatus.processing and busy.stage != "queued":
+            raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อน")
+        if mood:
+            voice_store.delete_mood(voice_id, mood)
+            d = voice_store.mood_dir(voice_id, mood)
+            d.mkdir(parents=True, exist_ok=True)
+            await save_upload(file, d / f"original{ext}", d)
+            voice_store.set_mood(voice_id, VoiceMood(mood=mood, filename=label, denoise=denoise))
+        else:
+            d = voice_store.dir(voice_id)
+            for old in d.glob("original.*"):
+                old.unlink(missing_ok=True)
+            await save_upload(file, d / f"original{ext}", d / "_none")  # เกินขนาดไม่ลบทั้งเสียง
+            voice_store.update(voice_id, status=VoiceStatus.processing, stage="queued", error=None,
+                               filename=label, source_url=None, denoise=denoise)
+        actors.resubmit_voice(voice_id)
+        worker.submit_voice(voice_id, mood or "")
+        return _own_voice(user, voice_id)
+    if mood:
+        raise HTTPException(400, "อัดเสียงหลักก่อน แล้วค่อยเพิ่มเสียงอารมณ์")
+    voice_id = voice_store.new_id()
+    d = voice_store.dir(voice_id)
+    d.mkdir(parents=True, exist_ok=True)
+    await save_upload(file, d / f"original{ext}", d)
+    voice_store.add(LibraryVoice(id=voice_id, name=a["stage_name"], gender=a["gender"], description=a["bio"],
+                                 categories=["นักพากย์"], filename=label, denoise=denoise))
+    actors.add_voice(voice_id, user["id"])
+    worker.submit_voice(voice_id)
+    return _own_voice(user, voice_id)
+
+
+@app.delete("/actor/voices/{voice_id}", status_code=204, dependencies=[Depends(require_key)])
+def actor_delete_voice(voice_id: str, user=Depends(require_user)):
+    v = _own_voice(user, voice_id)
+    if any(x.status == VoiceStatus.processing and x.stage != "queued" for x in [v, *v.moods]):
+        raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
+    voice_store.delete(voice_id)
+    actors.remove_voice(voice_id)
+
+
+@app.post("/actor/withdraw", status_code=204, dependencies=[Depends(require_key)])
+def actor_withdraw(user=Depends(require_user)):
+    """ถอนความยินยอม: ลบเสียงทั้งหมดของนักพากย์ออกจากคลังทันที"""
+    try:
+        ids = actors.withdraw(user["id"])
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+    for voice_id in ids:
+        voice_store.delete(voice_id)
+
+
+@app.get("/admin/actors", dependencies=[Depends(require_key)])
+def admin_actors(_=Depends(require_admin)):
+    return actors.all_actors()
+
+
+@app.post("/admin/actors/{user_id}/review", status_code=204, dependencies=[Depends(require_key)])
+def admin_review_actor(user_id: str, body: Review, admin=Depends(require_admin)):
+    """อนุมัติหรือปฏิเสธผู้สมัคร (ปฏิเสธแล้วสมัครใหม่ได้)"""
+    try:
+        actors.review_actor(user_id, body.approve, body.note.strip(), admin["email"])
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+
+
+@app.get("/admin/actor-voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
+def admin_actor_voices(_=Depends(require_admin)):
+    """เสียงทั้งหมดที่นักพากย์ส่ง (รอตรวจขึ้นก่อน)"""
+    info = actors.voice_actors()
+    out = [with_actor(v, info[v.id]) for v in voice_store.all() if v.id in info]
+    return sorted(out, key=lambda v: v.review != "pending")
+
+
+@app.post("/admin/actor-voices/{voice_id}/review", status_code=204, dependencies=[Depends(require_key)])
+def admin_review_voice(voice_id: str, body: Review, admin=Depends(require_admin)):
+    """อนุมัติให้เสียงขึ้นคลัง (ทุกคนเลือกใช้ได้) หรือให้นักพากย์อัดใหม่พร้อมเหตุผล"""
+    v = get_voice_or_404(voice_id)
+    if body.approve and v.status != VoiceStatus.ready:
+        raise HTTPException(409, "เสียงยังเตรียมไม่เสร็จหรือเตรียมไม่สำเร็จ")
+    try:
+        actors.review_voice(voice_id, body.approve, body.note.strip(), admin["email"])
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+
+
+@app.get("/admin/actor-usage", dependencies=[Depends(require_key)])
+def admin_actor_usage(month: Optional[str] = None, _=Depends(require_admin)):
+    """ยอดใช้เสียงและค่าตอบแทนต่อนักพากย์ต่อเดือน (ไม่ส่ง month = ทุกเดือน) จำนวนเงินเป็นสตางค์"""
+    return {"rate": settings.actor_rate, "rows": actors.report(month), "payouts": actors.payouts()}
+
+
+@app.get("/admin/actor-usage/{user_id}", dependencies=[Depends(require_key)])
+def admin_actor_usage_rows(user_id: str, month: str, _=Depends(require_admin)):
+    return actors.usage_rows(user_id, month)
+
+
+@app.get("/admin/actor-usage-csv", dependencies=[Depends(require_key)])
+def admin_actor_usage_csv(month: str, _=Depends(require_admin)):
+    """รายการใช้เสียงทุกงานของเดือนนั้น สำหรับทำบัญชี"""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["เดือน", "นักพากย์", "อีเมล", "งาน", "ชื่อไฟล์", "ผู้ใช้", "เสียง", "ประโยค", "วินาที", "คิดเงิน", "บาท"])
+    for r in actors.report(month):
+        for u in actors.usage_rows(r["actor_id"], month):
+            w.writerow([month, r["stage_name"], r["email"], u["job_id"], u["job_name"], u["user_id"], u["voice_id"],
+                        u["lines"], u["seconds"], "ใช่" if u["payable"] else "ใช้เอง", f"{u['amount'] / 100:.2f}"])
+    name = f"actor-usage-{month}.csv"
+    return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv",
+                    headers={"content-disposition": f"attachment; filename={name}"})
+
+
+@app.post("/admin/actor-payouts/{user_id}", dependencies=[Depends(require_key)])
+def admin_payout(user_id: str, body: Payout, admin=Depends(require_admin)):
+    """บันทึกว่าจ่ายค่าตอบแทนยอดค้างของเดือนนั้นแล้ว"""
+    try:
+        return {"amount": actors.add_payout(user_id, body.month, body.note.strip(), admin["email"])}
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
 
 
 # ---------------------------------------------------------------- ไฟล์

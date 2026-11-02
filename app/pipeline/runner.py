@@ -530,6 +530,23 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if job.burn_subs:
         stage("burn_subs", 0.97)
         subs.burn(d / "output.mp4", utterances, effective_style(job), d / "output_subs.mp4")
+    _record_voice_usage(job, groups, done, sr, library_refs)
+
+
+def _record_voice_usage(job, groups: list, done: dict, sr: int, library_refs: dict) -> None:
+    """บันทึกว่าเสียงในคลังแต่ละเสียงถูกใช้พากย์กี่วินาทีในผลงานรอบนี้ (ใช้คิดค่าตอบแทนนักพากย์ actors.py)"""
+    usage: dict[str, list] = {}
+    for i, g in enumerate(groups):
+        speaker = _group_speaker(g)
+        if speaker in library_refs and i in done:
+            u = usage.setdefault(job.voice_map[speaker], [0.0, 0])
+            u[0] += len(done[i]) / sr
+            u[1] += len(g)
+    try:
+        from .. import actors
+        actors.record_usage(job.id, job.owner, job.filename, {v: (s, n) for v, (s, n) in usage.items()})
+    except Exception:  # บันทึกไม่ได้ไม่ควรทำให้งานพากย์ล้ม
+        log.exception("record voice usage failed for job %s", job.id)
 
 
 # ---------------------------------------------------------------- render

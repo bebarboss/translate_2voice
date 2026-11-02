@@ -421,3 +421,15 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 }
 .admin-users td { vertical-align: middle; }
 @media (max-width: 640px) { .admin-users { display: block; overflow-x: auto; } .admin-users th:nth-child(3), .admin-users td:nth-child(3) { display: table-cell; } }
+
+/* นักพากย์ (/actor, /actors) */
+.agree { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; line-height: 1.6; }
+.agree input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+.consent-box { max-height: 300px; overflow-y: auto; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); white-space: pre-wrap; font-size: 14px; line-height: 1.7; }
+.script { margin: 0; padding: 14px 16px 14px 36px; border-radius: 10px; background: var(--surface-2); font-size: 18px; line-height: 1.9; }
+.recorder { display: flex; flex-direction: column; gap: 10px; }
+.level { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.level-bar { height: 100%; background: var(--accent); transition: width .06s linear; }
+.level-bar.clip { background: var(--danger); }
+.actor-voice { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
+.actor-voice:first-of-type { border-top: none; }

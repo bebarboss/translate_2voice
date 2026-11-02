@@ -104,8 +104,42 @@ export interface LibraryVoice {
   quality: number | null;
   analysis?: VoiceAnalysis | null;
   moods: VoiceMood[];
+  actor?: string | null; // ชื่อนักพากย์ (เสียงที่นักพากย์อัดเอง)
+  review?: "pending" | "approved" | "rejected" | null; // ผู้ดูแลตรวจฟังแล้วหรือยัง ผู้ใช้ทั่วไปเห็นเฉพาะ approved
+  review_note?: string;
   created_at: string;
   updated_at: string;
+}
+
+// ---- นักพากย์ (เงินเป็นสตางค์ เวลาเป็น unix วินาที)
+export type ActorStatus = "pending" | "approved" | "rejected" | "withdrawn";
+export interface Actor {
+  user_id: string; stage_name: string; gender: Gender; bio: string; contact: string; status: ActorStatus;
+  note: string; created_at: number; reviewed_at: number | null;
+}
+/** ยอดของนักพากย์หนึ่งคนในเดือนหนึ่ง seconds = เวลาที่คิดเงิน, self_seconds = ใช้พากย์งานของตัวเอง (ไม่คิดเงิน) */
+export interface UsageSummary {
+  actor_id: string; month: string; stage_name: string; email: string | null; seconds: number; self_seconds: number;
+  jobs: number; users: number; amount: number; paid: number; due: number;
+}
+export interface UsageRow {
+  job_id: string; voice_id: string; user_id: string; job_name: string; seconds: number; lines: number;
+  month: string; created_at: number; updated_at: number; payable: boolean; amount: number;
+}
+export interface ActorPayout { id: number; actor_id: string; month: string; amount: number; note: string; paid_by: string; paid_at: number }
+export interface ActorMe {
+  actor: Actor | null;
+  consent: { version: string; accepted_at: number } | null;
+  consent_current: boolean;
+  consent_version: string;
+  rate: number; // สตางค์ต่อนาที
+  voices: LibraryVoice[];
+  usage: UsageSummary[];
+  payouts: ActorPayout[];
+}
+export interface AdminActor extends Actor {
+  email: string | null; account_name: string | null; voices: number; pending: number;
+  consent_version: string | null; consent_at: number | null;
 }
 
 export interface SpeakerVoice {
@@ -263,6 +297,34 @@ export const api = {
     request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
   adminSetAdmin: (userId: string, admin: boolean) => request<void>(`/admin/users/${userId}/admin`, json("POST", { admin })),
   adminPlan: (userId: string, planId: string) => request<void>(`/admin/users/${userId}/plan`, json("POST", { plan_id: planId })),
+  actorConsent: () => request<{ version: string; text: string; rate: number }>("/actor/consent"),
+  actorMe: () => request<ActorMe>("/actor/me"),
+  actorApply: (body: { stage_name: string; gender: Gender; bio: string; contact: string; consent_version: string }) =>
+    request<Actor>("/actor/apply", json("POST", body)),
+  actorAccept: (version: string) => request<void>("/actor/consent", json("POST", { version })),
+  actorUsage: (month: string) => request<UsageRow[]>(`/actor/usage?month=${month}`),
+  /** voiceId ว่าง = เสียงใหม่, มี voiceId = อัดแทนเสียงหลัก หรือเพิ่มเสียงอารมณ์ (mood) */
+  actorRecord: (file: Blob, filename: string, opts: { voiceId?: string; mood?: Mood; denoise: boolean }) => {
+    const form = new FormData();
+    form.append("file", file, filename);
+    if (opts.voiceId) form.append("voice_id", opts.voiceId);
+    if (opts.mood) form.append("mood", opts.mood);
+    form.append("denoise", String(opts.denoise));
+    return request<LibraryVoice>("/actor/voices", { method: "POST", body: form });
+  },
+  actorDeleteVoice: (id: string) => request<void>(`/actor/voices/${id}`, { method: "DELETE" }),
+  actorWithdraw: () => request<void>("/actor/withdraw", { method: "POST" }),
+  adminActors: () => request<AdminActor[]>("/admin/actors"),
+  adminReviewActor: (userId: string, approve: boolean, note = "") =>
+    request<void>(`/admin/actors/${userId}/review`, json("POST", { approve, note })),
+  adminActorVoices: () => request<LibraryVoice[]>("/admin/actor-voices"),
+  adminReviewVoice: (voiceId: string, approve: boolean, note = "") =>
+    request<void>(`/admin/actor-voices/${voiceId}/review`, json("POST", { approve, note })),
+  adminActorUsage: (month = "") =>
+    request<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[] }>(`/admin/actor-usage${month ? `?month=${month}` : ""}`),
+  adminActorUsageRows: (userId: string, month: string) => request<UsageRow[]>(`/admin/actor-usage/${userId}?month=${month}`),
+  adminPayout: (userId: string, month: string, note = "") =>
+    request<{ amount: number }>(`/admin/actor-payouts/${userId}`, json("POST", { month, note })),
   health: () => request<{ status: string; mock: boolean; queued: number }>("/health"),
   system: () => request<SystemInfo>("/system"),
   fonts: () => request<Fonts>("/fonts"),
@@ -343,6 +405,7 @@ export const fileUrl = {
   result: (id: string, subs = false) => `${BASE}/jobs/${id}/result${subs ? "?subs=true" : ""}`,
   export: (id: string, subs = false) => `${BASE}/jobs/${id}/export${subs ? "?subs=true" : ""}`,
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
+  actorUsageCsv: (month: string) => `${BASE}/admin/actor-usage-csv?month=${month}`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceImage: (id: string, version = "") => `${BASE}/voices/${id}/image${version ? `?v=${encodeURIComponent(version)}` : ""}`,
