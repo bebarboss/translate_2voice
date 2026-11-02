@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Job } from "@/lib/api";
 import { isActive } from "@/lib/format";
+import LibraryJobView from "@/components/LibraryJobView";
 import ProcessingView from "@/components/ProcessingView";
 import ReviewView from "@/components/ReviewView";
 import ResultView from "@/components/ResultView";
@@ -53,6 +54,9 @@ export default function JobPage() {
     );
   }
 
+  if (job.library && (job.status === "awaiting_review" || job.status === "done")) {
+    return <LibraryJobView job={job} onChanged={refresh} />;
+  }
   if (job.status === "awaiting_review" || (editing && job.status === "done")) {
     return <ReviewView job={job} onChanged={refresh} onCancelEdit={editing ? () => setEditing(false) : undefined} />;
   }

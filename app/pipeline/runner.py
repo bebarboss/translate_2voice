@@ -86,6 +86,9 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     utterances = hallucination.clean(utterances)
     store.save_transcript(job_id, utterances)
 
+    if job.library:  # งานเก็บเสียงเข้าคลัง ใช้แค่ผลแยกผู้พูด ไม่ต้องแปล
+        stage("analyzed", 0.72)
+        return
     _translate_and_fit(store, job_id, utterances, lang, 0.55, 0.72)
 
 

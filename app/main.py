@@ -24,7 +24,7 @@ from .account_api import router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood,
-                      Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerVoice, Utterance, UtteranceEdit,
+                      Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
 
@@ -268,6 +268,7 @@ async def create_job(
     burn_subs: Optional[bool] = Form(None, description="true = ฝังซับลงวิดีโอด้วย"),
     genre: str = Form("", max_length=80, description="แนวเรื่อง เช่น การ์ตูนเด็ก ละครจีนโบราณ ช่วยเลือกสรรพนามตอนแปล"),
     glossary: str = Form("", max_length=2000, description="ชื่อเฉพาะและคำแปล บรรทัดละคำ เช่น ドラえもん = โดราเอมอน"),
+    library: bool = Form(False, description="true = คลิปสำหรับเก็บเสียงเข้าคลัง (รับไฟล์เสียงได้) แยกผู้พูดและถอดเสียงแล้วหยุดรอ ไม่แปลไม่พากย์"),
 ):
     owner = current_user_id(request)
     _check_quota(owner)
@@ -292,9 +293,10 @@ async def create_job(
 
     if has_file:
         ext = Path(file.filename).suffix.lower()
-        if ext not in ALLOWED_EXT:
+        allowed = AUDIO_EXT if library else ALLOWED_EXT
+        if ext not in allowed:
             shutil.rmtree(job_dir, ignore_errors=True)
-            raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(ALLOWED_EXT))}")
+            raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(allowed))}")
         dest = job_dir / f"input{ext}"
         await save_upload(file, dest, job_dir)
         input_path, filename = str(dest), file.filename
@@ -313,8 +315,9 @@ async def create_job(
         source_lang=(source_lang or "").strip().lower() or None,
         target_lang=target,
         num_speakers=num_speakers,
-        review=rs.default_review if review is None else review,
-        burn_subs=rs.default_burn_subs if burn_subs is None else burn_subs,
+        review=True if library else rs.default_review if review is None else review,
+        burn_subs=False if library else rs.default_burn_subs if burn_subs is None else burn_subs,
+        library=library,
         genre=genre.strip(),
         glossary=glossary.strip(),
         owner=owner,
@@ -576,6 +579,51 @@ def rename_speaker(job_id: str, speaker: str, body: SpeakerRename):
     if name:
         names[speaker] = name
     return store.update(job_id, speaker_names=names)
+
+
+LIBRARY_GAP = 0.4  # เว้นเงียบระหว่างประโยคที่ต่อกัน ให้ขั้นเตรียมเสียงแบ่งท่อนตรงช่วงหยุดได้
+
+
+@app.post("/jobs/{job_id}/speakers/{speaker}/library", response_model=LibraryVoice, status_code=202,
+          dependencies=[Depends(require_key)])
+def speaker_to_library(job_id: str, speaker: str, body: SpeakerToLibrary):
+    """บันทึกเสียงของตัวละครนี้ลงคลัง: ต่อเสียงพูด (แยกเพลงออกแล้ว) ทุกประโยคของตัวละครตามบทปัจจุบัน
+    ข้ามประโยคที่คนอื่นพูดทับ แล้วเตรียมเสียงเหมือนอัปโหลดเอง (เลือกท่อนที่ชัดที่สุด ถอดข้อความ วัดเสียง)"""
+    import numpy as np
+    import soundfile as sf
+
+    job, utterances = _editable_lines(job_id)
+    if speaker not in job.speakers:
+        raise HTTPException(404, f"ไม่รู้จักผู้พูด {speaker}")
+    lang = job.detected_lang or job.source_lang
+    if lang and lang != "th":
+        raise HTTPException(400, "เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ใช้ข้อความที่พูดในเสียงตัวอย่างกำกับ) คลิปนี้เป็นภาษาอื่น")
+    vocals = store.dir(job_id) / "vocals.wav"
+    if not vocals.exists():
+        raise HTTPException(409, "ไม่พบเสียงพูดที่แยกไว้ของงานนี้")
+    others = [u for u in utterances if u.speaker != speaker]
+    own = [u for u in utterances if u.speaker == speaker
+           and not any(min(u.end, o.end) - max(u.start, o.start) > 0.2 for o in others)]
+    sr = sf.info(vocals).samplerate
+    parts = []
+    for u in own:
+        seg, _ = sf.read(vocals, start=int(u.start * sr), stop=int(u.end * sr), dtype="float32")
+        parts += [seg.mean(axis=1) if seg.ndim > 1 else seg, np.zeros(int(LIBRARY_GAP * sr), dtype=np.float32)]
+    speech = sum(u.duration for u in own)
+    if speech < 3:
+        raise HTTPException(400, f"ตัวละครนี้พูดคนเดียว (ไม่ทับคนอื่น) แค่ {speech:.1f} วินาที ต้องมีอย่างน้อย 3 วินาที")
+
+    voice_id = voice_store.new_id()
+    d = voice_store.dir(voice_id)
+    d.mkdir(parents=True, exist_ok=True)
+    sf.write(d / "original.wav", np.concatenate(parts), sr)
+    label = job.speaker_names.get(speaker) or speaker
+    v = voice_store.add(LibraryVoice(id=voice_id, name=body.name.strip(), gender=body.gender, tone=body.tone.strip(),
+                                     description=body.description.strip(), categories=_clean_categories(body.categories),
+                                     filename=f"{job.filename} · {label}"))
+    worker.submit_voice(voice_id)
+    store.update(job_id, saved_voices={**job.saved_voices, speaker: voice_id})
+    return v
 
 
 @app.delete("/jobs/{job_id}/speakers/{speaker}", response_model=Job, dependencies=[Depends(require_key)])

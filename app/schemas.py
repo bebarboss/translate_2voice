@@ -98,6 +98,9 @@ class Job(BaseModel):
     voice_map: dict[str, str] = Field(default_factory=dict)
     # ผู้พูด → ชื่อที่ผู้ใช้ตั้ง (เช่น "โคนัน") ผู้พูดที่ไม่มีในนี้แสดงเป็น "ตัวละคร N"
     speaker_names: dict[str, str] = Field(default_factory=dict)
+    # งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว ไม่แปลไม่พากย์ ผู้ใช้เลือกบันทึกเสียงของแต่ละคนลงคลัง
+    library: bool = False
+    saved_voices: dict[str, str] = Field(default_factory=dict)  # ผู้พูด → id เสียงในคลังที่บันทึกจากงานนี้
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
@@ -161,6 +164,14 @@ class VoiceMood(BaseModel):
     duration: Optional[float] = None
     quality: Optional[float] = None
     analysis: Optional[VoiceAnalysis] = None
+
+
+class SpeakerToLibrary(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    gender: Gender = ""
+    tone: str = Field("", max_length=80)
+    description: str = Field("", max_length=1000)
+    categories: list[str] = Field(default_factory=list)
 
 
 class LibraryVoice(BaseModel):

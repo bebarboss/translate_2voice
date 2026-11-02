@@ -36,6 +36,8 @@ export interface Job {
   voice_map: Record<string, string>;
   queue_position?: number | null; // ลำดับคิว (เฉพาะตอนรอคิว)
   speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
+  library?: boolean; // งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว
+  saved_voices?: Record<string, string>; // ตัวละคร → id เสียงในคลังที่บันทึกจากงานนี้
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -188,6 +190,7 @@ export interface CreateOptions {
   burnSubs: boolean;
   genre: string;
   glossary: string;
+  library?: boolean;
 }
 
 const BASE = "/api";
@@ -283,6 +286,9 @@ export const api = {
   removeSpeaker: (id: string, speaker: string, into?: string) =>
     request<Job>(`/jobs/${id}/speakers/${speaker}${into ? `?into=${encodeURIComponent(into)}` : ""}`,
       { method: "DELETE" }),
+  /** บันทึกเสียงของตัวละครนี้ลงคลัง (ต่อทุกประโยคที่ไม่มีคนอื่นพูดทับ แล้วเตรียมเสียงเหมือนอัปโหลดเอง) */
+  speakerToLibrary: (id: string, speaker: string, meta: VoiceMeta) =>
+    request<LibraryVoice>(`/jobs/${id}/speakers/${speaker}/library`, json("POST", meta)),
   retranslate: (id: string, body: { genre?: string; glossary?: string }) =>
     request<{ id: string }>(`/jobs/${id}/retranslate`, json("POST", body)),
   synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
@@ -346,6 +352,7 @@ function buildForm(opts: CreateOptions): FormData {
   form.append("burn_subs", String(opts.burnSubs));
   if (opts.genre) form.append("genre", opts.genre);
   if (opts.glossary) form.append("glossary", opts.glossary);
+  if (opts.library) form.append("library", "true");
   return form;
 }
 

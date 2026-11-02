@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceAnalysis, type VoiceMood } from "@/lib/api";
+import { api, fileUrl, uploadJob, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceAnalysis, type VoiceMood } from "@/lib/api";
 import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_CATEGORIES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
 import { UploadIcon } from "@/components/Icons";
@@ -234,6 +235,82 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
         )}
         <button type="button" className="btn primary" onClick={submit} disabled={!ready}>
           {progress !== null ? "กำลังอัปโหลด..." : "เพิ่มเสียง"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** คลิปที่มีหลายคนพูด: ส่งเป็นงานแยกผู้พูด (ไม่แปลไม่พากย์) แล้วไปหน้าเลือกบันทึกเสียงของแต่ละคน */
+function MultiUploadCard() {
+  const router = useRouter();
+  const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
+  const [count, setCount] = useState("");
+  const [rights, setRights] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [error, setError] = useState("");
+
+  const pickFile = (f: File | undefined | null) => {
+    setError("");
+    if (!f) return;
+    const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
+    if (!ACCEPT.split(",").includes(ext)) return setError("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG, OGA หรือวิดีโอ MP4, MOV, MKV, WEBM");
+    setFile(f);
+    setUrl("");
+  };
+
+  const ready = (!!file || !!url.trim()) && rights && progress === null;
+  const submit = async () => {
+    if (!ready) return;
+    setError("");
+    setProgress(0);
+    const n = parseInt(count, 10);
+    const opts = { sourceLang: "", targetLang: "th" as const, numSpeakers: n >= 2 && n <= 20 ? n : null,
+      review: true, burnSubs: false, genre: "", glossary: "", library: true };
+    try {
+      const { id } = file ? await uploadJob(file, opts, setProgress).promise : await api.createFromUrl(url.trim(), opts);
+      router.push(`/jobs/${id}`);
+    } catch (e) {
+      setError((e as Error).message);
+      setProgress(null);
+    }
+  };
+
+  return (
+    <section className="card" aria-labelledby="add-multi">
+      <h2 id="add-multi">เพิ่มจากคลิปที่มีหลายคนพูด</h2>
+      <p className="muted" style={{ margin: 0 }}>
+        ระบบแยกเสียงของแต่ละคนให้ แล้วให้ฟังและตั้งชื่อว่าเสียงไหนเป็นของใคร เลือกบันทึกลงคลังได้ทีละคน
+        (คลิปภาษาไทย ใช้เครดิตตามความยาวคลิปเหมือนงานพากย์)
+      </p>
+      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
+        <label className="btn" style={{ cursor: progress === null ? "pointer" : "default" }}>
+          {file ? `ไฟล์: ${file.name}` : "เลือกไฟล์"}
+          <input type="file" accept={ACCEPT} className="sr-only" disabled={progress !== null}
+            onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }} />
+        </label>
+        <span className="dim">หรือ</span>
+        <input className="input" style={{ flex: "1 1 240px", minWidth: 0 }} type="url" placeholder="ลิงก์ YouTube, TikTok, Facebook ฯลฯ"
+          aria-label="ลิงก์คลิป" value={url} disabled={progress !== null}
+          onChange={(e) => { setUrl(e.target.value); if (e.target.value) setFile(null); }} />
+        <input className="input" style={{ width: 130 }} type="number" min={2} max={20} placeholder="จำนวนคน (ถ้ารู้)"
+          aria-label="จำนวนคนที่พูดในคลิป" value={count} onChange={(e) => setCount(e.target.value)} disabled={progress !== null} />
+      </div>
+      <label className="check" style={{ justifyContent: "flex-start" }}>
+        <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
+        <span>ฉันเป็นเจ้าของเสียงในคลิปนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว</span>
+      </label>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        {progress !== null && file ? (
+          <div style={{ flex: "1 1 260px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="progress" style={{ flex: 1 }}><div style={{ width: `${progress * 100}%` }} /></div>
+            <span className="mono">{Math.round(progress * 100)}%</span>
+          </div>
+        ) : <span />}
+        <button type="button" className="btn primary" onClick={submit} disabled={!ready}>
+          {progress !== null ? "กำลังส่ง..." : "แยกเสียง"}
         </button>
       </div>
     </section>
@@ -532,6 +609,7 @@ export default function VoicesPage() {
       </div>
 
       {canEdit && <UploadCard onUploaded={refresh} known={known} />}
+      {canEdit && <MultiUploadCard />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
       <section aria-label="เสียงในคลัง" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
