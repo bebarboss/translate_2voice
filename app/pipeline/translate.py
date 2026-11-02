@@ -43,8 +43,10 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    เช่น ละครจีนโบราณ/กำลังภายใน ใช้ ข้า/เจ้า, ละครหรือหนังสมัยใหม่ ใช้ ฉัน/ผม/นาย/เธอ, การ์ตูนเด็ก ใช้ ฉัน/ผม/นาย/เธอ แบบเด็กพูดกัน ห้ามใช้ ข้า/เจ้า
    speaker คือชื่อตัวละครที่พูด (ถ้ารู้) ใช้เลือกสรรพนามให้เข้ากับคนพูด
 4. คงอารมณ์ของต้นฉบับ (โกรธ เยาะเย้ย อ้อนวอน เศร้า ตกใจ) ด้วยคำลงท้ายและคำอุทานที่คนไทยใช้จริง และใส่เครื่องหมาย ! ? … ตามน้ำเสียง เพราะนักพากย์ใช้เครื่องหมายเหล่านี้กำหนดน้ำเสียง
-5. แต่ละท่อนมี max_chars คือจำนวนตัวอักษรไทยมากสุดที่พูดทันในเวลานั้นด้วยความเร็วปกติ (ไม่นับสระบน สระล่าง และวรรณยุกต์) ห้ามเกิน
-   ถ้าต้นฉบับพูดเร็วหรือยาว ให้พูดให้กระชับขึ้นโดยตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใจความสำคัญต้องครบ บทสั้นที่พูดสบายดีกว่าบทยาวที่ต้องรีบพูด
+5. แต่ละท่อนมี min_chars ถึง max_chars คือจำนวนตัวอักษรไทย (ไม่นับสระบน สระล่าง และวรรณยุกต์) ที่พูดได้เต็มเวลาที่ตัวละครพูดท่อนนั้นด้วยความเร็วปกติ
+   ให้แปลยาวอยู่ในช่วงนี้ เสียงพากย์จะได้จบพร้อมกับที่ตัวละครหยุดขยับปาก ห้ามเกิน max_chars
+   ถ้าแปลแล้วสั้นกว่า min_chars ให้แปลส่วนที่ต้นฉบับพูดให้ครบก่อน แล้วจึงเติมคำลงท้าย คำอุทาน หรือคำซ้ำแบบภาษาพูดที่เข้ากับอารมณ์ ห้ามแต่งเนื้อหาใหม่
+   ถ้ายาวเกิน max_chars ให้ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ห้ามตัดชื่อเฉพาะ ตัวเลข คำปฏิเสธ หรือคำถาม
 6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
 7. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
 8. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
@@ -56,17 +58,19 @@ Rules:
 2. Write speech, not prose: use the conversational English people actually say in that situation, fitting the character and the genre (infer the genre from "title"), so it flows when read aloud.
    Do not translate word for word; use contractions and natural interjections, and avoid stiff or written phrasing unless the character really talks that way.
 3. Keep the emotion of the original (anger, mockery, pleading, grief, shock) and mark it with ! ? … where the tone calls for it, because the voice actor reads the tone from punctuation.
-4. Each part has "max_words", the most words that can be spoken in its time at a natural pace. Never exceed it: tighten the wording and drop filler first; the key meaning must stay. A short line spoken comfortably beats a long line that has to be rushed.
+4. Each part has "min_words" to "max_words": the length that fills the time the character speaks that part at a natural pace. Aim inside this range so the dub ends when the mouth stops moving, and never exceed "max_words".
+   If shorter than "min_words", first translate everything the source says, then add natural fillers, repetition or interjections that fit the emotion; never invent new content.
+   If longer than "max_words", tighten the wording and drop filler first; never drop names, numbers, negations or questions.
 5. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
 6. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
 7. Reply with JSON only, no explanations."""
 
 SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
-ใจความสำคัญต้องครบและตรงเดิม (ชื่อ ตัวเลข คำปฏิเสธ คำถาม) คงอารมณ์ของตัวละคร ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใช้ภาษาพูดแบบที่คนไทยพูดจริง ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
+ใจความสำคัญต้องครบและตรงเดิม ห้ามตัดชื่อคน ชื่อสถานที่ ชื่องานหรือองค์กร ตัวเลข คำปฏิเสธ และคำถาม คงอารมณ์ของตัวละคร ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใช้ภาษาพูดแบบที่คนไทยพูดจริง ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
-Keep the meaning and the character's emotion, and keep it natural spoken English.
+Keep the meaning and the character's emotion, and keep it natural spoken English. Never drop names (people, places, events, organizations), numbers, negations or questions.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
 EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบรรทัดสั้นกว่าเวลาที่ตัวละครพูดจริงมาก เสียงพากย์จบก่อนตัวละครหยุดขยับปาก
@@ -265,7 +269,7 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     names = LANG_NAMES_EN if target == "en" else LANG_NAMES
     hints = hints or {}
     budget = hints.get("budgets") or {}
-    limit_key = "max_words" if target == "en" else "max_chars"
+    lo_key, limit_key = ("min_words", "max_words") if target == "en" else ("min_chars", "max_chars")
     glossary = _glossary(hints)
     payload = {
         "title": title,
@@ -275,6 +279,8 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
         "previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context],
         "sentences": [{"id": g[0].id, "speaker": _speaker_label(g[0].speaker, hints),
                        "parts": [{"seconds": round(budget.get(u.id, u.duration), 1),
+                                  # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
+                                  lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
                                   "text": u.source} for u in g]}
                       for g in groups],
