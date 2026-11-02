@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && if [ "$ML" = "1" ]; then apt-get install -y --no-install-recommends git build-essential; fi \
     && rm -rf /var/lib/apt/lists/*
 
+# deno: yt-dlp ใช้รัน JavaScript ของ YouTube (ไม่มี = คลิปบางคลิปขึ้น "This video is not available")
+COPY --from=denoland/deno:bin-2.4.5 /deno /usr/local/bin/deno
+
 WORKDIR /app
 
 COPY requirements.txt constraints-docker.txt ./

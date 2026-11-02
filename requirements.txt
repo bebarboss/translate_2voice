@@ -9,7 +9,8 @@ soundfile>=0.12
 openai>=1.30
 requests>=2.31
 # รับลิงก์คลิป (อัปเดตบ่อย: pip install -U yt-dlp)
-yt-dlp>=2025.1.1
+# [default] มี yt-dlp-ejs ที่ใช้แก้โจทย์ JavaScript ของ YouTube (คู่กับ deno ใน Dockerfile) ไม่งั้นบางคลิปได้แค่ภาพปก
+yt-dlp[default]>=2025.1.1
 # อ่านรายชื่อฟอนต์บน Windows สำหรับฝังซับ
 fonttools>=4.50
 # งานเสียงบน CPU: วัดอารมณ์/ระดับเสียง ผสมเสียง เสียงก้อง (ไม่ต้องใช้ PyTorch)
