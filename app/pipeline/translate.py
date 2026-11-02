@@ -84,6 +84,12 @@ Keep the meaning of the original ("source"); never add content it does not have.
 then use natural fillers, repetition or interjections that fit the character's emotion. If expanding would sound unnatural, return the line unchanged.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
+TURN_PROMPT = """You segment transcribed dialogue. Speaker diarization often merges two characters with similar voices into one line.
+For each line, split the text at every point where a DIFFERENT character starts speaking (question and answer, a reply like "えっ?", "うん", "yeah", a change of who is addressed).
+Do not split one character's continuous speech, repetitions, or self-talk. Use the neighbouring lines as context.
+The pieces of a line, concatenated in order, must equal the original text exactly (same characters, no edits). One piece = no speaker change.
+Reply with JSON only: {"lines":[{"id":1,"pieces":["...","..."]}]}"""
+
 PROOFREAD_PROMPT_TH = """คุณคือผู้ตรวจบทถอดเสียงภาษาไทย บทนี้ได้จากระบบถอดเสียงอัตโนมัติ (Whisper) ซึ่งมักสะกดผิดตามเสียงที่ได้ยิน
 เช่น พยัญชนะหรือสระเพี้ยน (หิบะทะลม → หิมะถล่ม, ปืนคลั้ง → ปืนครั้ง) คำติดกัน หรือมีตัวอักษรอังกฤษหลุดกลางคำ
 กฎ:
@@ -584,3 +590,29 @@ def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.
                 u.target = text
     except Exception as exc:  # noqa: BLE001  ย่อไม่ได้ก็ใช้บทเดิม แล้วไปเร่งความเร็วแทน
         log.warning("shorten failed: %s", exc)
+
+
+def propose_turns(utts: list[Utterance], batch_size: int = 25) -> dict[int, list[str]]:
+    """id ประโยค → ข้อความที่ตัดตามคนพูด (เฉพาะประโยคที่ควรตัด) จากความหมายของบท
+    ระบบแยกผู้พูดฟังแค่เสียง สองคนเสียงคล้ายกันพูดโต้ตอบเร็ว ๆ จะได้ท่อนเดียว แต่บทบอกได้ชัด (ถาม/ตอบ คำรับ)
+    ใช้เฉพาะคำตอบที่ต่อกันแล้วตรงกับบทเดิมทุกตัวอักษร (ไม่นับช่องว่าง) เวลาของแต่ละชิ้นหาจากเวลาของคำ"""
+    order = sorted(utts, key=lambda u: u.start)
+    src = {u.id: u.source for u in order}
+    out: dict[int, list[str]] = {}
+    for i in range(0, len(order), batch_size):
+        batch = [{"id": u.id, "text": u.source} for u in order[i:i + batch_size]]
+        try:
+            result = _parse_json(_chat(TURN_PROMPT, json.dumps({"lines": batch}, ensure_ascii=False),
+                                       temperature=0.1, max_tokens=8192))
+        except Exception as exc:  # noqa: BLE001  เสนอไม่ได้ก็ใช้การแยกผู้พูดเดิม
+            log.warning("propose turns failed: %s", exc)
+            continue
+        for x in result.get("lines", []):
+            try:
+                uid, pieces = int(x["id"]), [str(p) for p in x.get("pieces") or []]
+            except (KeyError, TypeError, ValueError):
+                continue
+            plain = lambda t: t.replace(" ", "")  # noqa: E731
+            if uid in src and len(pieces) > 1 and plain("".join(pieces)) == plain(src[uid]) and all(plain(p) for p in pieces):
+                out[uid] = pieces
+    return out

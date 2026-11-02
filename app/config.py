@@ -140,6 +140,10 @@ class Settings:
     diar_refine: bool = _bool("DIAR_REFINE", True)
     # ช่วงที่สองคนพูดพร้อมกัน แยกเสียงแล้วถอดคำพูดของคนที่ถูกกลบเป็นประโยคแยก (overlap.py)
     overlap_recover: bool = _bool("OVERLAP_RECOVER", True)
+    # สองคนพูดต่อกันแต่ระบบแยกผู้พูดรวมเป็นท่อนเดียว (เสียงคล้ายกัน เช่น การ์ตูน): ให้ Typhoon/Gemini อ่านบทแล้วเสนอจุดเปลี่ยนคน
+    # ตัดจริงเฉพาะจุดที่ลายเสียงสองฝั่งคล้ายกันต่ำกว่า TURN_SPLIT_SIM แล้วจัดกลุ่มผู้พูดใหม่ (turns.py)
+    turn_split: bool = _bool("TURN_SPLIT", True)
+    turn_split_sim: float = _float("TURN_SPLIT_SIM", 0.4)
     # เพิ่มเสียงเข้าคลัง: ประเมินไฟล์ที่อัปโหลดได้ยาวสุดกี่นาที (0 = ทั้งไฟล์ไม่จำกัด)
     voice_max_input_min: int = _int("VOICE_MAX_INPUT_MIN", 60)
     # ผู้พูดสองคนที่ลายเสียงคล้ายกันเกินนี้ (และระดับเสียงใกล้กัน) ถือเป็นคนเดียว คนต่างกันมักได้ไม่เกิน 0.5

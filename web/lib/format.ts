@@ -37,6 +37,7 @@ export const STAGE_LABEL: Record<string, string> = {
   separate_vocals: "แยกเสียงพูดกับเพลง",
   diarize: "แยกว่าใครพูดตอนไหน",
   transcribe: "ถอดเสียงและตรวจภาษา",
+  split_turns: "แยกช่วงที่หลายคนพูดต่อกัน",
   translate: "แปลบทพากย์",
   fit_lengths: "ปรับบทให้พอดีเวลา",
   analyzed: "เตรียมบทเสร็จ",

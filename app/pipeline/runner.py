@@ -19,10 +19,10 @@ import soundfile as sf
 
 from .. import runtime_settings
 from ..config import settings
-from ..jobs import JobStore
+from ..jobs import Cancelled, JobStore
 from ..schemas import SynthStats, Utterance
 from . import audio, gpu, hallucination, mix, pauses, subs, tts
-from .diarize import export_speaker_stems, load_turns, overlap_ratio, save_turns
+from .diarize import export_speaker_stems, load_turns, overlap_ratio, relabel_turns, save_turns
 
 log = logging.getLogger("dubbing.runner")
 
@@ -77,6 +77,23 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     # แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง (บนเครื่องนี้หรือ Modal ตาม WORKER)
     res = gpu.analyze(mixed, d, job.source_lang, job.num_speakers, stage, cancel)
     turns, words, lang, utterances = res["turns"], res["words"], res["lang"], res["utterances"]
+    if settings.turn_split and settings.typhoon_api_key and not settings.mock_pipeline:
+        # สองคนพูดต่อกันแต่ได้ท่อนเดียว → ให้ตัวแปลอ่านบทเสนอจุดเปลี่ยนคน แล้วตรวจด้วยลายเสียงบนการ์ดจอ
+        try:
+            from .translate import propose_turns
+            stage("split_turns", 0.52)
+            proposals = propose_turns(utterances)
+            if proposals:
+                split, cuts = gpu.resplit_turns(res["vocals"], d, utterances, words, proposals, lang,
+                                                job.num_speakers, stage, cancel)
+                log.info("split turns: %d proposed lines, %d cuts", len(proposals), cuts)
+                if cuts:
+                    utterances, turns = split, relabel_turns(turns, split)
+                    res["speakers"] = sorted({u.speaker for u in split})
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001  ขั้นเสริม ล้มก็ใช้การแยกผู้พูดเดิม
+            log.warning("split turns failed, keeping diarization as is: %s", exc)
     export_speaker_stems(res["vocals"], turns, d / "stems")
     save_turns(turns, d / "turns.json")
     store.update(job_id, speakers=res["speakers"])

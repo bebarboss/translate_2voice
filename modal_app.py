@@ -94,6 +94,21 @@ def analyze_audio(audio_flac: bytes, source_lang: Optional[str], num_speakers: O
 
 
 @app.function(cpu=2.0, memory=8192, **GPU)
+def resplit_turns(audio_flac: bytes, utterances: list[dict], words: list[dict], proposals: dict,
+                  lang: str, num_speakers: Optional[int], config: Optional[dict] = None,
+                  progress_key: Optional[str] = None) -> dict:
+    """ตัดท่อนตามจุดเปลี่ยนคนที่เสนอจากบท (ตรวจด้วยลายเสียง) จัดกลุ่มผู้พูดใหม่ และวัดค่าต่อท่อนใหม่ (turns.py)
+    → {utterances, cuts, features}"""
+    from app.pipeline import gpu
+
+    gpu.apply_config(config)
+    try:
+        return gpu.serve_resplit(audio_flac, utterances, words, proposals, lang, num_speakers, _reporter(progress_key))
+    finally:
+        models.commit()
+
+
+@app.function(cpu=2.0, memory=8192, **GPU)
 def synthesize_lines(vocals_flac: bytes, lines: list[dict], steps: int, speed: float,
                      refs: Optional[dict] = None, config: Optional[dict] = None,
                      progress_key: Optional[str] = None) -> dict:

@@ -40,7 +40,7 @@ REMOTE_FIELDS = (
     "separator", "separator_model", "separator_overlap", "denoise_model", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
-    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover",
+    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
 )
 
 
@@ -408,6 +408,42 @@ def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: O
     return {**out, "turns": [Turn(**t) for t in res["turns"]], "words": [Word(**w) for w in res["words"]],
             "lang": res["detected_lang"], "utterances": [Utterance.model_validate(u) for u in res["utterances"]],
             "speakers": res["speakers"]}
+
+
+def resplit_turns(vocals: Path, work: Path, utterances: list[Utterance], words: list[Word],
+                  proposals: dict[int, list[str]], lang: str, num_speakers: Optional[int], stage: Stage,
+                  check_cancel: Optional[Callable[[], None]] = None) -> tuple[list[Utterance], int]:
+    """ตัดท่อนตามจุดเปลี่ยนคนที่เสนอจากบท (ตรวจด้วยลายเสียง) แล้วจัดกลุ่มผู้พูดใหม่ (turns.py)
+    วัดค่าต่อท่อนใหม่ทั้งชุด (คะแนนความสะอาด ลายเสียง) ทับ ANALYSIS_FILE ให้ตรงกับท่อนที่ตัดแล้ว
+    คืน (ท่อนใหม่, จำนวนจุดที่ตัด)"""
+    if not remote():
+        from .turns import resplit_core
+        wav, sr = _mono(vocals)
+        out, cuts = resplit_core(utterances, words, proposals, wav, sr, num_speakers)
+        release("voices")
+        return out, cuts
+    data = _flac(vocals, 16000)
+    call = ((data, [u.model_dump() for u in utterances], [w.__dict__ for w in words],
+             {str(k): v for k, v in proposals.items()}, lang, num_speakers), {})
+    [res] = _run("resplit_turns", [call], _follow(stage), check_cancel)
+    if res["cuts"]:
+        (work / ANALYSIS_FILE).write_text(json.dumps(res["features"]), encoding="utf-8")
+    return [Utterance.model_validate(u) for u in res["utterances"]], res["cuts"]
+
+
+def serve_resplit(audio_flac: bytes, utterances: list[dict], words: list[dict], proposals: dict[str, list[str]],
+                  lang: str, num_speakers: Optional[int], report: Stage) -> dict:
+    from .turns import resplit_core
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vocals = Path(tmp) / "vocals.flac"
+        vocals.write_bytes(audio_flac)
+        wav, sr = _mono(vocals)
+        report("split_turns", 0.5)
+        out, cuts = resplit_core([Utterance.model_validate(u) for u in utterances], [Word(**w) for w in words],
+                                 {int(k): v for k, v in proposals.items()}, wav, sr, num_speakers)
+        features = features_core(out, vocals, lang) if cuts else None
+        return {"utterances": [u.model_dump() for u in out], "cuts": cuts, "features": features}
 
 
 def prepare_voice(raw: Path, work: Path, stage: Stage, denoise: bool = False) -> dict:
