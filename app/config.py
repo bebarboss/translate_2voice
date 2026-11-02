@@ -83,6 +83,9 @@ class Settings:
     typhoon_base_url: str = _env("TYPHOON_BASE_URL", "https://api.opentyphoon.ai/v1")
     typhoon_model: str = _env("TYPHOON_MODEL", "typhoon-v2.5-30b-a3b-instruct")
     typhoon_temperature: float = _float("TYPHOON_TEMPERATURE", 0.4)
+    # ใช้ผู้ให้บริการอื่นที่เรียกแบบ OpenAI ได้ (เช่น Gemini: base_url .../v1beta/openai/) รุ่นที่คิดก่อนตอบ
+    # ควรตั้ง none ไม่งั้นการคิดกินโควตาความยาวคำตอบจน JSON ขาด (ว่าง = ไม่ส่งค่านี้)
+    typhoon_reasoning_effort: str = _env("TYPHOON_REASONING_EFFORT", "")
     translate_batch_size: int = _int("TRANSLATE_BATCH_SIZE", 20)
     translate_en_local: bool = _bool("TRANSLATE_EN_LOCAL")  # ใช้ Typhoon Translate บนเครื่องกับคลิปภาษาอังกฤษ
     typhoon_translate_model: str = _env("TYPHOON_TRANSLATE_MODEL", "scb10x/typhoon-translate1.5-4b")

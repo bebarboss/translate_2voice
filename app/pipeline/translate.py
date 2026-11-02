@@ -176,6 +176,7 @@ def _chat(system: str, user: str, temperature: Optional[float] = None, max_token
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 temperature=settings.typhoon_temperature if temperature is None else temperature,
                 max_tokens=max_tokens,
+                **({"reasoning_effort": settings.typhoon_reasoning_effort} if settings.typhoon_reasoning_effort else {}),
             )
             return resp.choices[0].message.content or ""
         except Exception as exc:  # noqa: BLE001  rate limit / network
