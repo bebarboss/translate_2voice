@@ -40,7 +40,7 @@ REMOTE_FIELDS = (
     "separator", "separator_model", "separator_overlap", "denoise_model", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
-    "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
+    "diar_refine", "diar_exclusive", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
 )
 
 
@@ -107,7 +107,11 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
 
     stage("diarize", 0.25)
-    turns = diarize(wav16k, num_speakers)
+    if settings.mock_pipeline:
+        turns = word_turns = diarize(wav16k, num_speakers)
+    else:
+        from .diarize import diarize_both
+        turns, word_turns = diarize_both(wav16k, num_speakers)
     release("diarize")
     speakers = sorted({t.speaker for t in turns})
 
@@ -119,7 +123,7 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     release("transcribe")
     if not words:
         raise RuntimeError("ไม่พบคำพูดในคลิป")
-    utterances = assign_speakers(words, turns, lang=lang)
+    utterances = assign_speakers(words, word_turns, lang=lang)
     raw_turns = list(turns)  # ช่วงพูดตามป้ายของ pyannote (relabel_turns ด้านล่างเปลี่ยนชื่อให้ตรงกับประโยค)
     hidden = []
     if settings.overlap_recover and not settings.mock_pipeline:  # คนที่ถูกกลบตอนพูดพร้อมกัน

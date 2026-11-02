@@ -58,6 +58,15 @@ def unload() -> None:
 
 
 def diarize(wav16k: Path, num_speakers: Optional[int] = None) -> list[Turn]:
+    return diarize_both(wav16k, num_speakers)[0]
+
+
+def diarize_both(wav16k: Path, num_speakers: Optional[int] = None) -> tuple[list[Turn], list[Turn]]:
+    """(ช่วงพูดที่ซ้อนกันได้, ช่วงพูดแบบ exclusive ที่ทุกขณะมีคนพูดคนเดียว) ชื่อผู้พูดตรงกันทั้งสองชุด
+
+    ชุด exclusive (pyannote 4 community-1) ทำมาให้จับคู่กับเวลาคำของ Whisper: ตอนพูดซ้อนเลือกคนที่น่าจะพูดจริง
+    แทนการเดาเอาคนที่ช่วงสั้นกว่า ทดลองกับโดราเอมอนและ MrBeast ตัดกลางวลีน้อยลง
+    ชุดที่ซ้อนกันได้ยังต้องใช้หาช่วงพูดพร้อมกัน (overlap.recover) โมเดลรุ่นเก่าไม่มีชุด exclusive ใช้ชุดเดิมแทน"""
     import torch
 
     pipe = _load()
@@ -68,11 +77,19 @@ def diarize(wav16k: Path, num_speakers: Optional[int] = None) -> list[Turn]:
     kwargs = {"num_speakers": num_speakers} if num_speakers else {}
     output = pipe(data, **kwargs)
     annotation = getattr(output, "speaker_diarization", output)  # 4.x คืนเป็น object
-    turns = [Turn(round(seg.start, 3), round(seg.end, 3), str(label))
-             for seg, _, label in annotation.itertracks(yield_label=True)]
+    exclusive = getattr(output, "exclusive_speaker_diarization", None) if settings.diar_exclusive else None
+
+    def turns_of(ann) -> list[Turn]:
+        return [Turn(round(seg.start, 3), round(seg.end, 3), str(label))
+                for seg, _, label in ann.itertracks(yield_label=True)]
+
+    turns = turns_of(annotation)
     if not turns:
         raise RuntimeError("ไม่พบเสียงพูดในคลิป")
-    return rename_speakers(turns)
+    renamed = rename_speakers(turns)
+    names = {t.speaker: r.speaker for t, r in zip(turns, renamed)}
+    only = [Turn(t.start, t.end, names.get(t.speaker, t.speaker)) for t in turns_of(exclusive)] if exclusive else []
+    return renamed, only or renamed
 
 
 def relabel_turns(turns: list[Turn], utts: list) -> list[Turn]:

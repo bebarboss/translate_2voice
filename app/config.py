@@ -138,6 +138,7 @@ class Settings:
     voice_split_pitch: float = _float("VOICE_SPLIT_PITCH", 7.0)  # แยกผู้พูดเมื่อเสียงสองกลุ่มห่างกันเกินกี่เซมิโทน
     # ไม่ได้ระบุจำนวนคน → จัดกลุ่มผู้พูดใหม่ทีละประโยคจากลายเสียง หาจำนวนคนเอง (voices.cluster_lines)
     diar_refine: bool = _bool("DIAR_REFINE", True)
+    diar_exclusive: bool = _bool("DIAR_EXCLUSIVE", True)  # ให้คำเป็นของผู้พูดตามช่วงแบบ exclusive ของ pyannote
     # ช่วงที่สองคนพูดพร้อมกัน แยกเสียงแล้วถอดคำพูดของคนที่ถูกกลบเป็นประโยคแยก (overlap.py)
     overlap_recover: bool = _bool("OVERLAP_RECOVER", True)
     # สองคนพูดต่อกันแต่ระบบแยกผู้พูดรวมเป็นท่อนเดียว (เสียงคล้ายกัน เช่น การ์ตูน): ให้ Typhoon/Gemini อ่านบทแล้วเสนอจุดเปลี่ยนคน
