@@ -336,7 +336,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                         pauses=[settings.pause_match, settings.min_pause_sec, 2],
+                         pauses=[settings.pause_match, settings.min_pause_sec, 3],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
                          # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
                          **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))

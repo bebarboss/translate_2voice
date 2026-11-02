@@ -108,6 +108,12 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
     miss: dict[tuple[int, int], float] = {}  # ระยะจากตำแหน่งที่ควรตัด หลายจุดหยุดได้ตำแหน่งเดียวกัน → เก็บจุดที่ใกล้สุด
     for ps, pe in sorted(pauses):
         mid = (ps + pe) / 2
+        # หยุดคร่อมขอบท่อน (ขอบที่ผู้ใช้ตั้งเวลาเลยเข้าไปในช่วงหยุด) → ตัดที่ขอบท่อน ไม่ตัดกลางบทของท่อนก่อน
+        edge = next((k for k, (a, b) in enumerate(zip(group, group[1:]))
+                     if min(a.end, b.start) <= pe + 0.05 and ps - 0.05 <= max(a.end, b.start)), None)
+        if edge is not None:
+            cuts.setdefault((edge, len(group[edge].target.strip())), (ps, pe))
+            continue
         for k, u in enumerate(group):
             text = u.target.strip()
             if u.end <= mid and (k + 1 == len(group) or mid <= group[k + 1].start):
