@@ -11,6 +11,7 @@ from pathlib import Path
 from ..config import settings
 from ..schemas import SubtitleStyle, Utterance
 from .audio import run
+from .pauses import strip_marks
 
 THAI_CHAR = 0x0E01  # ก
 
@@ -34,7 +35,7 @@ def _ts_ass(sec: float) -> str:
 def write_srt(utts: list[Utterance], out_srt: Path) -> Path:
     lines = []
     for i, u in enumerate((u for u in utts if u.target), start=1):
-        lines += [str(i), f"{_ts_srt(u.start)} --> {_ts_srt(u.end)}", u.target, ""]
+        lines += [str(i), f"{_ts_srt(u.start)} --> {_ts_srt(u.end)}", strip_marks(u.target), ""]
     out_srt.write_text("\n".join(lines), encoding="utf-8")
     return out_srt
 
@@ -74,7 +75,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for u in utts:
         if not u.target:
             continue
-        text = u.target.replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
+        text = strip_marks(u.target).replace("\\", "\\\\").replace("{", "(").replace("}", ")").replace("\n", "\\N")
         events.append(f"Dialogue: 0,{_ts_ass(u.start)},{_ts_ass(u.end)},Default,,0,0,0,,{text}")
     out_ass.write_text(header + "\n".join(events) + "\n", encoding="utf-8-sig")
     return out_ass

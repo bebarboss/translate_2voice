@@ -112,7 +112,13 @@ export function speakerColor(speaker: string, all: string[]): string {
 }
 
 /** ประมาณเวลาพูด ไทยนับจากตัวอักษร (ไม่นับสระบนล่างและวรรณยุกต์) อังกฤษนับจากคำ */
+/** บทที่ไม่มีเครื่องหมายจุดหยุด "/" (ระบบใส่ตรงที่นักแสดงหยุดหายใจ เสียงพากย์จะเว้นตรงนั้น) */
+export function stripPauseMarks(text: string): string {
+  return text.replace(/\s*(?<!\d)\/(?!\d)\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export function estimateSeconds(text: string, lang: TargetLang): number {
+  text = stripPauseMarks(text);
   if (lang === "en") return text.trim().split(/\s+/).filter(Boolean).length / 2.6;
   const base = Array.from(text).filter((ch) => !/\s/.test(ch) && !/\p{Mn}/u.test(ch)).length;
   return base / 11;

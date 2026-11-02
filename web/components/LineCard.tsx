@@ -85,6 +85,7 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
       </div>
       <label className="sr-only" htmlFor={`tg-${u.id}`}>บทพากย์ประโยคที่ {u.id}</label>
       <textarea id={`tg-${u.id}`} className="textarea" rows={2} value={d.target}
+        title="/ คือจุดหยุดหายใจตามต้นฉบับ เสียงพากย์จะเว้นตรงนั้น ลบหรือย้ายได้"
         onChange={(e) => tr.setDraft(u.id, { target: e.target.value })}
         onSelect={(e) => { tr.cursors.current[u.id] = e.currentTarget.selectionStart; }}
         onFocus={onFocusText} />

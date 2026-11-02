@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, fileUrl, type Job, type Utterance } from "@/lib/api";
-import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName } from "@/lib/format";
+import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, stripPauseMarks } from "@/lib/format";
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import RetranslatePanel from "./RetranslatePanel";
@@ -161,7 +161,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
               onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
               onPlay={() => setPicked(null)} />
             {speaking && tr.draftOf(speaking).target && (
-              <div className="caption"><span>{tr.draftOf(speaking).target}</span></div>
+              <div className="caption"><span>{stripPauseMarks(tr.draftOf(speaking).target)}</span></div>
             )}
           </div>
           <div className="row dim" style={{ justifyContent: "space-between" }}>

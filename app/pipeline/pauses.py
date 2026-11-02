@@ -40,6 +40,106 @@ def find_pauses(seg: np.ndarray, sr: int, min_pause: float) -> list[tuple[float,
     return out
 
 
+MARK = "/"  # จุดหยุดในบท: ใส่ในต้นฉบับตรงที่นักแสดงหยุดจริง ให้ผู้แปลวางในบทแปลตรงความหมายเดียวกัน
+_MARK_RE = re.compile(r"\s*(?<!\d)/(?!\d)\s*")  # ไม่นับ / ระหว่างตัวเลข (24/7)
+
+
+def strip_marks(text: str) -> str:
+    """บทที่ไม่มีเครื่องหมายจุดหยุด (ใช้กับซับไตเติล เสียงพากย์ และการนับความยาว)"""
+    return " ".join(_MARK_RE.sub(" ", text).split())
+
+
+def split_marks(text: str) -> tuple[str, list[int], bool]:
+    """(บทที่ไม่มีเครื่องหมาย, ตำแหน่งตัวอักษรของแต่ละจุดหยุดในบทนั้น, ทุกจุดอยู่ที่ขอบคำ)
+    จุดที่ตกกลางคำไทย (เห็/น, เพรา/ะ) ต่อคำกลับโดยไม่เว้นวรรค และไม่นับเป็นจุดหยุด"""
+    pieces = [x.strip() for x in _MARK_RE.split(text.strip())]
+    pieces = [x for x in pieces if x]
+    clean, marks, ok = "", [], True
+    for x in pieces:
+        if clean and not _thai_mid_word(clean, x):
+            marks.append(len(clean) + 1)
+            clean += " "
+        elif clean:
+            ok = False
+        clean += x
+    return clean, marks, ok
+
+
+_THAI = re.compile(r"[ก-๛]")
+
+
+def _thai_mid_word(left: str, right: str) -> bool:
+    """รอยต่อ left|right อยู่กลางคำไทยไหม (สระหรือวรรณยุกต์ขึ้นต้น สระหน้าค้างท้าย หรือตัวตัดคำบอกว่าไม่ใช่ขอบคำ)"""
+    if not (_THAI.match(right[:1]) and _THAI.match(left[-1:])):
+        return False
+    if unicodedata.category(right[0]) == "Mn" or right[0] in "ะาำๅๆฯ" or left[-1] in "เแโใไ":
+        return True
+    try:
+        from pythainlp.tokenize import word_tokenize
+    except ImportError:
+        return False
+    a, b = left[-15:], right[:15]
+    pos, edges = 0, set()
+    for tok in word_tokenize(a + b, engine="newmm"):
+        edges.add(pos)
+        pos += len(tok)
+    return len(a) not in edges
+
+
+def source_pauses(u, orig: np.ndarray, sr: int, words: Optional[list], min_pause: float) -> list[tuple[float, float, int]]:
+    """จุดหยุดกลางท่อน u ในเสียงต้นฉบับ: (เริ่ม, จบ, ลำดับคำแรกหลังจุดหยุด ในคำของท่อนนี้)
+    เวลาจบคำของ Whisper มักลากคร่อมช่วงหยุด จึงใช้เวลาเริ่มคำ: คำแรกที่เริ่มหลังช่วงหยุดเริ่ม"""
+    own = [w for w in words or [] if u.start - 0.01 <= (w.start + w.end) / 2 <= u.end + 0.01]
+    if len(own) < 2:
+        return []
+    seg = orig[int(u.start * sr): int(u.end * sr)]
+    edges = _word_edges(own)
+    out = []
+    for a, b in find_pauses(seg, sr, min_pause):
+        ps, pe = u.start + a, u.start + b
+        k = next((i for i, w in enumerate(own) if w.start > ps + 0.02), None)
+        # ญี่ปุ่น/จีน: คำของ Whisper เป็นแค่ตัวอักษรหรือพยางค์ จุดที่ตกกลางคำ (ジャ|イアン) ไม่ใช่จุดหยุดจริง
+        # ถ้าส่งไปแปล ผู้แปลจะตัดชื่อในบทไทยตามด้วย (ไจ / แอนท์)
+        if k and (not out or k > out[-1][2]) and (edges is None or k in edges):
+            out.append((ps, pe, k))
+    return out
+
+
+def _word_edges(own: list) -> Optional[set[int]]:
+    """ลำดับคำ (ของ Whisper) ที่เป็นจุดเริ่มคำจริงในภาษาที่ไม่เว้นวรรค (ญี่ปุ่น จีน) ภาษาอื่นคืน None = ทุกคำ"""
+    text = "".join(w.text for w in own)
+    lang = "ja" if re.search(r"[぀-ヿ]", text) else "zh" if re.search(r"[一-鿿]", text) else ""
+    if not lang:
+        return None
+    from .transcribe import _tokenize
+
+    tokens = _tokenize(text, lang)
+    if not tokens:
+        return None
+    bounds, pos = set(), 0
+    for t in tokens:
+        bounds.add(pos)
+        pos += len(t)
+    edges, pos = set(), 0
+    for i, w in enumerate(own):
+        if pos in bounds or text[pos - 1:pos] in "、。！？!?…, ":
+            edges.add(i)
+        pos += len(w.text)
+    return edges
+
+
+def mark_source(u, orig: np.ndarray, sr: int, words: Optional[list], min_pause: float) -> Optional[str]:
+    """ต้นฉบับของท่อน u ที่ใส่ / ตรงจุดที่นักแสดงหยุด (ไม่มีจุดหยุด หรือคำไม่ตรงกับบท = None)"""
+    ps = source_pauses(u, orig, sr, words, min_pause)
+    if not ps:
+        return None
+    own = [w for w in words if u.start - 0.01 <= (w.start + w.end) / 2 <= u.end + 0.01]
+    if "".join(w.text for w in own).split() != u.source.split():
+        return None  # ผู้ใช้แก้บทต้นฉบับแล้ว ตำแหน่งคำไม่ตรง
+    at = {k for _, _, k in ps}
+    return "".join((f" {MARK}" if i in at else "") + w.text for i, w in enumerate(own)).strip()
+
+
 def _weight(text: str) -> int:
     """ความยาวที่ใช้เทียบสัดส่วน: ไม่นับสระบนล่าง วรรณยุกต์ และช่องว่าง (ใกล้จำนวนเสียงที่พูดจริงกว่านับตัวอักษร)"""
     return sum(1 for ch in text if not ch.isspace() and unicodedata.category(ch) != "Mn")
@@ -98,6 +198,17 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
          words: Optional[list] = None) -> list[Chunk]:
     """แบ่งประโยค (ท่อนที่ติดกันของคนเดียว) เป็นช่วงพูดตามจังหวะหยุดของต้นฉบับ
     words: เวลาของแต่ละคำในเสียงต้นฉบับ (words.json) ใช้หาว่าหยุดหลังพูดไปแค่ไหนแล้ว"""
+    # บทที่มี / (ผู้แปลวางจุดหยุดตามความหมาย) ตัดตรงนั้นพอดี ถ้าจำนวนตรงกับจุดหยุดของต้นฉบับในท่อนนั้น
+    marked: dict[int, list[tuple[int, tuple[float, float]]]] = {}
+    clean = []
+    for k, u in enumerate(group):
+        text, marks, ok = split_marks(u.target)
+        if marks and ok:
+            src = source_pauses(u, orig, sr, words, min_pause)
+            if len(src) == len(marks):
+                marked[k] = [(pos, (ps, pe)) for pos, (ps, pe, _) in zip(marks, src)]
+        clean.append(u.model_copy(update={"target": text}) if text != u.target else u)
+    group = clean
     first, last = group[0], group[-1]
     seg = orig[int(first.start * sr): int(last.end * sr)]
     pauses = [(first.start + a, first.start + b) for a, b in find_pauses(seg, sr, min_pause)]
@@ -106,6 +217,9 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
 
     cuts: dict[tuple[int, int], tuple[float, float]] = {}  # (ท่อน, ตำแหน่งตัวอักษร) → ช่วงหยุด
     miss: dict[tuple[int, int], float] = {}  # ระยะจากตำแหน่งที่ควรตัด หลายจุดหยุดได้ตำแหน่งเดียวกัน → เก็บจุดที่ใกล้สุด
+    for k, ms in marked.items():
+        for pos, span in ms:
+            cuts[(k, pos)] = span
     for ps, pe in sorted(pauses):
         mid = (ps + pe) / 2
         # หยุดคร่อมขอบท่อน (ขอบที่ผู้ใช้ตั้งเวลาเลยเข้าไปในช่วงหยุด) → ตัดที่ขอบท่อน ไม่ตัดกลางบทของท่อนก่อน
@@ -119,6 +233,8 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
             if u.end <= mid and (k + 1 == len(group) or mid <= group[k + 1].start):
                 if k + 1 < len(group):  # หยุดระหว่างท่อน → ตัดที่ขอบท่อน
                     cuts.setdefault((k, len(text)), (ps, pe))
+                break
+            if u.start <= mid < u.end and k in marked:  # ท่อนนี้ตัดตาม / แล้ว
                 break
             if u.start <= mid < u.end:  # หยุดกลางท่อน → ตัดที่จุดแบ่งวลีหรือขอบคำที่ใกล้ตำแหน่งที่พูดถึงที่สุด
                 target = _position(text, _spoken_fraction(u, ps, words))

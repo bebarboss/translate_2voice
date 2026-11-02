@@ -51,7 +51,8 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ถ้ายาวเกิน max_chars ให้ตัดคำเสริมและคำซ้ำก่อน ห้ามตัดชื่อเฉพาะ ตัวเลข คำปฏิเสธ หรือคำถาม
 6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
 7. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
-8. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+8. ต้นฉบับบางท่อนมีเครื่องหมาย / คือจุดที่นักแสดงหยุดหายใจหรือเว้นจังหวะจริง ให้ใส่ / ในคำแปลของท่อนนั้นจำนวนเท่ากัน ตรงตำแหน่งที่ความหมายตรงกับต้นฉบับ (เสียงพากย์จะหยุดตรงนั้น) ห้ามใส่ / ในท่อนที่ต้นฉบับไม่มี และห้ามวาง / กลางคำหรือกลางชื่อ ถ้าตำแหน่งที่ตรงกันตกกลางคำ ให้วางที่ขอบคำที่ใกล้ที่สุด
+9. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
@@ -65,16 +66,19 @@ Rules:
    If longer than "max_words", tighten the wording and drop filler first; never drop names, numbers, negations or questions.
 5. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
 6. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
-7. Reply with JSON only, no explanations."""
+7. Some source parts contain "/": the points where the actor actually pauses or breathes. Put the same number of "/" in that part's translation, at the points that match the source meaning (the dub pauses there). Never add "/" to a part whose source has none, and never put "/" inside a word or name; use the nearest word boundary.
+8. Reply with JSON only, no explanations."""
 
 SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
 ใจความสำคัญต้องครบและตรงเดิม ห้ามตัดชื่อคน ชื่อสถานที่ ชื่องานหรือองค์กร ตัวเลข คำปฏิเสธ และคำถาม คงอารมณ์ของตัวละคร ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 ย่อด้วยการเรียบเรียงใหม่ให้สั้นแบบที่คนไทยพูดจริง (ตัดคำซ้ำ คำเสริม หรือส่วนที่ไม่สำคัญ) ผลต้องยังเป็นประโยคพูดที่ลื่นปาก ไม่ห้วนเป็นวลีโทรเลข ห้ามเติมคำลงท้าย (นะ ครับ ค่ะ สิ ล่ะ เลย)
 ห้ามใช้คำย่อหรือตัวย่อ (ชม. กม. กก. รพ. ฯลฯ) ให้เขียนเต็มตามที่อ่านออกเสียง
+ถ้าบทมีเครื่องหมาย / (จุดหยุดหายใจ) ให้คงไว้จำนวนเท่าเดิม ตรงตำแหน่งความหมายเดิม (ไม่นับเป็นตัวอักษร)
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
 Keep the meaning and the character's emotion, and keep it natural spoken English. Never drop names (people, places, events, organizations), numbers, negations or questions.
+Keep every "/" (a breathing pause) at the same point of meaning; it does not count as a word.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
 EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบรรทัดสั้นกว่าเวลาที่ตัวละครพูดจริงมาก เสียงพากย์จบก่อนตัวละครหยุดขยับปาก
@@ -84,12 +88,14 @@ EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบร�
 2. ขยายด้วยสิ่งที่ต้นฉบับมีแต่คำแปลเดิมละไว้ หรือเลือกคำพูดที่ยาวขึ้นแต่ความหมายเท่าเดิม ห้ามเติมคำลงท้าย (นะ ครับ ค่ะ สิ ล่ะ เลย เนี่ย)
 3. ใช้ภาษาพูดที่คนไทยพูดจริงแบบงานพากย์ ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 4. ถ้าขยายแล้วฟังไม่เป็นธรรมชาติ ให้คืนบทเดิม
+5. ถ้าบทมีเครื่องหมาย / (จุดหยุดหายใจ) ให้คงไว้จำนวนเท่าเดิม ตรงตำแหน่งความหมายเดิม
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 EXPAND_PROMPT_EN = """Some English dubbing lines are much shorter than the time the character actually speaks, so the dub ends while the mouth is still moving.
 Expand each line to roughly "min_words" to "max_words" words so it fills its "seconds" value at a natural pace.
 Keep the meaning of the original ("source"); never add content it does not have. First restore what the translation left out,
 then use natural fillers, repetition or interjections that fit the character's emotion. If expanding would sound unnatural, return the line unchanged.
+Keep every "/" (a breathing pause) at the same point of meaning.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
 TURN_PROMPT = """You segment transcribed dialogue. Speaker diarization often merges two characters with similar voices into one line.
@@ -133,8 +139,8 @@ _local = None
 def estimate_seconds(text: str, target_lang: str = "th") -> float:
     """ประมาณเวลาพูด: ภาษาไทยนับตัวอักษรที่ไม่ใช่สระบนล่างและวรรณยุกต์ ภาษาอังกฤษนับคำ"""
     if target_lang == "en":
-        return len(text.split()) / settings.en_words_per_sec
-    base = sum(1 for ch in text if not ch.isspace() and unicodedata.category(ch) != "Mn")
+        return len([t for t in text.split() if t != "/"]) / settings.en_words_per_sec
+    base = sum(1 for ch in text if not ch.isspace() and ch != "/" and unicodedata.category(ch) != "Mn")
     return base / settings.thai_chars_per_sec
 
 
@@ -286,7 +292,7 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
-                                  "text": u.source} for u in g]}
+                                  "text": (hints.get("marked") or {}).get(u.id, u.source)} for u in g]}
                       for g in groups],
     }
     if target == "en":

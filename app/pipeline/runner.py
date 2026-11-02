@@ -116,7 +116,8 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     job = store.get(job_id)
     stage = _stage(store, job_id)
     cancel = lambda: store.check_cancel(job_id)  # noqa: E731
-    hints = {"genre": job.genre, "glossary": job.glossary, "names": job.speaker_names}
+    hints = {"genre": job.genre, "glossary": job.glossary, "names": job.speaker_names,
+             "marked": _marked_sources(store.dir(job_id), utterances)}
     span = hi - lo
     stage("translate", lo)
     translate(utterances, lang, job.target_lang,
@@ -129,6 +130,25 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
     stage("analyzed", hi)
+
+
+def _marked_sources(d: Path, utterances: list[Utterance]) -> dict[int, str]:
+    """id → ต้นฉบับที่ใส่ / ตรงจุดที่นักแสดงหยุด ให้ผู้แปลวางจุดหยุดในบทแปลตามความหมาย (pauses.plan ตัดตรงนั้น)"""
+    words = _load_words(d)
+    if not (settings.pause_match and words and (d / "vocals.wav").exists()) or settings.mock_pipeline:
+        return {}
+    try:
+        orig, sr = sf.read(d / "vocals.wav", dtype="float32")
+        orig = orig.mean(axis=1) if orig.ndim > 1 else orig
+    except (OSError, RuntimeError):
+        return {}
+    out = {}
+    for u in utterances:
+        text = pauses.mark_source(u, orig, sr, words, settings.min_pause_sec)
+        if text:
+            out[u.id] = text
+    log.info("pause marks in %d of %d lines", len(out), len(utterances))
+    return out
 
 
 def run_translate(store: JobStore, job_id: str) -> None:
@@ -410,7 +430,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         lines = []
         for p in batch:
             if not settings.pause_match or settings.mock_pipeline:
-                p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, p.text())]
+                p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, pauses.strip_marks(p.text()))]
             else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
                 p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
             lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
