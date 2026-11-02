@@ -69,6 +69,21 @@ SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" 
 Keep the meaning and the character's emotion, and keep it natural spoken English.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
+EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบรรทัดสั้นกว่าเวลาที่ตัวละครพูดจริงมาก เสียงพากย์จบก่อนตัวละครหยุดขยับปาก
+ขยายแต่ละบรรทัดให้ยาวประมาณ min_chars ถึง max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) ให้พูดได้เต็ม seconds วินาที
+กฎ:
+1. ความหมายต้องตรงกับต้นฉบับ (source) ห้ามเพิ่มเนื้อหาที่ต้นฉบับไม่มี
+2. ขยายด้วยสิ่งที่ต้นฉบับมีแต่คำแปลเดิมละไว้ก่อน แล้วจึงใช้คำอุทาน คำซ้ำ หรือคำลงท้ายแบบภาษาพูด (นะ น่ะ ล่ะ เลย จัง เนี่ย) ให้เข้ากับอารมณ์ของตัวละคร
+3. ใช้ภาษาพูดที่คนไทยพูดจริงแบบงานพากย์ ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
+4. ถ้าขยายแล้วฟังไม่เป็นธรรมชาติ ให้คืนบทเดิม
+ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
+
+EXPAND_PROMPT_EN = """Some English dubbing lines are much shorter than the time the character actually speaks, so the dub ends while the mouth is still moving.
+Expand each line to roughly "min_words" to "max_words" words so it fills its "seconds" value at a natural pace.
+Keep the meaning of the original ("source"); never add content it does not have. First restore what the translation left out,
+then use natural fillers, repetition or interjections that fit the character's emotion. If expanding would sound unnatural, return the line unchanged.
+Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
+
 PROOFREAD_PROMPT_TH = """คุณคือผู้ตรวจบทถอดเสียงภาษาไทย บทนี้ได้จากระบบถอดเสียงอัตโนมัติ (Whisper) ซึ่งมักสะกดผิดตามเสียงที่ได้ยิน
 เช่น พยัญชนะหรือสระเพี้ยน (หิบะทะลม → หิมะถล่ม, ปืนคลั้ง → ปืนครั้ง) คำติดกัน หรือมีตัวอักษรอังกฤษหลุดกลางคำ
 กฎ:
@@ -507,8 +522,9 @@ def proofread(utts: list[Utterance], target: str = "th",
 
 
 def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35) -> None:
-    """ย่อบทที่คาดว่ายาวเกินเวลาที่มี ให้พูดได้ด้วยความเร็วปกติ (เดิมย่อเฉพาะบทที่เร่งสุดแล้วยังไม่ทัน เสียงจึงรีบ)
-    ย่อสองรอบ รอบสองเฉพาะบรรทัดที่ยังยาวเกิน"""
+    """ปรับความยาวบทให้พอดีเวลาที่ตัวละครพูด
+    ย่อบทที่คาดว่ายาวเกินเวลาที่มี ให้พูดได้ด้วยความเร็วปกติ (สองรอบ รอบสองเฉพาะบรรทัดที่ยังยาวเกิน)
+    แล้วขยายบทที่สั้นกว่าเวลาพูดจริงมาก (ไม่ยืดเสียง เสียงยืดฟังยานไม่เป็นธรรมชาติ)"""
     if not settings.typhoon_api_key:
         return
     tolerance = min(max_speedup, settings.fit_tolerance)
@@ -517,10 +533,36 @@ def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 
         too_long = [u for u in utts if u.duration > 0 and u.target
                     and estimate_seconds(u.target, target) > budget[u.id] * tolerance]
         if not too_long:
-            return
+            break
         log.info("shorten %d lines: %s", len(too_long), [u.id for u in too_long])
         for batch in _chunks(too_long, settings.translate_batch_size):
             shorten(batch, target, budgets=budget)
+    # ท่อนสั้น ๆ (ไม่ถึง 1 วินาที) มักเป็นคำเดียว ขยายแล้วไม่เป็นธรรมชาติ
+    too_short = [u for u in utts if settings.fit_min_ratio > 0 and u.duration >= 1.0 and u.target.strip()
+                 and estimate_seconds(u.target, target) < u.duration * settings.fit_min_ratio]
+    if too_short:
+        log.info("lengthen %d lines: %s", len(too_short), [u.id for u in too_short])
+        for batch in _chunks(too_short, settings.translate_batch_size):
+            lengthen(batch, target, tolerance)
+
+
+def lengthen(batch: list[Utterance], target: str = "th", tolerance: float = 1.1) -> None:
+    """ขยายบทให้ยาวราว 80–100% ของเวลาที่ตัวละครพูด โดยความหมายตรงต้นฉบับ
+    ใช้เฉพาะคำตอบที่ยาวขึ้นจริงและไม่เกินเวลาที่มี ขยายไม่ได้ก็ใช้บทเดิม"""
+    lo_key, hi_key = ("min_words", "max_words") if target == "en" else ("min_chars", "max_chars")
+    payload = [{"id": u.id, "seconds": round(u.duration, 1), lo_key: max_length(u.duration * 0.8, target),
+                hi_key: max_length(u.duration, target), "source": u.source, "text": u.target} for u in batch]
+    prompt = EXPAND_PROMPT_EN if target == "en" else EXPAND_PROMPT_TH
+    try:
+        result = _parse_json(_chat(prompt, json.dumps({"lines": payload}, ensure_ascii=False)))
+        by_id = {int(x["id"]): _item_text(x) for x in result.get("lines", []) if "id" in x}
+        for u in batch:
+            text = by_id.get(u.id)
+            if (text and not FOREIGN_SCRIPT.search(text)
+                    and estimate_seconds(u.target, target) < estimate_seconds(text, target) <= u.duration * tolerance):
+                u.target = text
+    except Exception as exc:  # noqa: BLE001
+        log.warning("lengthen failed: %s", exc)
 
 
 def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.0,
