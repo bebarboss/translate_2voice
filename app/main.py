@@ -447,12 +447,22 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
         if edit.start is not None or edit.end is not None:
             start = round(edit.start if edit.start is not None else u.start, 3)
             end = round(edit.end if edit.end is not None else u.end, 3)
-            if end - start < 0.2 or (job.duration and end > job.duration + 0.05):
-                raise HTTPException(400, f"เวลาของประโยค id={edit.id} ไม่ถูกต้อง ต้องยาวอย่างน้อย 0.2 วินาทีและอยู่ในคลิป")
+            # ความยาวคลิปในเบราว์เซอร์อาจยาวกว่าที่ ffprobe วัดได้เล็กน้อย ลากบล็อกไปท้ายคลิปแล้วเกิน → ดึงกลับมาที่ท้ายคลิป
+            if job.duration and job.duration < end <= job.duration + 2:
+                end = round(job.duration, 3)
+            # 1e-6: ทศนิยมจากการลากขอบให้สั้นสุด 0.2 วินาทีพอดี (เช่น 19.793 - 19.593 = 0.19999...)
+            if end - start < 0.2 - 1e-6 or start < 0 or (job.duration and end > job.duration + 0.05):
+                raise HTTPException(400, f"เวลาของประโยคที่ {fmt_clock(u.start)} ไม่ถูกต้อง ({start:.2f}–{end:.2f} วินาที) "
+                                         "ต้องยาวอย่างน้อย 0.2 วินาทีและอยู่ในคลิป")
             moved |= (start, end) != (u.start, u.end)
             u.start, u.end = start, end
     _save_lines(job, utterances, moved)
     return utterances
+
+
+def fmt_clock(sec: float) -> str:
+    """เวลาแบบที่หน้าเว็บแสดง (นาที:วินาที.ทศนิยม) ใช้ในข้อความแจ้งผู้ใช้"""
+    return f"{int(sec // 60)}:{sec % 60:04.1f}"
 
 
 def _editable_lines(job_id: str) -> tuple[Job, list[Utterance]]:

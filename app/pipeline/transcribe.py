@@ -1,4 +1,5 @@
 """ถอดเสียงพร้อมตรวจภาษาอัตโนมัติ (faster-whisper) แล้วจับคู่แต่ละคำกับผู้พูด"""
+import logging
 import unicodedata
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,10 @@ from ..config import settings
 from ..schemas import Utterance
 from .common import Turn, Word
 
+log = logging.getLogger("dubbing.transcribe")
+
 _model = None
+DETECT_SEGMENTS = 4  # ตรวจภาษาจากหลายช่วง (ช่วงละ 30 วินาที) แทนแค่ 30 วินาทีแรก
 
 
 def _load():
@@ -31,8 +35,22 @@ def unload() -> None:
     _model = None
 
 
+def detect_language(wav16k: Path) -> str:
+    """ภาษาที่พูดในคลิป ตรวจจากเสียงทั้งช่วงโดยไม่ผ่าน VAD
+    faster-whisper ตรวจภาษาจากเสียงที่ผ่าน VAD เมื่อถอดเสียงพร้อม vad_filter=True ซึ่งตัดเสียงเป็นท่อนแล้วต่อกัน
+    การ์ตูนญี่ปุ่นบางเรื่องได้เกาหลี (ko 0.76) ทั้งที่ตรวจจากเสียงเต็มได้ญี่ปุ่น 1.0 แล้วถอดด้วยภาษาผิด
+    → ได้ท่อนยาวที่ไม่มีเวลาของแต่ละคำ เวลาเพี้ยน และข้ามคำพูดไปเยอะ"""
+    from faster_whisper import decode_audio
+
+    lang, prob, ranked = _load().detect_language(decode_audio(str(wav16k)), vad_filter=False,
+                                                 language_detection_segments=DETECT_SEGMENTS)
+    log.info("detected language %s (%.2f) top: %s", lang, prob, [(code, round(p, 2)) for code, p in ranked[:3]])
+    return lang
+
+
 def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word], str]:
     model = _load()
+    language = language or detect_language(wav16k)
     segments, info = model.transcribe(
         str(wav16k),
         language=language,

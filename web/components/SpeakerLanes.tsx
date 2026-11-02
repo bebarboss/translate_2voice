@@ -44,6 +44,8 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   const [zoom, setZoom] = useState(1);
   const [from, setFrom] = useState(0);
   const span = Math.max(total, 1e-3) / zoom;
+  // ท้ายคลิปที่ลากบล็อกไปได้: ใช้ความยาวที่เซิร์ฟเวอร์วัด (ความยาวในเบราว์เซอร์อาจเกินเล็กน้อย เซิร์ฟเวอร์จะไม่รับ)
+  const limit = job.duration ? Math.min(total, job.duration) : total;
   const clampFrom = (x: number) => Math.min(Math.max(0, x), Math.max(0, total - span));
   const view = clampFrom(from);
   const pct = (sec: number) => `${((sec - view) / span) * 100}%`;
@@ -162,7 +164,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
       if (!moved && Math.abs(ev.clientX - x0) < 4 && Math.abs(ev.clientY - e.clientY) < 4) return;
       moved = true;
       const shift = Math.round(((ev.clientX - x0) / rect.width) * span * 20) / 20;
-      start = Math.round(Math.min(Math.max(0, d0.start + shift), total - len) * 100) / 100;
+      start = Math.round(Math.min(Math.max(0, d0.start + shift), limit - len) * 100) / 100;
       tr.setDraft(u.id, { start, end: Math.round((start + len) * 100) / 100 });
       lane = laneAt(ev.clientX, ev.clientY) ?? lane;
       setDropLane(lane !== speaker ? lane : null);
@@ -259,7 +261,9 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const move = (ev: PointerEvent) => {
       const d = tr.draftOf(u);
       let sec = Math.round((view + ((ev.clientX - rect.left) / rect.width) * span) * 20) / 20;
-      sec = edge === "start" ? Math.min(Math.max(0, sec), d.end - 0.2) : Math.max(Math.min(total, sec), d.start + 0.2);
+      // ปัดทีละ 0.05 แล้วกันไม่ให้สั้นกว่า 0.2 (บวกกันทศนิยมคลาดนิดหน่อย)
+      sec = edge === "start" ? Math.min(Math.max(0, sec), Math.round((d.end - 0.2) * 1000 - 1) / 1000)
+        : Math.max(Math.min(limit, sec), Math.round((d.start + 0.2) * 1000 + 1) / 1000);
       last = sec;
       tr.setDraft(u.id, { [edge]: sec });
     };
