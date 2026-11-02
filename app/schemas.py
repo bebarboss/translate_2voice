@@ -187,6 +187,7 @@ class LibraryVoice(BaseModel):
     stage: str = "queued"
     error: Optional[str] = None
     filename: str = ""  # ชื่อไฟล์ที่อัปโหลด
+    source_url: Optional[str] = None  # ลิงก์คลิป (แทนไฟล์) ดาวน์โหลดตอนเตรียมเสียง
     text: str = ""  # ข้อความที่พูดในเสียงตัวอย่าง ต้องตรงกับเสียงจริง F5-TTS ถึงจะพากย์ไม่เพี้ยน
     duration: Optional[float] = None  # ความยาวเสียงตัวอย่าง (วินาที)
     pitch_hz: Optional[float] = None  # ระดับเสียงกลาง

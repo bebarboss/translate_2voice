@@ -752,7 +752,8 @@ def list_voices():
 @app.post("/voices", response_model=LibraryVoice, status_code=202,
           dependencies=[Depends(require_key_or_upload_token)])
 async def create_voice(
-    file: UploadFile = File(..., description="คลิปเสียงภาษาไทย (หรือวิดีโอ) ของเจ้าของเสียง ประเมินทั้งไฟล์ (ไม่เกิน VOICE_MAX_INPUT_MIN นาที)"),
+    file: Optional[UploadFile] = File(None, description="คลิปเสียงภาษาไทย (หรือวิดีโอ) ของเจ้าของเสียง ประเมินทั้งไฟล์ (ไม่เกิน VOICE_MAX_INPUT_MIN นาที)"),
+    url: Optional[str] = Form(None, description="ลิงก์คลิปแทนไฟล์ (ส่งอย่างใดอย่างหนึ่ง)"),
     name: str = Form(..., min_length=1, max_length=80),
     gender: Gender = Form("", description="male, female หรือว่างไว้ให้ระบบเดาจากระดับเสียง"),
     tone: str = Form("", max_length=80, description="โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส"),
@@ -760,16 +761,27 @@ async def create_voice(
     categories: list[str] = Form([], description="หมวดหมู่ ส่งได้หลายค่า เช่น ละคร หนัง การ์ตูน"),
 ):
     """อัปโหลดเสียงเข้าคลัง ระบบแยกเสียงรบกวน ประเมินทุกท่อนพูดในไฟล์ เลือกท่อนที่สะอาดที่สุดของเสียงหลัก 3–10 วินาที และถอดข้อความให้"""
-    ext = Path(file.filename or "").suffix.lower()
-    if ext not in AUDIO_EXT:
-        raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")
+    url = (url or "").strip()
+    has_file = file is not None and bool(file.filename)
+    if has_file == bool(url):
+        raise HTTPException(400, "ส่งไฟล์หรือลิงก์อย่างใดอย่างหนึ่ง")
+    if has_file:
+        ext = Path(file.filename or "").suffix.lower()
+        if ext not in AUDIO_EXT:
+            raise HTTPException(400, f"รองรับเฉพาะไฟล์ {', '.join(sorted(AUDIO_EXT))}")
+    else:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise HTTPException(400, "ลิงก์ไม่ถูกต้อง ต้องขึ้นต้นด้วย http:// หรือ https://")
     voice_id = voice_store.new_id()
     d = voice_store.dir(voice_id)
     d.mkdir(parents=True, exist_ok=True)
-    await save_upload(file, d / f"original{ext}", d)
+    if has_file:  # ลิงก์ดาวน์โหลดตอนเตรียมเสียง (library.prepare) ไม่ให้คำขอนี้ค้าง
+        await save_upload(file, d / f"original{ext}", d)
     v = voice_store.add(LibraryVoice(id=voice_id, name=name.strip(), gender=gender, tone=tone.strip(),
                                      description=description.strip(), categories=_clean_categories(categories),
-                                     filename=file.filename or ""))
+                                     filename=file.filename if has_file else urlparse(url).netloc.replace("www.", ""),
+                                     source_url=url or None))
     worker.submit_voice(voice_id)
     return v
 

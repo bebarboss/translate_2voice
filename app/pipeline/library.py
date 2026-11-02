@@ -242,7 +242,15 @@ def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> Non
     d = store.mood_dir(voice_id, mood)
     tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav", d / "ref_cut.wav"]
     try:
-        src = next(d.glob("original.*"))
+        src = next(d.glob("original.*"), None)
+        if src is None and v.source_url and not mood:  # เพิ่มด้วยลิงก์ ดาวน์โหลดครั้งแรก (ลองใหม่ใช้ไฟล์เดิม)
+            from .download import download
+            update(stage="download")
+            path, title, _ = download(v.source_url, d, lambda: None, lambda _f: None)
+            src = path.rename(d / f"original{path.suffix}")
+            update(filename=title[:200])
+        if src is None:
+            raise RuntimeError("ไม่พบไฟล์เสียงต้นฉบับ")
         update(stage="clean")
         raw = tmp[0]
         limit = ["-t", settings.voice_max_input_min * 60] if settings.voice_max_input_min > 0 else []

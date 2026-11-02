@@ -138,6 +138,7 @@ export const TONES = ["ทุ้มลึก", "นุ่มนวล", "สด�
 
 export const VOICE_STAGE_LABEL: Record<string, string> = {
   queued: "รอคิว",
+  download: "ดาวน์โหลดคลิป",
   clean: "ทำความสะอาดเสียง",
   transcribe: "ถอดข้อความ",
   trim: "ตัดท่อนที่ชัดที่สุด",

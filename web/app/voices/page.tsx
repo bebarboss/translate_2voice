@@ -88,8 +88,17 @@ function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g:
   );
 }
 
+type AddMode = "single" | "multi";
+
+/** เพิ่มเสียงเข้าคลังจากไฟล์หรือลิงก์
+ *  single: คลิปที่มีคนเดียวพูด เพิ่มเป็นเสียงเลย
+ *  multi : คลิปที่มีหลายคนพูด ส่งเป็นงานแยกผู้พูด (ไม่แปลไม่พากย์) แล้วไปหน้าเลือกบันทึกเสียงของแต่ละคน */
 function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: string[] }) {
+  const router = useRouter();
+  const [mode, setMode] = useState<AddMode>("single");
   const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
+  const [count, setCount] = useState("");
   const [drag, setDrag] = useState(false);
   const [name, setName] = useState("");
   const [gender, setGender] = useState<Gender>("");
@@ -102,6 +111,8 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
   const abortRef = useRef<(() => void) | null>(null);
+  const multi = mode === "multi";
+  const busy = progress !== null;
 
   const pickFile = (f: File | undefined | null) => {
     setError("");
@@ -112,40 +123,67 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
       return;
     }
     setFile(f);
+    setUrl("");
     if (!name) setName(f.name.slice(0, f.name.lastIndexOf(".")).slice(0, 80));
   };
 
-  const ready = !!file && !!name.trim() && rights && progress === null;
+  const hasSource = !!file || !!url.trim();
+  const ready = hasSource && rights && !busy && (multi || !!name.trim());
 
   useEffect(() => {
     if (!image) { setImagePreview(""); return; }
-    const url = URL.createObjectURL(image);
-    setImagePreview(url);
-    return () => URL.revokeObjectURL(url);
+    const objectUrl = URL.createObjectURL(image);
+    setImagePreview(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
   }, [image]);
 
+  const submitMulti = async () => {
+    const n = parseInt(count, 10);
+    const opts = { sourceLang: "", targetLang: "th" as const, numSpeakers: n >= 2 && n <= 20 ? n : null,
+      review: true, burnSubs: false, genre: "", glossary: "", library: true };
+    let id: string;
+    if (file) {
+      const up = uploadJob(file, opts, setProgress);
+      abortRef.current = up.abort;
+      id = (await up.promise).id;
+    } else {
+      id = (await api.createFromUrl(url.trim(), opts)).id;
+    }
+    router.push(`/jobs/${id}`);
+  };
+
+  const submitSingle = async () => {
+    const meta = { name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories };
+    let v: LibraryVoice;
+    if (file) {
+      const up = uploadVoice(file, meta, setProgress);
+      abortRef.current = up.abort;
+      v = await up.promise;
+    } else {
+      v = await api.createVoiceFromUrl(url.trim(), meta);
+    }
+    let imageError = "";
+    if (image) {
+      await uploadVoiceImage(v.id, image).catch((e) => { imageError = `เพิ่มเสียงแล้ว แต่ตั้งรูปไม่สำเร็จ: ${(e as Error).message}`; });
+    }
+    setFile(null);
+    setUrl("");
+    setName("");
+    setTone("");
+    setGender("");
+    setDescription("");
+    setCategories([]);
+    setImage(null);
+    setError(imageError);
+    onUploaded();
+  };
+
   const submit = async () => {
-    if (!ready || !file) return;
+    if (!ready) return;
     setError("");
     setProgress(0);
     try {
-      const meta = { name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories };
-      const up = uploadVoice(file, meta, setProgress);
-      abortRef.current = up.abort;
-      const v = await up.promise;
-      let imageError = "";
-      if (image) {
-        await uploadVoiceImage(v.id, image).catch((e) => { imageError = `เพิ่มเสียงแล้ว แต่ตั้งรูปไม่สำเร็จ: ${(e as Error).message}`; });
-      }
-      setFile(null);
-      setName("");
-      setTone("");
-      setGender("");
-      setDescription("");
-      setCategories([]);
-      setImage(null);
-      setError(imageError);
-      onUploaded();
+      await (multi ? submitMulti() : submitSingle());
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -156,161 +194,123 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
 
   return (
     <section className="card" aria-labelledby="add-voice">
-      <h2 id="add-voice">เพิ่มเสียงเข้าคลัง</h2>
-      <div className="grid-2">
-        <label className={`dropzone${drag ? " drag" : ""}`} style={{ minHeight: 0, padding: 24 }}
-          onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files[0]); }}>
-          <span className="icon"><UploadIcon color="#FF8A4C" /></span>
-          {file ? (
-            <>
-              <span style={{ fontSize: 16, fontWeight: 500, wordBreak: "break-all" }}>{file.name}</span>
-              <span className="muted">{(file.size / 1024 / 1024).toFixed(1)} MB · คลิกเพื่อเปลี่ยนไฟล์</span>
-            </>
-          ) : (
-            <>
-              <span style={{ fontSize: 17, fontWeight: 500 }}>ลากคลิปเสียงภาษาไทยมาวาง</span>
-              <span className="muted">หรือ <span style={{ color: "var(--accent)", textDecoration: "underline" }}>เลือกไฟล์</span></span>
-              <span className="dim">เสียงคนเดียวพูด 10 วินาทีขึ้นไป · ระบบประเมินทั้งไฟล์ (ไม่เกิน 60 นาที) ยิ่งยาวยิ่งได้ท่อนที่ดี</span>
-            </>
-          )}
-          <input type="file" accept={ACCEPT} aria-label="เลือกไฟล์เสียง" onChange={(e) => pickFile(e.target.files?.[0])}
-            disabled={progress !== null} />
-        </label>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div className="field">
-            <label htmlFor="v-name">ชื่อเสียง</label>
-            <input id="v-name" className="input" maxLength={80} placeholder="เช่น พี่ต้น ผู้ชายวัยทำงาน"
-              value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <span className="label">เพศ</span>
-            <GenderPicker value={gender} onChange={setGender} label="เพศของเสียง" />
-          </div>
-          <div className="field">
-            <label htmlFor="v-tone">โทนเสียง</label>
-            <input id="v-tone" className="input" list="tones" maxLength={80} placeholder="เช่น ทุ้มลึก นุ่มนวล สดใส"
-              value={tone} onChange={(e) => setTone(e.target.value)} />
-            <datalist id="tones">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
-          </div>
-          <div className="field">
-            <span className="label">รูป (ไม่ใส่ก็ได้)</span>
-            <div className="row" style={{ gap: 10 }}>
-              <VoiceAvatar name={name} url={imagePreview} />
-              <ImagePickButton label={image ? "เปลี่ยนรูป" : "เลือกรูป"} onPick={setImage} disabled={progress !== null} />
-              {image && <button type="button" className="btn small" onClick={() => setImage(null)} disabled={progress !== null}>เอารูปออก</button>}
-            </div>
-          </div>
+      <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <h2 id="add-voice" style={{ margin: 0 }}>เพิ่มเสียงเข้าคลัง</h2>
+        <div className="seg" role="group" aria-label="ชนิดคลิป">
+          <button type="button" aria-pressed={!multi} onClick={() => setMode("single")} disabled={busy}>เสียงคนเดียว</button>
+          <button type="button" aria-pressed={multi} onClick={() => setMode("multi")} disabled={busy}>คลิปหลายคนพูด</button>
         </div>
       </div>
+      <div className="grid-2">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <label className={`dropzone${drag ? " drag" : ""}`} style={{ minHeight: 0, padding: 24, flex: 1 }}
+            onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files[0]); }}>
+            <span className="icon"><UploadIcon color="#FF8A4C" /></span>
+            {file ? (
+              <>
+                <span style={{ fontSize: 16, fontWeight: 500, wordBreak: "break-all" }}>{file.name}</span>
+                <span className="muted">{(file.size / 1024 / 1024).toFixed(1)} MB · คลิกเพื่อเปลี่ยนไฟล์</span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 17, fontWeight: 500 }}>ลากคลิปเสียงภาษาไทยมาวาง</span>
+                <span className="muted">หรือ <span style={{ color: "var(--accent)", textDecoration: "underline" }}>เลือกไฟล์</span></span>
+                <span className="dim">
+                  {multi
+                    ? "คลิปที่มีหลายคนพูด เช่น ละคร รายการ · ระบบแยกเสียงของแต่ละคนให้"
+                    : "เสียงคนเดียวพูด 10 วินาทีขึ้นไป · ระบบประเมินทั้งไฟล์ (ไม่เกิน 60 นาที) ยิ่งยาวยิ่งได้ท่อนที่ดี"}
+                </span>
+              </>
+            )}
+            <input type="file" accept={ACCEPT} aria-label="เลือกไฟล์เสียง" disabled={busy}
+              onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </label>
+          <input className="input" type="url" placeholder="หรือวางลิงก์ YouTube, TikTok, Facebook ฯลฯ" aria-label="ลิงก์คลิป"
+            value={url} disabled={busy} onChange={(e) => { setUrl(e.target.value); if (e.target.value) setFile(null); }} />
+        </div>
 
-      <div className="field">
-        <span className="label" id="v-cat">หมวดหมู่ (เลือกได้หลายหมวด)</span>
-        <CategoryPicker id="v-cat" value={categories} onChange={setCategories} known={known} />
+        {multi ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p className="muted" style={{ margin: 0 }}>
+              ระบบแยกเพลงออก แยกเสียงของแต่ละคน และถอดเสียงให้ (ไม่แปล ไม่พากย์) แล้วพาไปหน้าที่ให้ฟังเสียงแต่ละคน
+              ตั้งชื่อว่าเป็นเสียงของใคร และเลือกบันทึกลงคลังทีละคน
+            </p>
+            <div className="field">
+              <label htmlFor="v-count">จำนวนคนในคลิป (ถ้ารู้ ช่วยให้แยกแม่นขึ้น)</label>
+              <input id="v-count" className="input" type="number" min={2} max={20} placeholder="ไม่ระบุ = ให้ระบบนับเอง"
+                value={count} onChange={(e) => setCount(e.target.value)} disabled={busy} />
+            </div>
+            <span className="dim">ใช้เครดิตตามความยาวคลิปเหมือนงานพากย์</span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div className="field">
+              <label htmlFor="v-name">ชื่อเสียง</label>
+              <input id="v-name" className="input" maxLength={80} placeholder="เช่น พี่ต้น ผู้ชายวัยทำงาน"
+                value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="field">
+              <span className="label">เพศ</span>
+              <GenderPicker value={gender} onChange={setGender} label="เพศของเสียง" />
+            </div>
+            <div className="field">
+              <label htmlFor="v-tone">โทนเสียง</label>
+              <input id="v-tone" className="input" list="tones" maxLength={80} placeholder="เช่น ทุ้มลึก นุ่มนวล สดใส"
+                value={tone} onChange={(e) => setTone(e.target.value)} />
+              <datalist id="tones">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
+            </div>
+            <div className="field">
+              <span className="label">รูป (ไม่ใส่ก็ได้)</span>
+              <div className="row" style={{ gap: 10 }}>
+                <VoiceAvatar name={name} url={imagePreview} />
+                <ImagePickButton label={image ? "เปลี่ยนรูป" : "เลือกรูป"} onPick={setImage} disabled={busy} />
+                {image && <button type="button" className="btn small" onClick={() => setImage(null)} disabled={busy}>เอารูปออก</button>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="field">
-        <label htmlFor="v-desc">รายละเอียด (ไม่ใส่ก็ได้)</label>
-        <textarea id="v-desc" className="textarea" rows={3} maxLength={1000}
-          placeholder="เช่น คนพากย์ บทที่เหมาะ อายุตัวละคร สไตล์การพูด"
-          value={description} onChange={(e) => setDescription(e.target.value)} />
-      </div>
+      {!multi && (
+        <>
+          <div className="field">
+            <span className="label" id="v-cat">หมวดหมู่ (เลือกได้หลายหมวด)</span>
+            <CategoryPicker id="v-cat" value={categories} onChange={setCategories} known={known} />
+          </div>
+          <div className="field">
+            <label htmlFor="v-desc">รายละเอียด (ไม่ใส่ก็ได้)</label>
+            <textarea id="v-desc" className="textarea" rows={3} maxLength={1000}
+              placeholder="เช่น คนพากย์ บทที่เหมาะ อายุตัวละคร สไตล์การพูด"
+              value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+        </>
+      )}
 
       <label className="check" style={{ justifyContent: "flex-start" }}>
         <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
-        <span>ฉันเป็นเจ้าของเสียงนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว</span>
+        <span>
+          {multi ? "ฉันเป็นเจ้าของเสียงในคลิปนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว"
+            : "ฉันเป็นเจ้าของเสียงนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว"}
+        </span>
       </label>
       {error && <div className="alert error" role="alert">{error}</div>}
       <div className="row" style={{ justifyContent: "space-between" }}>
-        {progress !== null ? (
+        {busy && file ? (
           <div style={{ flex: "1 1 260px", display: "flex", alignItems: "center", gap: 12 }}>
-            <div className="progress" style={{ flex: 1 }}><div style={{ width: `${progress * 100}%` }} /></div>
-            <span className="mono">{Math.round(progress * 100)}%</span>
+            <div className="progress" style={{ flex: 1 }}><div style={{ width: `${(progress ?? 0) * 100}%` }} /></div>
+            <span className="mono">{Math.round((progress ?? 0) * 100)}%</span>
             <button type="button" className="btn small" onClick={() => abortRef.current?.()}>ยกเลิก</button>
           </div>
         ) : (
-          <span className="dim">ระบบจะแยกเสียงรบกวนออก ตัดท่อนที่ชัดที่สุด 3–10 วินาที และถอดข้อความให้อัตโนมัติ</span>
+          <span className="dim">
+            {multi ? "แยกเสียงเสร็จแล้วจะพาไปหน้าเลือกบันทึกเสียงของแต่ละคน"
+              : "ระบบจะแยกเสียงรบกวนออก ตัดท่อนที่ชัดที่สุด 3–10 วินาที และถอดข้อความให้อัตโนมัติ"}
+          </span>
         )}
         <button type="button" className="btn primary" onClick={submit} disabled={!ready}>
-          {progress !== null ? "กำลังอัปโหลด..." : "เพิ่มเสียง"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
-/** คลิปที่มีหลายคนพูด: ส่งเป็นงานแยกผู้พูด (ไม่แปลไม่พากย์) แล้วไปหน้าเลือกบันทึกเสียงของแต่ละคน */
-function MultiUploadCard() {
-  const router = useRouter();
-  const [file, setFile] = useState<File | null>(null);
-  const [url, setUrl] = useState("");
-  const [count, setCount] = useState("");
-  const [rights, setRights] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState("");
-
-  const pickFile = (f: File | undefined | null) => {
-    setError("");
-    if (!f) return;
-    const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
-    if (!ACCEPT.split(",").includes(ext)) return setError("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG, OGA หรือวิดีโอ MP4, MOV, MKV, WEBM");
-    setFile(f);
-    setUrl("");
-  };
-
-  const ready = (!!file || !!url.trim()) && rights && progress === null;
-  const submit = async () => {
-    if (!ready) return;
-    setError("");
-    setProgress(0);
-    const n = parseInt(count, 10);
-    const opts = { sourceLang: "", targetLang: "th" as const, numSpeakers: n >= 2 && n <= 20 ? n : null,
-      review: true, burnSubs: false, genre: "", glossary: "", library: true };
-    try {
-      const { id } = file ? await uploadJob(file, opts, setProgress).promise : await api.createFromUrl(url.trim(), opts);
-      router.push(`/jobs/${id}`);
-    } catch (e) {
-      setError((e as Error).message);
-      setProgress(null);
-    }
-  };
-
-  return (
-    <section className="card" aria-labelledby="add-multi">
-      <h2 id="add-multi">เพิ่มจากคลิปที่มีหลายคนพูด</h2>
-      <p className="muted" style={{ margin: 0 }}>
-        ระบบแยกเสียงของแต่ละคนให้ แล้วให้ฟังและตั้งชื่อว่าเสียงไหนเป็นของใคร เลือกบันทึกลงคลังได้ทีละคน
-        (คลิปภาษาไทย ใช้เครดิตตามความยาวคลิปเหมือนงานพากย์)
-      </p>
-      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-        <label className="btn" style={{ cursor: progress === null ? "pointer" : "default" }}>
-          {file ? `ไฟล์: ${file.name}` : "เลือกไฟล์"}
-          <input type="file" accept={ACCEPT} className="sr-only" disabled={progress !== null}
-            onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }} />
-        </label>
-        <span className="dim">หรือ</span>
-        <input className="input" style={{ flex: "1 1 240px", minWidth: 0 }} type="url" placeholder="ลิงก์ YouTube, TikTok, Facebook ฯลฯ"
-          aria-label="ลิงก์คลิป" value={url} disabled={progress !== null}
-          onChange={(e) => { setUrl(e.target.value); if (e.target.value) setFile(null); }} />
-        <input className="input" style={{ width: 130 }} type="number" min={2} max={20} placeholder="จำนวนคน (ถ้ารู้)"
-          aria-label="จำนวนคนที่พูดในคลิป" value={count} onChange={(e) => setCount(e.target.value)} disabled={progress !== null} />
-      </div>
-      <label className="check" style={{ justifyContent: "flex-start" }}>
-        <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
-        <span>ฉันเป็นเจ้าของเสียงในคลิปนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว</span>
-      </label>
-      {error && <div className="alert error" role="alert">{error}</div>}
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        {progress !== null && file ? (
-          <div style={{ flex: "1 1 260px", display: "flex", alignItems: "center", gap: 12 }}>
-            <div className="progress" style={{ flex: 1 }}><div style={{ width: `${progress * 100}%` }} /></div>
-            <span className="mono">{Math.round(progress * 100)}%</span>
-          </div>
-        ) : <span />}
-        <button type="button" className="btn primary" onClick={submit} disabled={!ready}>
-          {progress !== null ? "กำลังส่ง..." : "แยกเสียง"}
+          {busy ? (file ? "กำลังอัปโหลด..." : "กำลังส่ง...") : multi ? "แยกเสียง" : "เพิ่มเสียง"}
         </button>
       </div>
     </section>
@@ -609,7 +609,6 @@ export default function VoicesPage() {
       </div>
 
       {canEdit && <UploadCard onUploaded={refresh} known={known} />}
-      {canEdit && <MultiUploadCard />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
       <section aria-label="เสียงในคลัง" style={{ display: "flex", flexDirection: "column", gap: 12 }}>

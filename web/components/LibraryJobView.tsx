@@ -1,188 +1,281 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, fileUrl, type Gender, type Job, type Utterance } from "@/lib/api";
-import { GENDER_LABEL, fmtDuration, langName, speakerColor, speakerLabel } from "@/lib/format";
+import { GENDER_LABEL, fmtDuration, fmtTime, langName, speakerColor } from "@/lib/format";
+import { NEW_SPEAKER, useTranscript, type Transcript } from "@/lib/useTranscript";
+import SpeakerLanes from "./SpeakerLanes";
 import { PreviewButton, usePreview } from "./VoicePreview";
-import { ArrowLeft } from "./Icons";
+import { ArrowLeft, XIcon } from "./Icons";
 
 const GENDERS: Gender[] = ["", "male", "female"];
 const MIN_SOLO_SEC = 3; // ตรงกับเกณฑ์ของ API (main.speaker_to_library)
 
-/** งานเก็บเสียงเข้าคลัง: คลิปที่มีหลายคนพูด ระบบแยกผู้พูดให้แล้ว
- *  ผู้ใช้ฟัง ตั้งชื่อ รวมคนที่ถูกแยกเป็นสองคน แล้วเลือกบันทึกเสียงของแต่ละคนลงคลัง */
-export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged: () => void }) {
-  const [lines, setLines] = useState<Utterance[] | null>(null);
-  const [message, setMessage] = useState<{ kind: "info" | "error"; text: string } | null>(null);
-  const preview = usePreview();
+/** เวลาที่แต่ละคนพูดคนเดียว (ไม่มีคนอื่นพูดทับเกิน 0.2 วินาที) ตามบทที่กำลังแก้ ส่วนนี้คือเสียงที่บันทึกลงคลังได้ */
+function soloSeconds(tr: Transcript): Record<string, number> {
+  const ds = tr.sorted.map((u) => tr.draftOf(u));
+  const out: Record<string, number> = {};
+  for (const d of ds) {
+    const overlapped = ds.some((o) => o.speaker !== d.speaker && Math.min(d.end, o.end) - Math.max(d.start, o.start) > 0.2);
+    if (!overlapped) out[d.speaker] = (out[d.speaker] ?? 0) + d.end - d.start;
+  }
+  return out;
+}
 
-  const load = useCallback(() => {
-    api.getTranscript(job.id).then(setLines).catch((e) => setMessage({ kind: "error", text: (e as Error).message }));
-  }, [job.id]);
-  useEffect(load, [load]);
+/** งานเก็บเสียงเข้าคลัง: คลิปที่มีหลายคนพูด แสดงแบบหน้าตรวจบท (คลิป + เลเยอร์ของแต่ละคน + รายการประโยค)
+ *  ผู้ใช้แก้การแยกผู้พูด (ลากบล็อก ตัด รวมตัวละคร) แล้วกดบันทึกเสียงของแต่ละคนลงคลังที่ท้ายเลเยอร์ */
+export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const tr = useTranscript(job, onChanged, () => videoRef.current?.currentTime ?? 0);
+  const { lines, sorted, speakers, dirty, busy, setBusy, message, setMessage } = tr;
+  const [t, setT] = useState(0);
+  const [duration, setDuration] = useState(job.duration ?? 0);
+  const [follow, setFollow] = useState(true);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [saving, setSaving] = useState<string | null>(null); // ตัวละครที่เปิดกล่องบันทึกลงคลังอยู่
+  const listRef = useRef<HTMLDivElement>(null);
+  const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const lang = job.detected_lang || job.source_lang;
   const notThai = !!lang && lang !== "th";
+  const total = duration || (sorted.length ? sorted[sorted.length - 1].end + 1 : 1);
+  const solo = useMemo(() => soloSeconds(tr), [tr]);
 
-  // เวลาพูดของแต่ละคน และเวลาที่พูดคนเดียว (ไม่มีคนอื่นพูดทับ) ซึ่งเป็นส่วนที่บันทึกลงคลังได้
-  const stats = useMemo(() => {
-    const out: Record<string, { count: number; sec: number; solo: number; samples: string[] }> = {};
-    for (const s of job.speakers) {
-      const own = (lines ?? []).filter((u) => u.speaker === s);
-      const others = (lines ?? []).filter((u) => u.speaker !== s);
-      const solo = own.filter((u) => !others.some((o) => Math.min(u.end, o.end) - Math.max(u.start, o.start) > 0.2));
-      out[s] = {
-        count: own.length,
-        sec: own.reduce((a, u) => a + u.end - u.start, 0),
-        solo: solo.reduce((a, u) => a + u.end - u.start, 0),
-        samples: [...own].sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 3).map((u) => u.source),
-      };
+  const active = useMemo(() => {
+    let cur: Utterance | null = null;
+    for (const u of sorted) if (t >= u.start) cur = u;
+    return cur;
+  }, [sorted, t]);
+  const speaking = active && t <= active.end ? active : null;
+
+  useEffect(() => {
+    if (!dirty.length) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty.length]);
+
+  // เลื่อนรายการให้ประโยคที่กำลังพูดอยู่ในกรอบ (เลื่อนเฉพาะกล่องรายการ)
+  useEffect(() => {
+    if (!follow || !active || !listRef.current) return;
+    const box = listRef.current;
+    const el = lineRefs.current[active.id];
+    if (!el) return;
+    const top = el.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top + el.offsetHeight > box.scrollTop + box.clientHeight) {
+      box.scrollTo({ top: Math.max(0, top - 12), behavior: "smooth" });
     }
-    return out;
-  }, [job.speakers, lines]);
+  }, [active, follow]);
 
-  const merge = async (speaker: string, into: string) => {
-    const label = (s: string) => speakerLabel(s, job.speaker_names);
-    if (!window.confirm(`รวม "${label(speaker)}" เข้ากับ "${label(into)}"? ประโยคทั้งหมดจะเป็นของ ${label(into)}`)) return;
+  const seek = useCallback((sec: number) => {
+    const v = videoRef.current;
+    if (v) v.currentTime = sec + 0.01;
+    setT(sec + 0.01);
+  }, []);
+
+  const onSave = async () => {
+    setBusy("save");
+    setMessage(null);
     try {
-      await api.removeSpeaker(job.id, speaker, into);
-      setMessage({ kind: "info", text: `รวมเป็น ${label(into)} แล้ว` });
-      onChanged();
-      load();
+      const n = dirty.length;
+      await tr.saveLines();
+      setMessage({ kind: "info", text: n ? `บันทึกการแก้ ${n} ประโยคแล้ว` : "ไม่มีอะไรเปลี่ยน" });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
+    } finally { setBusy(""); }
+  };
+
+  const slot = (s: string) => {
+    const saved = job.saved_voices?.[s];
+    if (saved) {
+      return <Link href="/voices" className="btn small lane-voice-btn" title="บันทึกเสียงนี้ลงคลังแล้ว ดูในคลังเสียง">✓ ในคลัง</Link>;
     }
+    const sec = solo[s] ?? 0;
+    const why = notThai ? "เสียงในคลังต้องเป็นภาษาไทย"
+      : sec < MIN_SOLO_SEC ? `พูดคนเดียวแค่ ${sec.toFixed(1)} วินาที ต้องมีอย่างน้อย ${MIN_SOLO_SEC} วินาที` : "";
+    return (
+      <button type="button" className="btn small lane-voice-btn" disabled={!!why || !!busy} onClick={() => setSaving(s)}
+        title={why || `บันทึกเสียงของ${tr.label(s)}ลงคลัง (ใช้ช่วงที่พูดคนเดียว ${Math.round(sec)} วินาที)`}>
+        บันทึกลงคลัง
+      </button>
+    );
   };
 
   return (
-    <main className="page">
-      <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
-        <Link href="/voices" className="btn small"><ArrowLeft /> คลังเสียง</Link>
-        <div style={{ minWidth: 0 }}>
-          <h1 style={{ margin: 0 }}>แยกเสียงเข้าคลัง</h1>
-          <span className="dim" style={{ wordBreak: "break-all" }}>{job.filename}{job.duration ? ` · ${fmtDuration(job.duration)}` : ""}</span>
+    <main className="page wide">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="row" style={{ gap: 14 }}>
+          <Link href="/voices" className="btn small" aria-label="กลับหน้าคลังเสียง"><ArrowLeft /></Link>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+            <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>แยกเสียงเข้าคลัง · {job.filename}</span>
+            <span className="dim">
+              {langName(lang)} · {speakers.length} คน · {sorted.length} ประโยค · {fmtDuration(job.duration)}
+            </span>
+          </div>
         </div>
+        <button type="button" className="btn" onClick={onSave} disabled={!!busy || !dirty.length}>
+          {busy === "save" ? "กำลังบันทึก..." : `บันทึกการแก้${dirty.length ? ` (${dirty.length})` : ""}`}
+        </button>
       </div>
 
-      <p className="muted" style={{ marginTop: 12 }}>
-        ระบบแยกเสียงได้ {job.speakers.length} คน ฟังแล้วตั้งชื่อเสียงที่ต้องการ กด &ldquo;บันทึกลงคลัง&rdquo; ทีละคน
-        ระบบจะใช้เฉพาะช่วงที่คนนั้นพูดคนเดียว แล้วเลือกท่อนที่ชัดที่สุดเป็นเสียงตัวอย่างให้เอง
-        ถ้าคนเดียวถูกแยกเป็นสองคน ใช้ &ldquo;รวมกับ&rdquo;
-      </p>
+      <div className="alert info">
+        ฟังแล้วแก้ให้แต่ละเลเยอร์เป็นเสียงของคนเดียว (ลากบล็อกไปเลเยอร์อื่น ตัด หรือรวมตัวละคร) ตั้งชื่อจากชื่อเลเยอร์
+        แล้วกด &ldquo;บันทึกลงคลัง&rdquo; ท้ายเลเยอร์ของคนที่ต้องการ ระบบใช้เฉพาะช่วงที่คนนั้นพูดคนเดียว
+      </div>
       {notThai && (
         <div className="alert error" role="alert">
-          คลิปนี้เป็นภาษา{langName(lang!)} เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ต้องรู้ว่าเสียงตัวอย่างพูดอะไร) ใช้คลิปภาษาไทยแทน
+          คลิปนี้เป็นภาษา{langName(lang)} เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ต้องรู้ว่าเสียงตัวอย่างพูดอะไร) ใช้คลิปภาษาไทยแทน
         </div>
       )}
-      {message && <div className={`alert ${message.kind === "error" ? "error" : "info"}`} role="status">{message.text}</div>}
+      {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
-      {!lines ? <div className="empty">กำลังโหลด...</div> : (
-        <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
-          {job.speakers.map((s) => (
-            <SpeakerCard key={s} job={job} speaker={s} stat={stats[s]} blocked={notThai} preview={preview}
-              onMerge={(into) => merge(s, into)} onSaved={onChanged} onError={(text) => setMessage({ kind: "error", text })} />
-          ))}
-        </div>
+      <div className="split">
+        <section className="main" aria-label="คลิป">
+          <div className="video-box">
+            <video ref={videoRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
+              onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
+              onSeeked={(e) => setT(e.currentTarget.currentTime)}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onPlay={() => setPicked(null)} />
+            {speaking && speaking.source && (
+              <div className="caption"><span>{tr.label(tr.draftOf(speaking).speaker)}: {speaking.source}</span></div>
+            )}
+          </div>
+          <div className="row dim" style={{ justifyContent: "space-between" }}>
+            <span>ซับบนภาพคือคำที่ถอดได้ และคนที่พูดตามเลเยอร์ปัจจุบัน</span>
+            <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
+          </div>
+
+          <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
+            onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
+            voiceSlot={slot} voiceHead={<span className="dim lane-voice-btn">เสียงในคลัง</span>} />
+        </section>
+
+        <aside className="side card" aria-label="ประโยคที่ถอดได้" style={{ padding: 0, gap: 0, overflow: "hidden" }}>
+          <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+            <h2 style={{ fontSize: 16 }}>ประโยคที่ถอดได้</h2>
+            <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
+              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+              เลื่อนตามคลิป
+            </label>
+          </div>
+          <div className="lines" ref={listRef}>
+            {lines === null ? <div className="empty">กำลังโหลด...</div>
+              : sorted.length === 0 ? <div className="empty">ไม่พบเสียงพูดในคลิปนี้</div>
+              : sorted.map((u) => {
+                const d = tr.draftOf(u);
+                return (
+                  <div key={u.id} ref={(el) => { lineRefs.current[u.id] = el; }}
+                    className={`line${active?.id === u.id ? " active" : ""}${speaking?.id === u.id ? " speaking" : ""}`}>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button type="button" className="time-btn" onClick={() => seek(u.start)} aria-label={`ไปที่ ${fmtTime(u.start)}`}>
+                        {fmtTime(u.start)}
+                      </button>
+                      <span className="swatch" style={{ background: speakerColor(d.speaker, speakers) }} />
+                      <label className="sr-only" htmlFor={`lspk-${u.id}`}>คนพูดประโยคที่ {u.id}</label>
+                      <select id={`lspk-${u.id}`} className="spk-select" value={d.speaker} disabled={busy === "edit"}
+                        onChange={(e) => tr.changeSpeaker(u, e.target.value)}>
+                        {speakers.map((s) => <option key={s} value={s}>{tr.label(s)}</option>)}
+                        <option value={NEW_SPEAKER}>+ คนใหม่</option>
+                      </select>
+                      <span className="dim" style={{ marginLeft: "auto" }}>{(d.end - d.start).toFixed(1)} วิ</span>
+                    </div>
+                    <span>{u.source || <span className="dim">(ไม่มีคำที่ถอดได้)</span>}</span>
+                  </div>
+                );
+              })}
+          </div>
+        </aside>
+      </div>
+
+      {saving && (
+        <SaveDialog job={job} tr={tr} speaker={saving} solo={solo[saving] ?? 0}
+          onClose={() => setSaving(null)} onDone={() => { setSaving(null); onChanged(); }} />
       )}
     </main>
   );
 }
 
-function SpeakerCard({ job, speaker, stat, blocked, preview, onMerge, onSaved, onError }: {
+/** กล่องบันทึกเสียงของคนหนึ่งลงคลัง: ตั้งชื่อ เลือกเพศ ฟังเสียงที่แยกได้ แล้วยืนยัน
+ *  บันทึกการแก้ที่ค้างก่อน เพราะ API ตัดเสียงจากบทที่บันทึกแล้ว */
+function SaveDialog({ job, tr, speaker, solo, onClose, onDone }: {
   job: Job;
+  tr: Transcript;
   speaker: string;
-  stat: { count: number; sec: number; solo: number; samples: string[] };
-  blocked: boolean;
-  preview: ReturnType<typeof usePreview>;
-  onMerge: (into: string) => void;
-  onSaved: () => void;
-  onError: (text: string) => void;
+  solo: number;
+  onClose: () => void;
+  onDone: () => void;
 }) {
-  const label = speakerLabel(speaker, job.speaker_names);
-  const [name, setName] = useState(job.speaker_names?.[speaker] ?? "");
+  const [name, setName] = useState(tr.names[speaker] ?? "");
   const [gender, setGender] = useState<Gender>("");
-  const [busy, setBusy] = useState(false);
-  const saved = job.saved_voices?.[speaker];
-  const tooShort = stat.solo < MIN_SOLO_SEC;
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const preview = usePreview();
+  const label = tr.label(speaker);
 
-  // ชื่อที่พิมพ์ใช้เป็นทั้งชื่อตัวละครในงานนี้และชื่อเสียงในคลัง
-  const rename = () => {
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && closeRef.current();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, []);
+
+  const confirm = async () => {
     const n = name.trim();
-    if (n !== (job.speaker_names?.[speaker] ?? "")) api.renameSpeaker(job.id, speaker, n).then(onSaved).catch(() => {});
-  };
-
-  const save = async () => {
-    setBusy(true);
+    if (!n) return;
+    setWorking(true);
+    setError("");
     try {
-      rename();
-      await api.speakerToLibrary(job.id, speaker, { name: name.trim(), gender, tone: "", description: "", categories: [] });
-      onSaved();
+      await tr.saveLines();
+      if (n !== (tr.names[speaker] ?? "")) await tr.renameSpeaker(speaker, n);
+      await api.speakerToLibrary(job.id, speaker, { name: n, gender, tone: "", description: "", categories: [] });
+      tr.setMessage({ kind: "info", text: `เพิ่ม "${n}" เข้าคลังแล้ว กำลังเตรียมเสียง ดูสถานะได้ที่หน้าคลังเสียง` });
+      onDone();
     } catch (e) {
-      onError((e as Error).message);
-    } finally {
-      setBusy(false);
+      setError((e as Error).message);
+      setWorking(false);
     }
   };
 
   return (
-    <section className="card" aria-label={label}>
-      <div className="row" style={{ gap: 10, flexWrap: "wrap" }}>
-        <span className="swatch" style={{ background: speakerColor(speaker, job.speakers) }} />
-        <strong>{label}</strong>
-        <span className="dim">
-          {stat.count} ประโยค · พูด {Math.round(stat.sec)} วินาที
-          {stat.solo < stat.sec - 0.5 ? ` · พูดคนเดียว ${Math.round(stat.solo)} วินาที` : ""}
-        </span>
-        <span style={{ marginLeft: "auto" }} />
-        <PreviewButton url={fileUrl.stem(job.id, speaker)} playing={preview.playing} onToggle={preview.toggle} label="ฟังเสียง" />
-      </div>
-
-      {stat.samples.length > 0 && (
-        <ul className="dim" style={{ margin: "10px 0 0", paddingLeft: 18 }}>
-          {stat.samples.map((t, i) => <li key={i}>{t}</li>)}
-        </ul>
-      )}
-
-      <div className="row" style={{ gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-        {saved ? (
-          <>
-            <span className="badge done">บันทึกลงคลังแล้ว</span>
-            <Link href="/voices" className="btn small">ดูในคลังเสียง</Link>
-          </>
-        ) : (
-          <>
-            <input className="input" style={{ flex: "1 1 200px", minWidth: 0 }} maxLength={80} placeholder="ชื่อเสียง เช่น โดราเอมอน"
-              aria-label={`ชื่อเสียงของ${label}`} value={name} onChange={(e) => setName(e.target.value)} onBlur={rename} />
-            <div className="seg" role="group" aria-label={`เพศของ${label}`}>
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="save-title" onClick={(e) => e.stopPropagation()}>
+        <div className="drawer-head">
+          <h2 id="save-title" className="row" style={{ gap: 8, fontSize: 17 }}>
+            <span className="swatch" style={{ background: speakerColor(speaker, tr.speakers) }} />บันทึกเสียงของ{label}ลงคลัง
+          </h2>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="ปิด"><XIcon /></button>
+        </div>
+        <div className="drawer-tools" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <span className="dim">ใช้ช่วงที่พูดคนเดียว {Math.round(solo)} วินาที ระบบเลือกท่อนที่ชัดที่สุด 3–10 วินาทีเป็นเสียงตัวอย่าง และถอดข้อความให้</span>
+          <PreviewButton url={fileUrl.stem(job.id, speaker)} playing={preview.playing} onToggle={preview.toggle}
+            label="ฟังเสียงที่แยกได้ตอนแรก" />
+          <div className="field">
+            <label htmlFor="save-name">ชื่อเสียง</label>
+            <input id="save-name" className="input" maxLength={80} autoFocus placeholder="เช่น โดราเอมอน"
+              value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") confirm(); }} />
+          </div>
+          <div className="field">
+            <span className="label">เพศ</span>
+            <div className="seg" role="group" aria-label="เพศของเสียง" style={{ alignSelf: "flex-start" }}>
               {GENDERS.map((g) => (
                 <button key={g || "auto"} type="button" aria-pressed={gender === g} onClick={() => setGender(g)}>
                   {g ? GENDER_LABEL[g] : "ให้ระบบเดา"}
                 </button>
               ))}
             </div>
-            <button type="button" className="btn primary small" onClick={save}
-              disabled={busy || blocked || tooShort || !name.trim()}
-              title={tooShort ? `พูดคนเดียวไม่ถึง ${MIN_SOLO_SEC} วินาที เสียงตัวอย่างจะไม่ชัด` : undefined}>
-              {busy ? "กำลังบันทึก..." : "บันทึกลงคลัง"}
-            </button>
-          </>
-        )}
-        {job.speakers.length > 1 && (
-          <select className="input" style={{ width: "auto" }} value="" aria-label={`รวม${label}กับตัวละครอื่น`}
-            onChange={(e) => e.target.value && onMerge(e.target.value)}>
-            <option value="">รวมกับ…</option>
-            {job.speakers.filter((x) => x !== speaker).map((x) => (
-              <option key={x} value={x}>{speakerLabel(x, job.speaker_names)}</option>
-            ))}
-          </select>
-        )}
-      </div>
-      {tooShort && !saved && (
-        <span className="dim" style={{ display: "block", marginTop: 8 }}>
-          พูดคนเดียวไม่ถึง {MIN_SOLO_SEC} วินาที บันทึกลงคลังไม่ได้
-        </span>
-      )}
-    </section>
+          </div>
+          {tr.dirty.length > 0 && <span className="dim">มีการแก้ {tr.dirty.length} ประโยคที่ยังไม่บันทึก ระบบจะบันทึกให้ก่อน</span>}
+          {error && <div className="alert error" role="alert">{error}</div>}
+          <button type="button" className="btn primary" onClick={confirm} disabled={working || !name.trim()}>
+            {working ? "กำลังบันทึก..." : "บันทึกลงคลัง"}
+          </button>
+        </div>
+      </aside>
+    </div>
   );
 }

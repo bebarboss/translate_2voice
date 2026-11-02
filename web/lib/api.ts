@@ -298,6 +298,17 @@ export const api = {
     request<Job>(`/jobs/${id}/voices`, json("PUT", choice)),
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
+  /** เพิ่มเสียงจากลิงก์คลิป (ระบบดาวน์โหลดเองตอนเตรียมเสียง) */
+  createVoiceFromUrl: (url: string, meta: VoiceMeta) => {
+    const form = new FormData();
+    form.append("url", url);
+    form.append("name", meta.name);
+    form.append("gender", meta.gender);
+    form.append("tone", meta.tone);
+    form.append("description", meta.description);
+    meta.categories.forEach((c) => form.append("categories", c));
+    return request<LibraryVoice>("/voices", { method: "POST", body: form });
+  },
   updateVoice: (id: string, patch: Partial<Pick<LibraryVoice, "name" | "gender" | "tone" | "description" | "categories" | "text">>) =>
     request<LibraryVoice>(`/voices/${id}`, json("PATCH", patch)),
   deleteVoice: (id: string) => request<void>(`/voices/${id}`, { method: "DELETE" }),
