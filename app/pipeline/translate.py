@@ -38,6 +38,7 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
 2. แปลเป็นคำพูด ไม่ใช่ภาษาเขียน: เขียนแบบที่คนไทยพูดกันจริงในสถานการณ์นั้น ให้นักพากย์อ่านออกเสียงแล้วลื่นปาก
    ไม่แปลทีละคำ เรียงประโยคแบบไทย ใช้คำลงท้ายและคำอุทานตามธรรมชาติ (นะ สิ เถอะ ล่ะ หรอก เหรอ โอ๊ย เฮ้ย)
    เลี่ยงคำภาษาเขียนหรือภาษาทางการ เช่น ซึ่ง ดังนั้น อย่างไรก็ตาม กระผม ดิฉัน ท่าน(เมื่อไม่ใช่ยศ) ทำการ มีความ… เว้นแต่ตัวละครพูดแบบนั้นจริง
+   ประโยคต้องเต็มแบบที่คนพูด ไม่ห้วนเป็นวลีโทรเลข และห้ามใช้คำย่อหรือตัวย่อ (ชม. กม. กก. รพ. กทม. ฯลฯ) ให้เขียนเต็มตามที่อ่านออกเสียง เช่น "สองชั่วโมง" เพราะนักพากย์อ่านตามตัวอักษร
    ตัวอย่าง: "I don't think that's a good idea." → "ฉันว่าไม่ดีมั้ง" ไม่ใช่ "ฉันไม่คิดว่านั่นเป็นความคิดที่ดี"
 3. เลือกสรรพนามและคำลงท้ายให้เข้ากับตัวละคร ความสัมพันธ์ และแนวเรื่อง และใช้ให้คงที่ตลอดเรื่อง ถ้ามี genre ให้ยึดตาม genre ไม่งั้นเดาจาก title
    เช่น ละครจีนโบราณ/กำลังภายใน ใช้ ข้า/เจ้า, ละครหรือหนังสมัยใหม่ ใช้ ฉัน/ผม/นาย/เธอ, การ์ตูนเด็ก ใช้ ฉัน/ผม/นาย/เธอ แบบเด็กพูดกัน ห้ามใช้ ข้า/เจ้า
@@ -66,7 +67,9 @@ Rules:
 7. Reply with JSON only, no explanations."""
 
 SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
-ใจความสำคัญต้องครบและตรงเดิม ห้ามตัดชื่อคน ชื่อสถานที่ ชื่องานหรือองค์กร ตัวเลข คำปฏิเสธ และคำถาม คงอารมณ์ของตัวละคร ตัดคำเสริม คำซ้ำ และคำลงท้ายที่ไม่จำเป็นก่อน ใช้ภาษาพูดแบบที่คนไทยพูดจริง ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
+ใจความสำคัญต้องครบและตรงเดิม ห้ามตัดชื่อคน ชื่อสถานที่ ชื่องานหรือองค์กร ตัวเลข คำปฏิเสธ และคำถาม คงอารมณ์ของตัวละคร ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
+ย่อด้วยการเรียบเรียงใหม่ให้สั้นแบบที่คนไทยพูดจริง (ตัดคำซ้ำ คำเสริม หรือส่วนที่ไม่สำคัญ) ผลต้องยังเป็นประโยคพูดที่ลื่นปาก ไม่ห้วนเป็นวลีโทรเลข เก็บคำลงท้ายที่บอกน้ำเสียงไว้ (นะ สิ ล่ะ เหรอ ครับ)
+ห้ามใช้คำย่อหรือตัวย่อ (ชม. กม. กก. รพ. ฯลฯ) ให้เขียนเต็มตามที่อ่านออกเสียง
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
@@ -436,6 +439,28 @@ def speak_times(text: str) -> str:
     return _CLOCK.sub(lambda x: _thai_clock(int(x.group(1)), int(x.group(2))), text)
 
 
+# หน่วยย่อ ขยายเฉพาะเมื่อตามหลังตัวเลขหรือคำบอกจำนวน ("น่าชม." ไม่ใช่ชั่วโมง)
+_UNITS = {"ชม.": "ชั่วโมง", "กม.": "กิโลเมตร", "กก.": "กิโลกรัม", "ซม.": "เซนติเมตร", "มม.": "มิลลิเมตร",
+          "ตร.ม.": "ตารางเมตร", "ลบ.ม.": "ลูกบาศก์เมตร"}
+_COUNT = r"(?:[\d๐-๙]|หนึ่ง|สอง|สาม|สี่|ห้า|หก|เจ็ด|แปด|เก้า|สิบ|ยี่สิบ|เอ็ด|ร้อย|พัน|หมื่น|แสน|ล้าน|ครึ่ง|กี่|หลาย|ไม่กี่)"
+_UNIT_RE = re.compile(rf"({_COUNT})(\s*)(" + "|".join(re.escape(k) for k in sorted(_UNITS, key=len, reverse=True)) + ")")
+# ตัวย่อที่มีจุดชัดเจน ขยายได้ทุกที่
+_ABBR = {"ฯลฯ": "และอื่นๆ", "กทม.": "กรุงเทพ", "รพ.": "โรงพยาบาล", "ร.ร.": "โรงเรียน", "ผอ.": "ผู้อำนวยการ",
+         "นศ.": "นักศึกษา", "ดร.": "ดอกเตอร์", "พ.ศ.": "พุทธศักราช", "ค.ศ.": "คริสต์ศักราช",
+         "ม.ค.": "มกราคม", "ก.พ.": "กุมภาพันธ์", "มี.ค.": "มีนาคม", "เม.ย.": "เมษายน", "พ.ค.": "พฤษภาคม",
+         "มิ.ย.": "มิถุนายน", "ก.ค.": "กรกฎาคม", "ส.ค.": "สิงหาคม", "ก.ย.": "กันยายน", "ต.ค.": "ตุลาคม",
+         "พ.ย.": "พฤศจิกายน", "ธ.ค.": "ธันวาคม"}
+_ABBR_RE = re.compile("|".join(re.escape(k) for k in sorted(_ABBR, key=len, reverse=True)))
+
+
+def spoken(text: str) -> str:
+    """บทไทย → แบบที่อ่านออกเสียงได้ตรง: เวลาเป็นคำพูด ตัวย่อเป็นคำเต็ม (โมเดลเสียงอ่านตามตัวอักษร "ชม." จึงกลายเป็น "ชม")"""
+    text = speak_times(text)
+    text = _UNIT_RE.sub(lambda x: x.group(1) + x.group(2) + _UNITS[x.group(3)], text)
+    text = _ABBR_RE.sub(lambda x: _ABBR[x.group(0)], text)
+    return text.replace("ฯ", "")
+
+
 # ---------------- ฟังก์ชันหลัก ----------------
 def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          on_progress: Optional[Callable[[float], None]] = None,
@@ -469,7 +494,7 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         if target == "th":
             for g in batch:
                 for u in g:
-                    u.target = speak_times(u.target)
+                    u.target = spoken(u.target)
         done += sum(map(len, batch))
         if on_progress:
             on_progress(done / len(utts))
@@ -548,7 +573,7 @@ def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 
             break
         log.info("shorten %d lines: %s", len(too_long), [u.id for u in too_long])
         for batch in _chunks(too_long, settings.translate_batch_size):
-            shorten(batch, target, budgets=budget)
+            shorten(batch, target, target_ratio=tolerance, budgets=budget)
     # ท่อนสั้น ๆ (ไม่ถึง 1 วินาที) มักเป็นคำเดียว ขยายแล้วไม่เป็นธรรมชาติ
     too_short = [u for u in utts if settings.fit_min_ratio > 0 and u.duration >= 1.0 and u.target.strip()
                  and estimate_seconds(u.target, target) < u.duration * settings.fit_min_ratio]
@@ -556,6 +581,9 @@ def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 
         log.info("lengthen %d lines: %s", len(too_short), [u.id for u in too_short])
         for batch in _chunks(too_short, settings.translate_batch_size):
             lengthen(batch, target, tolerance)
+    if target == "th":  # บทที่ย่อหรือขยายแล้วอาจมีตัวย่อกลับมา
+        for u in utts:
+            u.target = spoken(u.target)
 
 
 def lengthen(batch: list[Utterance], target: str = "th", tolerance: float = 1.1) -> None:
