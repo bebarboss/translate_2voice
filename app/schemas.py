@@ -164,10 +164,18 @@ class VoiceMood(BaseModel):
     duration: Optional[float] = None
     quality: Optional[float] = None
     analysis: Optional[VoiceAnalysis] = None
+    denoise: bool = False  # ลดเสียงรบกวนหลังแยกเพลง
 
 
 class SpeakerToLibrary(BaseModel):
-    name: str = Field(..., min_length=1, max_length=80)
+    """บันทึกเสียงของตัวละครในงานลงคลัง target: new = เสียงใหม่, replace = แทนเสียงตัวอย่างของ voice_id,
+    mood = เพิ่ม/แทนเสียงอารมณ์ mood ของ voice_id"""
+    target: Literal["new", "replace", "mood"] = "new"
+    voice_id: Optional[str] = None
+    mood: Optional[Mood] = None
+    lines: Optional[list[int]] = Field(None, description="id ประโยคที่ใช้ ไม่ส่ง = ทุกประโยคที่พูดคนเดียว")
+    denoise: bool = False
+    name: str = Field("", max_length=80)
     gender: Gender = ""
     tone: str = Field("", max_length=80)
     description: str = Field("", max_length=1000)
@@ -188,6 +196,7 @@ class LibraryVoice(BaseModel):
     error: Optional[str] = None
     filename: str = ""  # ชื่อไฟล์ที่อัปโหลด
     source_url: Optional[str] = None  # ลิงก์คลิป (แทนไฟล์) ดาวน์โหลดตอนเตรียมเสียง
+    denoise: bool = False  # ลดเสียงรบกวนหลังแยกเพลง (audio.denoise)
     text: str = ""  # ข้อความที่พูดในเสียงตัวอย่าง ต้องตรงกับเสียงจริง F5-TTS ถึงจะพากย์ไม่เพี้ยน
     duration: Optional[float] = None  # ความยาวเสียงตัวอย่าง (วินาที)
     pitch_hz: Optional[float] = None  # ระดับเสียงกลาง

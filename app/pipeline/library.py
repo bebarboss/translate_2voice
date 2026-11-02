@@ -178,7 +178,7 @@ def _normalize(wav: np.ndarray, target_db: float = -20.0, peak: float = 0.95) ->
     return (wav * gain).astype(np.float32)
 
 
-def clean_voice(raw: Path, work: Path, stage) -> dict:
+def clean_voice(raw: Path, work: Path, stage, denoise: bool = False) -> dict:
     """ส่วนที่ใช้การ์ดจอของ prepare (โหมด modal รันบน Modal ผ่าน gpu.prepare_voice)
     คืน wav (เสียงตัวอย่างที่ปรับความดังแล้ว), sr, text, pitch_hz, quality, emb"""
     from . import tts
@@ -188,6 +188,9 @@ def clean_voice(raw: Path, work: Path, stage) -> dict:
     else:
         gpu.release("tts")
         vocals, _ = audio.separate_vocals(raw, work, settings.demucs_model, settings.device)
+        if denoise:
+            stage("denoise", 0.0)
+            vocals = audio.denoise(vocals, work)
 
     stage("transcribe", 0.0)
     wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
@@ -240,7 +243,7 @@ def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> Non
     update = (lambda **f: store.update_mood(voice_id, mood, **f)) if mood else (  # noqa: E731
         lambda **f: store.update(voice_id, **f))
     d = store.mood_dir(voice_id, mood)
-    tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav", d / "ref_cut.wav"]
+    tmp = [d / "audio.wav", d / "vocals.wav", d / "bgm.wav", d / "vocals16k.wav", d / "ref_cut.wav", d / "dry.wav"]
     try:
         src = next(d.glob("original.*"), None)
         if src is None and v.source_url and not mood:  # เพิ่มด้วยลิงก์ ดาวน์โหลดครั้งแรก (ลองใหม่ใช้ไฟล์เดิม)
@@ -255,7 +258,9 @@ def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> Non
         raw = tmp[0]
         limit = ["-t", settings.voice_max_input_min * 60] if settings.voice_max_input_min > 0 else []
         audio.run(["ffmpeg", "-y", "-i", src, "-vn", *limit, "-ac", "2", "-ar", 44100, "-c:a", "pcm_s16le", raw])
-        r = gpu.prepare_voice(raw, d, lambda name, _progress: update(stage=name))
+        m = next((x for x in v.moods if x.mood == mood), None) if mood else None
+        denoise = m.denoise if m else v.denoise
+        r = gpu.prepare_voice(raw, d, lambda name, _progress: update(stage=name), denoise)
         wav, rsr = r["wav"], r["sr"]
         sf.write(store.ref_path(voice_id, mood), wav, rsr)
         done = dict(status=VoiceStatus.ready, stage="ready", text=r["text"], duration=round(len(wav) / rsr, 2),

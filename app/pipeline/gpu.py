@@ -37,7 +37,7 @@ REF_SR = 24000  # เสียงตัวอย่างของ F5-TTS (tts.S
 # ค่าตั้งค่าที่ส่งไปใช้บน Modal ทุกครั้งที่เรียก ไม่ต้อง deploy ใหม่เมื่อแก้ .env
 # ไม่ส่งค่าเฉพาะเครื่อง (DEVICE, LOW_VRAM, F5_FP32, WHISPER_COMPUTE_TYPE, F5_CACHE_DIR) และ HF_TOKEN (อยู่ใน Secret)
 REMOTE_FIELDS = (
-    "separator", "separator_model", "separator_overlap", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
+    "separator", "separator_model", "separator_overlap", "denoise_model", "demucs_model", "diarization_model", "whisper_model", "f5_model", "f5_en_model", "f5_cfg",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
     "diar_refine", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover",
@@ -280,14 +280,14 @@ def _decode(data: bytes) -> tuple[np.ndarray, int]:
 
 
 def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: Optional[int],
-                  report: Stage, voice_ref: bool = False) -> dict:
+                  report: Stage, voice_ref: bool = False, denoise: bool = False) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         mixed = work / "audio.flac"
         mixed.write_bytes(audio_flac)
         if voice_ref:  # เตรียมเสียงในคลัง (library.prepare)
             from .library import clean_voice
-            r = clean_voice(mixed, work, report)
+            r = clean_voice(mixed, work, report, denoise)
             return {"ref_flac": _encode(r["wav"], r["sr"]), "text": r["text"], "pitch_hz": r["pitch_hz"],
                     "quality": r["quality"], "emb": None if r["emb"] is None else r["emb"].tolist(),
                     "stats": r.get("stats")}
@@ -410,12 +410,15 @@ def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: O
             "speakers": res["speakers"]}
 
 
-def prepare_voice(raw: Path, work: Path, stage: Stage) -> dict:
-    """ทำความสะอาดและตัดเสียงในคลัง คืน wav, sr, text, pitch_hz, quality, emb (library.clean_voice)"""
+def prepare_voice(raw: Path, work: Path, stage: Stage, denoise: bool = False) -> dict:
+    """ทำความสะอาดและตัดเสียงในคลัง คืน wav, sr, text, pitch_hz, quality, emb (library.clean_voice)
+    denoise: ลดเสียงรบกวนหลังแยกเพลง"""
     if not remote():
         from .library import clean_voice
-        return clean_voice(raw, work, stage)
-    [res] = _run("analyze_audio", [((_flac(raw, SOURCE_SR), "th", None), {"voice_ref": True})], _follow(stage))
+        return clean_voice(raw, work, stage, denoise)
+    # ส่ง denoise เฉพาะตอนเปิด ฟังก์ชันบน Modal รุ่นก่อนหน้าไม่รู้จักค่านี้
+    kwargs = {"voice_ref": True, **({"denoise": True} if denoise else {})}
+    [res] = _run("analyze_audio", [((_flac(raw, SOURCE_SR), "th", None), kwargs)], _follow(stage))
     wav, sr = _decode(res["ref_flac"])
     emb = None if res["emb"] is None else np.asarray(res["emb"], dtype=np.float32)
     return {"wav": wav, "sr": sr, "text": res["text"], "pitch_hz": res["pitch_hz"], "quality": res["quality"],

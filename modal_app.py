@@ -79,15 +79,16 @@ def _reporter(key: Optional[str]):
 
 @app.function(cpu=4.0, memory=16384, **GPU)
 def analyze_audio(audio_flac: bytes, source_lang: Optional[str], num_speakers: Optional[int],
-                  config: Optional[dict] = None, progress_key: Optional[str] = None, voice_ref: bool = False) -> dict:
+                  config: Optional[dict] = None, progress_key: Optional[str] = None, voice_ref: bool = False,
+                  denoise: bool = False) -> dict:
     """เสียงต้นฉบับ (FLAC mono 44.1 kHz) → {vocals_flac, bgm_flac, turns, words, detected_lang,
     utterances, speakers, features}
-    voice_ref=True: เตรียมเสียงในคลัง → {ref_flac, text, pitch_hz, quality, emb}"""
+    voice_ref=True: เตรียมเสียงในคลัง → {ref_flac, text, pitch_hz, quality, emb} (denoise: ลดเสียงรบกวนหลังแยกเพลง)"""
     from app.pipeline import gpu
 
     gpu.apply_config(config)
     try:
-        return gpu.serve_analyze(audio_flac, source_lang, num_speakers, _reporter(progress_key), voice_ref)
+        return gpu.serve_analyze(audio_flac, source_lang, num_speakers, _reporter(progress_key), voice_ref, denoise)
     finally:
         models.commit()
 

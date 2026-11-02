@@ -584,45 +584,91 @@ def rename_speaker(job_id: str, speaker: str, body: SpeakerRename):
 LIBRARY_GAP = 0.4  # เว้นเงียบระหว่างประโยคที่ต่อกัน ให้ขั้นเตรียมเสียงแบ่งท่อนตรงช่วงหยุดได้
 
 
+@app.get("/jobs/{job_id}/lines/quality", dependencies=[Depends(require_key)])
+def line_quality(job_id: str) -> dict[str, Optional[float]]:
+    """id ประโยค → คะแนนความสะอาดของเสียงต้นฉบับ (1–4.5 ยิ่งสูงยิ่งไม่มีเพลงทับ) ที่วัดไว้ตอนวิเคราะห์
+    ประโยคที่แยกหรือแก้เวลาภายหลังไม่มีคะแนน"""
+    from .pipeline import gpu
+
+    get_job_or_404(job_id)
+    saved = gpu.saved_lines(store.dir(job_id), store.load_transcript(job_id)) or {}
+    return {str(i): x.get("quality") for i, x in saved.items()}
+
+
 @app.post("/jobs/{job_id}/speakers/{speaker}/library", response_model=LibraryVoice, status_code=202,
           dependencies=[Depends(require_key)])
-def speaker_to_library(job_id: str, speaker: str, body: SpeakerToLibrary):
-    """บันทึกเสียงของตัวละครนี้ลงคลัง: ต่อเสียงพูด (แยกเพลงออกแล้ว) ทุกประโยคของตัวละครตามบทปัจจุบัน
-    ข้ามประโยคที่คนอื่นพูดทับ แล้วเตรียมเสียงเหมือนอัปโหลดเอง (เลือกท่อนที่ชัดที่สุด ถอดข้อความ วัดเสียง)"""
+def speaker_to_library(job_id: str, speaker: str, body: SpeakerToLibrary, request: Request):
+    """บันทึกเสียงของตัวละครนี้ลงคลัง: ต่อเสียงพูด (แยกเพลงออกแล้ว) ของประโยคที่เลือก (ไม่เลือก = ทุกประโยค)
+    ข้ามประโยคที่คนอื่นพูดทับ แล้วเตรียมเสียงเหมือนอัปโหลดเอง (เลือกท่อนที่ชัดที่สุด ถอดข้อความ วัดเสียง)
+    target: new = เสียงใหม่, replace = แทนเสียงตัวอย่างของ voice_id (ชื่อและรายละเอียดเดิม), mood = เสียงอารมณ์ของ voice_id"""
     import numpy as np
     import soundfile as sf
 
+    # คลังเสียงใช้ร่วมกันทั้งระบบ แก้ได้เฉพาะผู้ดูแลเหมือน /voices (ADMIN_WRITES)
+    user = getattr(request.state, "user", None)
+    if accounts.auth_enabled() and (user is None or not accounts.is_admin(user)):
+        raise HTTPException(403, "บันทึกลงคลังเสียงได้เฉพาะผู้ดูแลระบบ")
     job, utterances = _editable_lines(job_id)
     if speaker not in job.speakers:
         raise HTTPException(404, f"ไม่รู้จักผู้พูด {speaker}")
     lang = job.detected_lang or job.source_lang
     if lang and lang != "th":
         raise HTTPException(400, "เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ใช้ข้อความที่พูดในเสียงตัวอย่างกำกับ) คลิปนี้เป็นภาษาอื่น")
+    target = None
+    if body.target == "new":
+        if not body.name.strip():
+            raise HTTPException(400, "ต้องตั้งชื่อเสียง")
+    else:
+        target = get_voice_or_404(body.voice_id or "")
+        if body.target == "mood" and not body.mood:
+            raise HTTPException(400, "ต้องเลือกอารมณ์")
+        busy = next((m for m in target.moods if m.mood == body.mood), None) if body.target == "mood" else target
+        if busy and busy.status == VoiceStatus.processing and busy.stage != "queued":
+            raise HTTPException(409, "กำลังเตรียมเสียงนี้อยู่ รอให้เสร็จก่อน")
     vocals = store.dir(job_id) / "vocals.wav"
     if not vocals.exists():
         raise HTTPException(409, "ไม่พบเสียงพูดที่แยกไว้ของงานนี้")
     others = [u for u in utterances if u.speaker != speaker]
-    own = [u for u in utterances if u.speaker == speaker
+    picked = set(body.lines) if body.lines is not None else None
+    own = [u for u in utterances if u.speaker == speaker and (picked is None or u.id in picked)
            and not any(min(u.end, o.end) - max(u.start, o.start) > 0.2 for o in others)]
+    speech = sum(u.duration for u in own)
+    if speech < 3:
+        raise HTTPException(400, f"ประโยคที่เลือก (ไม่นับช่วงที่คนอื่นพูดทับ) ยาวรวม {speech:.1f} วินาที ต้องมีอย่างน้อย 3 วินาที")
     sr = sf.info(vocals).samplerate
     parts = []
     for u in own:
         seg, _ = sf.read(vocals, start=int(u.start * sr), stop=int(u.end * sr), dtype="float32")
         parts += [seg.mean(axis=1) if seg.ndim > 1 else seg, np.zeros(int(LIBRARY_GAP * sr), dtype=np.float32)]
-    speech = sum(u.duration for u in own)
-    if speech < 3:
-        raise HTTPException(400, f"ตัวละครนี้พูดคนเดียว (ไม่ทับคนอื่น) แค่ {speech:.1f} วินาที ต้องมีอย่างน้อย 3 วินาที")
+    clip = np.concatenate(parts)
+    label = f"{job.filename} · {job.speaker_names.get(speaker) or speaker}"
 
-    voice_id = voice_store.new_id()
-    d = voice_store.dir(voice_id)
-    d.mkdir(parents=True, exist_ok=True)
-    sf.write(d / "original.wav", np.concatenate(parts), sr)
-    label = job.speaker_names.get(speaker) or speaker
-    v = voice_store.add(LibraryVoice(id=voice_id, name=body.name.strip(), gender=body.gender, tone=body.tone.strip(),
-                                     description=body.description.strip(), categories=_clean_categories(body.categories),
-                                     filename=f"{job.filename} · {label}"))
-    worker.submit_voice(voice_id)
-    store.update(job_id, saved_voices={**job.saved_voices, speaker: voice_id})
+    if body.target == "mood":
+        voice_store.delete_mood(target.id, body.mood)
+        d = voice_store.mood_dir(target.id, body.mood)
+        d.mkdir(parents=True, exist_ok=True)
+        sf.write(d / "original.wav", clip, sr)
+        v = voice_store.set_mood(target.id, VoiceMood(mood=body.mood, filename=label, denoise=body.denoise))
+        worker.submit_voice(target.id, body.mood)
+        return v
+    if body.target == "replace":
+        d = voice_store.dir(target.id)
+        for old in d.glob("original.*"):
+            old.unlink(missing_ok=True)
+        sf.write(d / "original.wav", clip, sr)
+        v = voice_store.update(target.id, status=VoiceStatus.processing, stage="queued", error=None,
+                               filename=label, source_url=None, denoise=body.denoise)
+        worker.submit_voice(target.id)
+    else:
+        voice_id = voice_store.new_id()
+        d = voice_store.dir(voice_id)
+        d.mkdir(parents=True, exist_ok=True)
+        sf.write(d / "original.wav", clip, sr)
+        v = voice_store.add(LibraryVoice(id=voice_id, name=body.name.strip(), gender=body.gender, tone=body.tone.strip(),
+                                         description=body.description.strip(), categories=_clean_categories(body.categories),
+                                         filename=label, denoise=body.denoise))
+        worker.submit_voice(voice_id)
+    store.update(job_id, saved_voices={**job.saved_voices, speaker: v.id})
     return v
 
 
@@ -759,6 +805,7 @@ async def create_voice(
     tone: str = Form("", max_length=80, description="โทนเสียง เช่น ทุ้มลึก นุ่มนวล สดใส"),
     description: str = Form("", max_length=1000, description="รายละเอียด เช่น ประวัติคนพากย์ บทที่เหมาะ"),
     categories: list[str] = Form([], description="หมวดหมู่ ส่งได้หลายค่า เช่น ละคร หนัง การ์ตูน"),
+    denoise: bool = Form(False, description="true = ลดเสียงรบกวนหลังแยกเพลง (เสียงมีซ่า ลม หรือเพลงหลงเหลือ)"),
 ):
     """อัปโหลดเสียงเข้าคลัง ระบบแยกเสียงรบกวน ประเมินทุกท่อนพูดในไฟล์ เลือกท่อนที่สะอาดที่สุดของเสียงหลัก 3–10 วินาที และถอดข้อความให้"""
     url = (url or "").strip()
@@ -781,7 +828,7 @@ async def create_voice(
     v = voice_store.add(LibraryVoice(id=voice_id, name=name.strip(), gender=gender, tone=tone.strip(),
                                      description=description.strip(), categories=_clean_categories(categories),
                                      filename=file.filename if has_file else urlparse(url).netloc.replace("www.", ""),
-                                     source_url=url or None))
+                                     source_url=url or None, denoise=denoise))
     worker.submit_voice(voice_id)
     return v
 
@@ -892,6 +939,7 @@ async def add_voice_mood(
     voice_id: str,
     file: UploadFile = File(..., description="คลิปเสียงของคนพากย์คนเดิม พูดด้วยอารมณ์นั้น"),
     mood: Mood = Form(...),
+    denoise: bool = Form(False, description="true = ลดเสียงรบกวนหลังแยกเพลง"),
 ):
     """เพิ่ม (หรือแทน) เสียงตัวอย่างอารมณ์หนึ่ง ประโยคที่เลือกอารมณ์นี้จะพากย์จากเสียงตัวอย่างนี้แทนเสียงปกติ"""
     v = get_voice_or_404(voice_id)
@@ -905,7 +953,7 @@ async def add_voice_mood(
     d = voice_store.mood_dir(voice_id, mood)
     d.mkdir(parents=True, exist_ok=True)
     await save_upload(file, d / f"original{ext}", d)
-    v = voice_store.set_mood(voice_id, VoiceMood(mood=mood, filename=file.filename or ""))
+    v = voice_store.set_mood(voice_id, VoiceMood(mood=mood, filename=file.filename or "", denoise=denoise))
     worker.submit_voice(voice_id, mood)
     return v
 

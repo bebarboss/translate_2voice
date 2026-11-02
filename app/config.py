@@ -65,6 +65,8 @@ class Settings:
     # roformer โหลดไม่ได้หรือแยกไม่สำเร็จ จะใช้ Demucs แทนอัตโนมัติ
     separator: str = _env("SEPARATOR", "roformer")
     separator_model: str = _env("SEPARATOR_MODEL", "model_bs_roformer_ep_317_sdr_12.9755.ckpt")
+    # ลดเสียงรบกวนในเสียงคลัง (เลือกได้ตอนเพิ่มเสียง) ใช้หลังแยกเพลง: Mel-Roformer-Denoise ผ่าน audio-separator ชุดเดิม
+    denoise_model: str = _env("DENOISE_MODEL", "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt")
     # จำนวนหน้าต่างที่ซ้อนกันตอนแยก (ค่าเริ่มต้นของไลบรารีคือ 8 ช้ามาก 2 เร็วกว่าราว 4 เท่า คุณภาพต่างกันน้อยมาก)
     separator_overlap: int = _int("SEPARATOR_OVERLAP", 2)
     demucs_model: str = _env("DEMUCS_MODEL", "htdemucs")

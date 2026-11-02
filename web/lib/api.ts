@@ -122,6 +122,15 @@ export interface VoiceMeta {
   tone: string;
   description: string;
   categories: string[];
+  denoise?: boolean; // ลดเสียงรบกวนหลังแยกเพลง
+}
+
+/** บันทึกเสียงของตัวละครในงานลงคลัง: new = เสียงใหม่, replace = แทนเสียงตัวอย่างของ voice_id, mood = เสียงอารมณ์ของ voice_id */
+export interface SpeakerSave extends VoiceMeta {
+  target: "new" | "replace" | "mood";
+  voice_id?: string;
+  mood?: Mood;
+  lines?: number[]; // id ประโยคที่ใช้ ไม่ส่ง = ทุกประโยคที่พูดคนเดียว
 }
 
 export interface Utterance {
@@ -287,8 +296,10 @@ export const api = {
     request<Job>(`/jobs/${id}/speakers/${speaker}${into ? `?into=${encodeURIComponent(into)}` : ""}`,
       { method: "DELETE" }),
   /** บันทึกเสียงของตัวละครนี้ลงคลัง (ต่อทุกประโยคที่ไม่มีคนอื่นพูดทับ แล้วเตรียมเสียงเหมือนอัปโหลดเอง) */
-  speakerToLibrary: (id: string, speaker: string, meta: VoiceMeta) =>
-    request<LibraryVoice>(`/jobs/${id}/speakers/${speaker}/library`, json("POST", meta)),
+  speakerToLibrary: (id: string, speaker: string, body: SpeakerSave) =>
+    request<LibraryVoice>(`/jobs/${id}/speakers/${speaker}/library`, json("POST", body)),
+  /** id ประโยค → คะแนนความสะอาดเสียงต้นฉบับ (1–4.5) ที่วัดตอนวิเคราะห์ */
+  lineQuality: (id: string) => request<Record<string, number | null>>(`/jobs/${id}/lines/quality`),
   retranslate: (id: string, body: { genre?: string; glossary?: string }) =>
     request<{ id: string }>(`/jobs/${id}/retranslate`, json("POST", body)),
   synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
@@ -307,6 +318,7 @@ export const api = {
     form.append("tone", meta.tone);
     form.append("description", meta.description);
     meta.categories.forEach((c) => form.append("categories", c));
+    if (meta.denoise) form.append("denoise", "true");
     return request<LibraryVoice>("/voices", { method: "POST", body: form });
   },
   updateVoice: (id: string, patch: Partial<Pick<LibraryVoice, "name" | "gender" | "tone" | "description" | "categories" | "text">>) =>
@@ -400,6 +412,7 @@ export function uploadVoice(
   form.append("tone", meta.tone);
   form.append("description", meta.description);
   meta.categories.forEach((c) => form.append("categories", c));
+  if (meta.denoise) form.append("denoise", "true");
   form.append("file", file);
   return upload<LibraryVoice>("voices", form, onProgress);
 }

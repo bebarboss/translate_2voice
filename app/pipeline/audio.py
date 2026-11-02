@@ -93,9 +93,50 @@ def _separate_roformer(audio_wav: Path, work_dir: Path, model: str) -> tuple[Pat
     return vocals, bgm
 
 
+_denoiser = None
+
+
+def denoise(vocals: Path, work_dir: Path) -> Path:
+    """ลดเสียงรบกวน (ซ่า ลม เพลงที่หลงเหลือ) ในเสียงพูดที่แยกแล้ว คืน work_dir/dry.wav
+    ทำไม่สำเร็จคืนเสียงเดิม (ไม่ให้การเพิ่มเสียงล้มเพราะขั้นเสริม)"""
+    global _denoiser
+    import os
+
+    from ..config import settings
+
+    try:
+        from audio_separator.separator import Separator
+
+        out_dir = work_dir / "_denoise"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if _denoiser is None or getattr(_denoiser, "dub_key", None) != settings.denoise_model:
+            cache = os.path.join(os.environ.get("TORCH_HOME", os.path.expanduser("~/.cache")), "audio-separator")
+            sep = Separator(model_file_dir=cache, output_dir=str(out_dir), output_format="WAV", sample_rate=44100,
+                            use_autocast=True)
+            sep.load_model(model_filename=settings.denoise_model)
+            sep.dub_key = settings.denoise_model
+            _denoiser = sep
+        _denoiser.output_dir = str(out_dir)
+        if getattr(_denoiser, "model_instance", None) is not None:
+            _denoiser.model_instance.output_dir = str(out_dir)
+        files = _denoiser.separate(str(vocals), custom_output_names={"Dry": "dry", "Other": "noise"})
+        dry = next((out_dir / Path(f).name for f in files if "dry" in Path(f).stem.lower()
+                    and "no" not in Path(f).stem.lower()), None)
+        if dry is None:
+            raise RuntimeError(f"ไม่พบไฟล์เสียงที่ลดเสียงรบกวนแล้ว: {files}")
+        out = work_dir / "dry.wav"
+        shutil.move(str(dry), out)
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("denoise failed (%s), using separated vocals as is", exc)
+        return vocals
+
+
 def unload() -> None:
-    global _separator
+    global _separator, _denoiser
     _separator = None
+    _denoiser = None
 
 
 def _separate_demucs(audio_wav: Path, work_dir: Path, model: str, device: str) -> tuple[Path, Path]:
