@@ -92,7 +92,7 @@ def require_key_or_upload_token(x_api_key: Optional[str] = Header(default=None),
     require_key(x_api_key)
 
 
-OPEN_PATHS = ("/health", "/auth/", "/billing/plans", "/docs", "/openapi.json", "/redoc")
+OPEN_PATHS = ("/health", "/auth/", "/legal", "/billing/plans", "/docs", "/openapi.json", "/redoc")
 ADMIN_WRITES = ("/settings", "/voices")  # เปิดระบบบัญชีแล้ว คลังเสียงและค่าตั้งระบบแก้ได้เฉพาะผู้ดูแล
 
 
@@ -115,8 +115,11 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
         raise HTTPException(401, "กรุณาเข้าสู่ระบบ")
     if accounts.is_admin(user):
         return
-    if not accounts.profile_complete(user):  # ล็อกอินครั้งแรก: กรอกข้อมูลเบื้องต้นก่อน (PUT /auth/profile อยู่ใน OPEN_PATHS)
+    # ล็อกอินครั้งแรก: กรอกข้อมูลเบื้องต้นและยอมรับข้อกำหนดก่อน (PUT /auth/profile, POST /auth/consent อยู่ใน OPEN_PATHS)
+    if not accounts.profile_complete(user):
         raise HTTPException(428, "กรุณากรอกข้อมูลเบื้องต้นก่อนใช้งาน")
+    if not accounts.consent_current(user):
+        raise HTTPException(428, "ข้อกำหนดการใช้งานหรือนโยบายความเป็นส่วนตัวมีฉบับใหม่ กรุณายอมรับก่อนใช้งานต่อ")
     job_id = request.path_params.get("job_id")
     if job_id:
         job = store.get(job_id)

@@ -55,7 +55,14 @@ export interface Profile { full_name: string; phone: string; account_type: Accou
 export interface User {
   id: string; email: string; name: string; admin: boolean; owner: boolean; credits: number;
   profile_complete: boolean; profile: Profile;
+  /** ยอมรับข้อกำหนดและนโยบายฉบับปัจจุบันแล้ว (false = ต้องยอมรับก่อนใช้งาน) */
+  consent_current: boolean; marketing: boolean;
+  consent: { terms: ConsentRecord | null; privacy: ConsentRecord | null };
 }
+export interface ConsentRecord { version: string; at: number }
+export interface LegalDoc { version: string; text: string }
+export interface Legal { terms: LegalDoc; privacy: LegalDoc }
+export interface ConsentChoice { terms_version: string; privacy_version: string; marketing?: boolean }
 /** minutes = เครดิตแพ็กเกจต่อรอบ */
 export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
 /** minutes_left = เครดิตแพ็กเกจที่เหลือ หมดอายุพร้อมแพ็กเกจ */
@@ -273,7 +280,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       window.location.href = `/welcome?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     // ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น → หน้ากรอกข้อมูล แล้วกลับมาหน้านี้
-    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome)/.test(window.location.pathname)) {
+    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy)/.test(window.location.pathname)) {
       window.location.href = `/onboarding?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     throw new ApiError(errorMessage(res.status, body), res.status);
@@ -294,7 +301,10 @@ export const api = {
   /** สมัครหรือเข้าสู่ระบบด้วย ID token จากปุ่ม Google (บัญชีใหม่สร้างให้เลย) */
   googleLogin: (credential: string) => request<{ user: User }>("/auth/google", json("POST", { credential })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
-  saveProfile: (body: Profile & { name?: string }) => request<User>("/auth/profile", json("PUT", body)),
+  saveProfile: (body: Profile & { name?: string } & Partial<ConsentChoice>) => request<User>("/auth/profile", json("PUT", body)),
+  legal: () => request<Legal>("/legal"),
+  acceptConsent: (body: ConsentChoice) => request<User>("/auth/consent", json("POST", body)),
+  setMarketing: (on: boolean) => request<User>("/auth/marketing", json("PUT", { on })),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),

@@ -200,8 +200,19 @@ def profile_complete(row: sqlite3.Row) -> bool:
 def public_user(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row),
             "owner": is_owner(row["email"]), "credits": credits_out(row["credits"]),
-            "profile_complete": profile_complete(row),
+            "profile_complete": profile_complete(row), **_consent_out(row["id"]),
             "profile": {k: row[k] for k in ("full_name", "phone", "account_type", "company", "use_case")}}
+
+
+def _consent_out(uid: str) -> dict:
+    from . import consent
+    st = consent.status(uid)
+    return {"consent_current": st["current"], "marketing": st["marketing"], "consent": {"terms": st["terms"], "privacy": st["privacy"]}}
+
+
+def consent_current(row: sqlite3.Row) -> bool:
+    from . import consent
+    return consent.status(row["id"])["current"]
 
 
 ACCOUNT_TYPES = ("personal", "creator", "business")

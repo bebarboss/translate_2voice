@@ -17,8 +17,16 @@ const signed = (n: number) => (n > 0 ? `+${fmtNum(n)}` : `−${fmtNum(Math.abs(n
 type Message = { kind: "error" | "info"; text: string } | null;
 const TYPE_LABEL: Record<AccountType, string> = { personal: "บุคคลทั่วไป", creator: "ครีเอเตอร์", business: "บริษัท / หน่วยงาน" };
 
-function ProfileSection({ user }: { user: User }) {
+const fmtDay = (unix: number) => new Date(unix * 1000).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
+
+function ProfileSection({ user: initial }: { user: User }) {
+  const [user, setUser] = useState(initial);
+  const [saving, setSaving] = useState(false);
   const p = user.profile;
+  const toggle = async () => {
+    setSaving(true);
+    try { setUser(await api.setMarketing(!user.marketing)); } catch { /* คงค่าเดิม */ } finally { setSaving(false); }
+  };
   const rows: [string, string][] = [
     ["ชื่อ-นามสกุล", p.full_name], ["เบอร์โทร", p.phone],
     ["ประเภทผู้ใช้", p.account_type ? TYPE_LABEL[p.account_type] : ""],
@@ -34,6 +42,17 @@ function ProfileSection({ user }: { user: User }) {
       <dl className="profile-list">
         {rows.map(([k, v]) => <div key={k}><dt className="dim">{k}</dt><dd>{v || <span className="dim">-</span>}</dd></div>)}
       </dl>
+      <div className="row" style={{ gap: 16, fontSize: 14 }}>
+        <span className="dim">
+          <a href="/terms" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a>
+          {user.consent.terms && ` ยอมรับฉบับ ${user.consent.terms.version} เมื่อ ${fmtDay(user.consent.terms.at)}`}
+          {" · "}<a href="/privacy" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a>
+          {user.consent.privacy && ` ฉบับ ${user.consent.privacy.version}`}
+        </span>
+        <label className="agree" style={{ fontSize: 14 }}>
+          <input type="checkbox" checked={user.marketing} disabled={saving} onChange={toggle} />รับข่าวสารและโปรโมชันทางอีเมล
+        </label>
+      </div>
     </section>
   );
 }
@@ -255,6 +274,7 @@ function AdminSection({ me }: { me: string }) {
                       <div className="dim">{u.profile.full_name} · {u.profile.phone}
                         {u.profile.account_type && ` · ${TYPE_LABEL[u.profile.account_type]}`}{u.profile.company && ` (${u.profile.company})`}</div>
                     ) : <div className="dim">ยังไม่กรอกข้อมูล</div>}
+                    {!u.consent_current && <div className="dim">ยังไม่ยอมรับข้อกำหนดฉบับปัจจุบัน</div>}
                   </td>
                   <td className="mono">{fmtNum(u.credits)}</td>
                   <td>{u.subscription && plan

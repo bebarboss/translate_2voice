@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import accounts
+from . import accounts, consent
 from .accounts import AccountError
 
 router = APIRouter()
@@ -53,6 +53,19 @@ class Profile(BaseModel):
     account_type: str = Field(..., description="personal = บุคคลทั่วไป, creator = ครีเอเตอร์, business = บริษัท/หน่วยงาน")
     company: str = Field("", max_length=120, description="ชื่อบริษัทหรือหน่วยงาน (จำเป็นเมื่อ account_type = business)")
     use_case: str = Field("", max_length=300, description="ใช้พากย์งานแบบไหน")
+    terms_version: Optional[str] = Field(None, max_length=20, description="ฉบับข้อกำหนดที่อ่านและยอมรับ (จำเป็นจนกว่าจะยอมรับฉบับปัจจุบัน)")
+    privacy_version: Optional[str] = Field(None, max_length=20, description="ฉบับนโยบายความเป็นส่วนตัวที่อ่านและรับทราบ")
+    marketing: Optional[bool] = Field(None, description="รับข่าวสารและโปรโมชัน (ไม่บังคับ)")
+
+
+class ConsentAccept(BaseModel):
+    terms_version: str = Field(..., max_length=20)
+    privacy_version: str = Field(..., max_length=20)
+    marketing: Optional[bool] = None
+
+
+class Marketing(BaseModel):
+    on: bool
 
 
 class Subscribe(BaseModel):
@@ -109,14 +122,48 @@ def me(user=Depends(require_user)):
     return accounts.public_user(user)
 
 
+def _client(request: Request) -> tuple[str, str]:
+    """IP และเบราว์เซอร์ของผู้กดยอมรับ (หน้าเว็บส่งต่อมาใน x-client-ip / x-client-ua)"""
+    ip = request.headers.get("x-client-ip") or (request.client.host if request.client else "")
+    return ip, request.headers.get("x-client-ua") or request.headers.get("user-agent") or ""
+
+
+@router.get("/legal")
+def legal():
+    """ข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวฉบับปัจจุบัน (อ่านได้โดยไม่ต้องล็อกอิน)"""
+    return consent.documents()
+
+
 @router.put("/auth/profile")
-def save_profile(body: Profile, user=Depends(require_user)):
-    """ข้อมูลเบื้องต้น: ผู้ใช้ต้องกรอกก่อนใช้งานครั้งแรก (main.access_guard) แก้ภายหลังได้"""
+def save_profile(body: Profile, request: Request, user=Depends(require_user)):
+    """ข้อมูลเบื้องต้นพร้อมยอมรับข้อกำหนดและนโยบาย: ผู้ใช้ต้องทำก่อนใช้งานครั้งแรก (main.access_guard) แก้ภายหลังได้"""
     try:
+        if body.terms_version or body.privacy_version:
+            consent.accept(user["id"], body.terms_version or "", body.privacy_version or "", body.marketing,
+                           *_client(request))
+        elif not consent.status(user["id"])["current"]:
+            raise AccountError(400, "ต้องยอมรับข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวก่อน")
         return accounts.save_profile(user["id"], body.name, body.full_name, body.phone, body.account_type,
                                      body.company, body.use_case)
     except AccountError as e:
         raise _fail(e)
+
+
+@router.post("/auth/consent")
+def accept_consent(body: ConsentAccept, request: Request, user=Depends(require_user)):
+    """ยอมรับข้อกำหนดและนโยบายฉบับใหม่ (เมื่อแก้ข้อความแล้วผู้ใช้ต้องยอมรับใหม่)"""
+    try:
+        consent.accept(user["id"], body.terms_version, body.privacy_version, body.marketing, *_client(request))
+    except AccountError as e:
+        raise _fail(e)
+    return accounts.public_user(accounts.user_by_id(user["id"]))
+
+
+@router.put("/auth/marketing")
+def set_marketing(body: Marketing, request: Request, user=Depends(require_user)):
+    """เปิดหรือปิดการรับข่าวสาร (ถอนความยินยอมได้ตลอด)"""
+    consent.set_marketing(user["id"], body.on, *_client(request))
+    return accounts.public_user(accounts.user_by_id(user["id"]))
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ

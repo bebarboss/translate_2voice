@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MicIcon } from "@/components/Icons";
-import { api, type AccountType } from "@/lib/api";
+import { api, type AccountType, type Legal } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 
 const TYPES: { id: AccountType; label: string; hint: string }[] = [
@@ -27,6 +27,11 @@ export default function OnboardingPage() {
   const [useCase, setUseCase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [legal, setLegal] = useState<Legal | null>(null);
+  const [terms, setTerms] = useState(false);
+  const [privacy, setPrivacy] = useState(false);
+  const [marketing, setMarketing] = useState(false);
+  useEffect(() => { api.legal().then(setLegal).catch((e) => setError(e.message)); }, []);
 
   useEffect(() => {
     if (!loaded) return;
@@ -39,18 +44,29 @@ export default function OnboardingPage() {
     setType(p.account_type);
     setCompany(p.company);
     setUseCase(p.use_case);
+    setMarketing(user.marketing);
   }, [loaded, config, user]);
 
   const editing = !!user?.profile_complete;
-  const ready = fullName.trim().length >= 2 && phone.trim() && type && (type !== "business" || company.trim());
+  const needConsent = !!user && !user.consent_current;
+  const consentOnly = editing && needConsent; // ผู้ใช้เดิม: ข้อกำหนดมีฉบับใหม่ ยอมรับอย่างเดียว
+  const consentOk = !needConsent || (terms && privacy && !!legal);
+  const ready = consentOk && (consentOnly
+    || (fullName.trim().length >= 2 && phone.trim() && type && (type !== "business" || company.trim())));
+  const versions = legal && needConsent
+    ? { terms_version: legal.terms.version, privacy_version: legal.privacy.version, marketing } : {};
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!type) return;
     setBusy(true);
     setError("");
     try {
-      await api.saveProfile({ name, full_name: fullName, phone, account_type: type, company, use_case: useCase });
+      if (consentOnly && legal) {
+        await api.acceptConsent({ terms_version: legal.terms.version, privacy_version: legal.privacy.version, marketing });
+      } else {
+        if (!type) return;
+        await api.saveProfile({ name, full_name: fullName, phone, account_type: type, company, use_case: useCase, ...versions });
+      }
       window.location.href = nextPath();
     } catch (err) {
       setError((err as Error).message);
@@ -67,11 +83,15 @@ export default function OnboardingPage() {
           Dubbing Studio
         </div>
         <div>
-          <h1 id="ob-title" style={{ margin: "0 0 4px", fontSize: 22 }}>{editing ? "แก้ไขข้อมูลบัญชี" : "ข้อมูลเบื้องต้น"}</h1>
+          <h1 id="ob-title" style={{ margin: "0 0 4px", fontSize: 22 }}>
+            {consentOnly ? "ข้อกำหนดฉบับใหม่" : editing ? "แก้ไขข้อมูลบัญชี" : "ข้อมูลเบื้องต้น"}
+          </h1>
           <span className="muted">
-            {editing ? user.email : <>ยินดีต้อนรับ {user.email} กรอกข้อมูลอีกนิดก่อนเริ่มใช้งาน</>}
+            {consentOnly ? "ข้อกำหนดการใช้งานหรือนโยบายความเป็นส่วนตัวมีการแก้ไข อ่านและกดยอมรับก่อนใช้งานต่อ"
+              : editing ? user.email : <>ยินดีต้อนรับ {user.email} กรอกข้อมูลอีกนิดก่อนเริ่มใช้งาน</>}
           </span>
         </div>
+        {!consentOnly && <>
 
         <div className="field">
           <label htmlFor="ob-full">ชื่อ-นามสกุล *</label>
@@ -110,10 +130,30 @@ export default function OnboardingPage() {
           <textarea id="ob-use" className="input" rows={2} maxLength={300} placeholder="เช่น ซีรีส์จีน คลิปสอน รีวิวสินค้า"
             value={useCase} onChange={(e) => setUseCase(e.target.value)} />
         </div>
+        </>}
+
+        {needConsent && (
+          <div className="consent-checks">
+            <label className="agree">
+              <input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} />
+              <span>ข้าพเจ้ายอมรับ <a href="/terms" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a>
+                {legal && <span className="dim"> (ฉบับ {legal.terms.version})</span>} และรับรองว่ามีสิทธิ์ในคลิปและเสียงที่อัปโหลด *</span>
+            </label>
+            <label className="agree">
+              <input type="checkbox" checked={privacy} onChange={(e) => setPrivacy(e.target.checked)} />
+              <span>ข้าพเจ้าได้อ่านและรับทราบ <a href="/privacy" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a>
+                {legal && <span className="dim"> (ฉบับ {legal.privacy.version})</span>} รวมถึงการส่งข้อมูลไปประมวลผลกับผู้ให้บริการในต่างประเทศ *</span>
+            </label>
+            <label className="agree">
+              <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} />
+              <span>รับข่าวสาร ฟีเจอร์ใหม่ และโปรโมชันทางอีเมล (ไม่บังคับ ยกเลิกได้ที่หน้าบัญชี)</span>
+            </label>
+          </div>
+        )}
 
         {error && <div className="alert error" role="alert">{error}</div>}
         <button type="submit" className="btn primary" disabled={busy || !ready}>
-          {busy ? "กำลังบันทึก..." : editing ? "บันทึก" : "เริ่มใช้งาน"}
+          {busy ? "กำลังบันทึก..." : consentOnly ? "ยอมรับและใช้งานต่อ" : editing ? "บันทึก" : "เริ่มใช้งาน"}
         </button>
         <span className="dim" style={{ fontSize: 13 }}>ใช้ติดต่อเรื่องบัญชีและการชำระเงินเท่านั้น ไม่เปิดเผยให้ผู้อื่น</span>
       </form>
