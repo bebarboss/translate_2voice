@@ -6,6 +6,7 @@
 """
 import re
 import unicodedata
+from itertools import combinations
 from typing import NamedTuple, Optional
 
 import numpy as np
@@ -194,19 +195,49 @@ def _position(text: str, fraction: float) -> float:
     return len(text)
 
 
+MAX_MARK_GAP = 0.3  # จุด / กับจุดหยุดต้นฉบับที่ตำแหน่ง (สัดส่วนของประโยค) ห่างกันเกินนี้ ไม่จับคู่กัน
+
+
+def match_marks(marks: list[int], n_chars: int, src: list[tuple[float, float, int]], u) -> list[tuple[int, tuple[float, float]]]:
+    """จับคู่จุด / ในบทแปล (ตำแหน่งตัวอักษร) กับจุดหยุดในเสียงต้นฉบับของท่อน u ตามลำดับ
+    จำนวนเท่ากัน = คู่กันตามลำดับ ไม่เท่า (ผู้แปลวางขาดหรือเกิน หรือบางจุดตกกลางคำ) = เลือกชุดที่ตำแหน่งตามสัดส่วน
+    (ตัวอักษรในบท ↔ เวลาที่พูด) ใกล้กันที่สุด แล้วตัดคู่ที่ห่างเกิน MAX_MARK_GAP ทิ้ง"""
+    if not marks or not src:
+        return []
+    spans = [(ps, pe) for ps, pe, _ in src]
+    if len(marks) == len(src):
+        return list(zip(marks, spans))
+    dur = max(u.end - u.start, 1e-6)
+    mf = [m / max(n_chars, 1) for m in marks]
+    sf = [((ps + pe) / 2 - u.start) / dur for ps, pe in spans]
+    n = min(len(mf), len(sf))
+    best: Optional[tuple[float, list[tuple[int, int]]]] = None
+    if len(mf) > len(sf):  # เลือก n จุด / ให้เข้ากับจุดหยุดทุกจุด
+        options = ([(i, j) for j, i in enumerate(idx)] for idx in combinations(range(len(mf)), n))
+    else:  # เลือก n จุดหยุดให้เข้ากับจุด / ทุกจุด
+        options = ([(i, j) for i, j in enumerate(idx)] for idx in combinations(range(len(sf)), n))
+    for pairs in options:
+        cost = sum(abs(mf[i] - sf[j]) for i, j in pairs)
+        if best is None or cost < best[0]:
+            best = (cost, pairs)
+    return [(marks[i], spans[j]) for i, j in best[1] if abs(mf[i] - sf[j]) <= MAX_MARK_GAP]
+
+
 def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chunk: float = 0.8,
-         words: Optional[list] = None) -> list[Chunk]:
+         words: Optional[list] = None, min_marked_chunk: float = 0.3) -> list[Chunk]:
     """แบ่งประโยค (ท่อนที่ติดกันของคนเดียว) เป็นช่วงพูดตามจังหวะหยุดของต้นฉบับ
-    words: เวลาของแต่ละคำในเสียงต้นฉบับ (words.json) ใช้หาว่าหยุดหลังพูดไปแค่ไหนแล้ว"""
-    # บทที่มี / (ผู้แปลวางจุดหยุดตามความหมาย) ตัดตรงนั้นพอดี ถ้าจำนวนตรงกับจุดหยุดของต้นฉบับในท่อนนั้น
+    words: เวลาของแต่ละคำในเสียงต้นฉบับ (words.json) ใช้หาว่าหยุดหลังพูดไปแค่ไหนแล้ว
+    min_chunk: ช่วงที่ตัดเองจากความเงียบสั้นกว่านี้ยุบรวม ช่วงที่ตัดตาม / ใช้ min_marked_chunk แทน
+    (นักแสดงหยุดจริงหลังคำสั้น ๆ เช่น เรียกชื่อแล้วเว้น ต้องคงจังหวะนั้นไว้)"""
+    # บทที่มี / (ผู้แปลวางจุดหยุดตามความหมาย) ตัดตรงนั้นพอดี จับคู่กับจุดหยุดของต้นฉบับในท่อนนั้น (match_marks)
     marked: dict[int, list[tuple[int, tuple[float, float]]]] = {}
     clean = []
     for k, u in enumerate(group):
-        text, marks, ok = split_marks(u.target)
-        if marks and ok:
-            src = source_pauses(u, orig, sr, words, min_pause)
-            if len(src) == len(marks):
-                marked[k] = [(pos, (ps, pe)) for pos, (ps, pe, _) in zip(marks, src)]
+        text, marks, _ = split_marks(u.target)
+        if marks:
+            pairs = match_marks(marks, len(text), source_pauses(u, orig, sr, words, min_pause), u)
+            if pairs:
+                marked[k] = pairs
         clean.append(u.model_copy(update={"target": text}) if text != u.target else u)
     group = clean
     first, last = group[0], group[-1]
@@ -220,6 +251,7 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
     for k, ms in marked.items():
         for pos, span in ms:
             cuts[(k, pos)] = span
+    marked_keys = set(cuts)
     for ps, pe in sorted(pauses):
         mid = (ps + pe) / 2
         # หยุดคร่อมขอบท่อน (ขอบที่ผู้ใช้ตั้งเวลาเลยเข้าไปในช่วงหยุด) → ตัดที่ขอบท่อน ไม่ตัดกลางบทของท่อนก่อน
@@ -258,12 +290,17 @@ def plan(group: list, orig: np.ndarray, sr: int, min_pause: float = 0.3, min_chu
             t0, k0, p0 = pe, k, p
         return out
 
+    def too_short(i: int, c: Chunk) -> bool:
+        # ช่วงที่ขอบด้านใดด้านหนึ่งตัดตาม / ยอมให้สั้นกว่า (นักแสดงหยุดตรงนั้นจริง และผู้แปลวางจุดตามความหมาย)
+        soft = (i < len(keys) and keys[i] in marked_keys) or (i > 0 and keys[i - 1] in marked_keys)
+        limit, chars = (min_marked_chunk, 2) if soft else (min_chunk, 4)
+        return c.end - c.start < limit or len(c.text.replace(" ", "")) < chars
+
     # ช่วงที่สั้นหรือมีคำน้อยเกินไป F5-TTS มักพูดมั่ว → ยุบรวมกับช่วงถัดไป
     keys = sorted(cuts)
     while keys:
         chunks = chunks_for(keys)
-        bad = next((i for i, c in enumerate(chunks)
-                    if c.end - c.start < min_chunk or len(c.text.replace(" ", "")) < 4), None)
+        bad = next((i for i, c in enumerate(chunks) if too_short(i, c)), None)
         if bad is None:
             return chunks
         keys.pop(min(bad, len(keys) - 1))
