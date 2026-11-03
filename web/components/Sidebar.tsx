@@ -28,7 +28,7 @@ export default function Sidebar() {
   }, [open]);
   // หน้าแรกก่อนเข้าสู่ระบบมีเมนูของตัวเอง หน้าเข้าสู่ระบบเป็นหน้าเดี่ยว
   if (path.startsWith("/welcome") || path.startsWith("/login") || path.startsWith("/onboarding")
-    || path.startsWith("/terms") || path.startsWith("/privacy")) return null;
+    || path.startsWith("/terms") || path.startsWith("/privacy") || path.startsWith("/actor-consent")) return null;
 
   const brand = (
     <Link href="/" className="brand">

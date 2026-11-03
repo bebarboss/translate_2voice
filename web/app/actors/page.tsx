@@ -2,7 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorPayout, type AdminActor, type LibraryVoice, type UsageRow, type UsageSummary } from "@/lib/api";
+import { api, fileUrl, type ActorConsentRecord, type ActorPayout, type AdminActor, type LibraryVoice, type UsageRow,
+  type UsageSummary } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
@@ -35,7 +36,15 @@ const Alert = ({ m }: { m: Message }) =>
 
 function Applicants() {
   const [list, setList] = useState<AdminActor[] | null>(null);
+  const [open, setOpen] = useState("");
+  const [history, setHistory] = useState<ActorConsentRecord[]>([]);
   const load = useCallback(() => { api.adminActors().then(setList).catch(() => setList([])); }, []);
+  const toggle = (id: string) => {
+    if (open === id) { setOpen(""); return; }
+    setOpen(id);
+    setHistory([]);
+    api.adminActorConsents(id).then(setHistory).catch(() => setHistory([]));
+  };
   const { busy, message, run } = useRun(load);
   useEffect(load, [load]);
   const review = (a: AdminActor, approve: boolean) => {
@@ -52,10 +61,13 @@ function Applicants() {
           <thead><tr><th>นักพากย์</th><th>รายละเอียด</th><th>ความยินยอม</th><th>สถานะ</th><th /></tr></thead>
           <tbody>
             {list.map((a) => (
-              <tr key={a.user_id}>
+              <Fragment key={a.user_id}>
+              <tr>
                 <td><strong>{a.stage_name}</strong> · {GENDER_LABEL[a.gender]}<div className="dim">{a.email}</div></td>
                 <td style={{ maxWidth: 280, whiteSpace: "pre-wrap" }}>{a.bio}<div className="dim">ติดต่อ: {a.contact || "-"}</div></td>
-                <td>{a.consent_version ? <>{a.consent_version}<div className="dim">{a.consent_at && fmtDate(a.consent_at)}</div></> : <span className="dim">ไม่มี</span>}</td>
+                <td>{a.consent_version ? <>{a.consent_version}<div className="dim">{a.consent_at && fmtDate(a.consent_at)}</div></> : <span className="dim">ไม่มี</span>}
+                  <button type="button" className="btn small" style={{ marginTop: 4 }} onClick={() => toggle(a.user_id)}>
+                    {open === a.user_id ? "ซ่อนประวัติ" : "ประวัติ"}</button></td>
                 <td><span className={`badge ${STATUS_BADGE[a.status]}`}>{STATUS_LABEL[a.status]}</span>
                   <div className="dim">เสียง {a.voices}{a.pending ? ` · รอตรวจ ${a.pending}` : ""}</div></td>
                 <td>
@@ -67,6 +79,26 @@ function Applicants() {
                   )}
                 </td>
               </tr>
+              {open === a.user_id && (
+                <tr><td colSpan={5}>
+                  {history.length === 0 ? <span className="dim">กำลังโหลด...</span> : (
+                    <table className="ledger">
+                      <thead><tr><th>ยอมรับเมื่อ</th><th>ฉบับ</th><th>ข้อที่ยอมรับ</th><th>IP / เบราว์เซอร์</th><th>ถอนเมื่อ</th></tr></thead>
+                      <tbody>{history.map((h) => (
+                        <tr key={`${h.accepted_at}`}>
+                          <td>{fmtDate(h.accepted_at)}</td>
+                          <td>{h.version}<div className="dim mono" title={h.text_hash}>{h.text_hash.slice(0, 12)}</div></td>
+                          <td>{h.items || <span className="dim">(ฉบับแรก ไม่ได้แยกข้อ)</span>}</td>
+                          <td>{h.ip}<div className="dim" style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                            title={h.user_agent}>{h.user_agent}</div></td>
+                          <td>{h.withdrawn_at ? fmtDate(h.withdrawn_at) : <span className="dim">-</span>}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  )}
+                </td></tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

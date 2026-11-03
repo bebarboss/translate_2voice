@@ -17,7 +17,7 @@ export default function AccountBar() {
   const { config, user } = useAuth();
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
-  const show = !!config?.billing && !!user && !/^\/(welcome|login|onboarding|terms|privacy)/.test(path);
+  const show = !!config?.billing && !!user && !/^\/(welcome|login|onboarding|terms|privacy|actor-consent)/.test(path);
 
   useEffect(() => {
     if (!show) return;

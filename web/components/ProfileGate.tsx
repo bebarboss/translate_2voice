@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/useAuth";
 
-const FREE = /^\/(onboarding|login|welcome|terms|privacy)/;
+const FREE = /^\/(onboarding|login|welcome|terms|privacy|actor-consent)/;
 
 /** ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น หรือยังไม่ได้ยอมรับข้อกำหนดฉบับปัจจุบัน → ไปหน้ากรอกข้อมูลก่อน
  * (ผู้ดูแลไม่ต้อง API ก็ไม่บังคับ) */

@@ -150,6 +150,10 @@ export interface ActorMe {
   usage: UsageSummary[];
   payouts: ActorPayout[];
 }
+export interface ActorConsentDoc { version: string; text: string; rate: number; items: { id: string; text: string }[] }
+export interface ActorConsentRecord {
+  version: string; items: string; text_hash: string; ip: string; user_agent: string; accepted_at: number; withdrawn_at: number | null;
+}
 export interface AdminActor extends Actor {
   email: string | null; account_name: string | null; voices: number; pending: number;
   consent_version: string | null; consent_at: number | null;
@@ -280,7 +284,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       window.location.href = `/welcome?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     // ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น → หน้ากรอกข้อมูล แล้วกลับมาหน้านี้
-    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy)/.test(window.location.pathname)) {
+    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy|actor-consent)/.test(window.location.pathname)) {
       window.location.href = `/onboarding?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     throw new ApiError(errorMessage(res.status, body), res.status);
@@ -318,11 +322,13 @@ export const api = {
     request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
   adminSetAdmin: (userId: string, admin: boolean) => request<void>(`/admin/users/${userId}/admin`, json("POST", { admin })),
   adminPlan: (userId: string, planId: string) => request<void>(`/admin/users/${userId}/plan`, json("POST", { plan_id: planId })),
-  actorConsent: () => request<{ version: string; text: string; rate: number }>("/actor/consent"),
+  /** หนังสือยินยอมของนักพากย์ อ่านได้โดยไม่ต้องล็อกอิน items = ข้อที่ต้องติ๊กให้ครบ */
+  actorConsent: () => request<ActorConsentDoc>("/legal/actor"),
   actorMe: () => request<ActorMe>("/actor/me"),
-  actorApply: (body: { stage_name: string; gender: Gender; bio: string; contact: string; consent_version: string }) =>
+  actorApply: (body: { stage_name: string; gender: Gender; bio: string; contact: string; consent_version: string;
+    consent_items: string[] }) =>
     request<Actor>("/actor/apply", json("POST", body)),
-  actorAccept: (version: string) => request<void>("/actor/consent", json("POST", { version })),
+  actorAccept: (version: string, items: string[]) => request<void>("/actor/consent", json("POST", { version, items })),
   actorUsage: (month: string) => request<UsageRow[]>(`/actor/usage?month=${month}`),
   /** voiceId ว่าง = เสียงใหม่, มี voiceId = อัดแทนเสียงหลัก หรือเพิ่มเสียงอารมณ์ (mood) */
   actorRecord: (file: Blob, filename: string, opts: { voiceId?: string; mood?: Mood; denoise: boolean }) => {
@@ -336,6 +342,7 @@ export const api = {
   actorDeleteVoice: (id: string) => request<void>(`/actor/voices/${id}`, { method: "DELETE" }),
   actorWithdraw: () => request<void>("/actor/withdraw", { method: "POST" }),
   adminActors: () => request<AdminActor[]>("/admin/actors"),
+  adminActorConsents: (userId: string) => request<ActorConsentRecord[]>(`/admin/actors/${userId}/consents`),
   adminReviewActor: (userId: string, approve: boolean, note = "") =>
     request<void>(`/admin/actors/${userId}/review`, json("POST", { approve, note })),
   adminActorVoices: () => request<LibraryVoice[]>("/admin/actor-voices"),

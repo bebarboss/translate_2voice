@@ -4,18 +4,29 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type LegalDoc } from "@/lib/api";
 
-/** ข้อกำหนดการใช้งาน / นโยบายความเป็นส่วนตัวฉบับปัจจุบัน (ข้อความมาจาก API อ่านได้โดยไม่ต้องล็อกอิน) */
-export default function LegalPage({ kind }: { kind: "terms" | "privacy" }) {
+type Kind = "terms" | "privacy" | "actor";
+const OTHER: Record<Kind, [string, string]> = {
+  terms: ["/privacy", "นโยบายความเป็นส่วนตัว"], privacy: ["/terms", "ข้อกำหนดการใช้งาน"], actor: ["/actor", "สมัครเป็นนักพากย์"],
+};
+
+/** ข้อกำหนดการใช้งาน / นโยบายความเป็นส่วนตัว / หนังสือยินยอมของนักพากย์ ฉบับปัจจุบัน
+ * (ข้อความมาจาก API อ่านได้โดยไม่ต้องล็อกอิน) */
+export default function LegalPage({ kind }: { kind: Kind }) {
   const [doc, setDoc] = useState<LegalDoc | null>(null);
+  const [items, setItems] = useState<string[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => { api.legal().then((d) => setDoc(d[kind])).catch((e) => setError(e.message)); }, [kind]);
+  useEffect(() => {
+    if (kind === "actor") {
+      api.actorConsent().then((d) => { setDoc(d); setItems(d.items.map((i) => i.text)); }).catch((e) => setError(e.message));
+    } else {
+      api.legal().then((d) => setDoc(d[kind])).catch((e) => setError(e.message));
+    }
+  }, [kind]);
   const [title, ...body] = (doc?.text ?? "").split("\n");
   return (
     <main className="page" style={{ maxWidth: 760 }}>
       <div className="row" style={{ gap: 10 }}>
-        <Link href={kind === "terms" ? "/privacy" : "/terms"} className="btn small">
-          {kind === "terms" ? "นโยบายความเป็นส่วนตัว" : "ข้อกำหนดการใช้งาน"}
-        </Link>
+        <Link href={OTHER[kind][0]} className="btn small">{OTHER[kind][1]}</Link>
         <Link href="/" className="btn small">กลับหน้าหลัก</Link>
       </div>
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -28,6 +39,12 @@ export default function LegalPage({ kind }: { kind: "terms" | "privacy" }) {
               ? <section key={head}><h2>{head}</h2><p>{rest.join("\n")}</p></section>
               : <p key={head}>{sec}</p>;
           })}
+          {items.length > 0 && (
+            <section>
+              <h2>ข้อที่ต้องยืนยันตอนสมัคร</h2>
+              <ul style={{ margin: 0, paddingLeft: 20, color: "var(--text-2)" }}>{items.map((t) => <li key={t}>{t}</li>)}</ul>
+            </section>
+          )}
         </article>
       )}
     </main>

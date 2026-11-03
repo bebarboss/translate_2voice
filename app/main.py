@@ -1255,10 +1255,12 @@ class ActorApply(BaseModel):
     bio: str = Field("", max_length=1000)
     contact: str = Field("", max_length=200)
     consent_version: str = Field(..., max_length=20, description="เวอร์ชันหนังสือยินยอมที่อ่านและกดยอมรับ")
+    consent_items: list[str] = Field(default_factory=list, max_length=10, description="ข้อที่ติ๊กยอมรับ (ต้องครบทุกข้อ)")
 
 
 class ConsentAccept(BaseModel):
     version: str = Field(..., max_length=20)
+    items: list[str] = Field(default_factory=list, max_length=10)
 
 
 class Review(BaseModel):
@@ -1297,10 +1299,10 @@ def _own_voice(user, voice_id: str) -> LibraryVoice:
     return with_actor(get_voice_or_404(voice_id), info)
 
 
-@app.get("/actor/consent", dependencies=[Depends(require_key)])
-def actor_consent(_=Depends(require_user)):
-    """หนังสือยินยอม PDPA และสิทธิ์ใช้เสียงเวอร์ชันปัจจุบัน"""
-    return {"version": actors.CONSENT_VERSION, "text": actors.consent_text(), "rate": settings.actor_rate}
+@app.get("/legal/actor", dependencies=[Depends(require_key)])
+def actor_consent():
+    """หนังสือยินยอม PDPA และสิทธิ์ใช้เสียงของนักพากย์ฉบับปัจจุบัน และข้อที่ต้องติ๊ก (อ่านได้โดยไม่ต้องล็อกอิน)"""
+    return actors.document()
 
 
 @app.get("/actor/me", dependencies=[Depends(require_key)])
@@ -1322,7 +1324,7 @@ def actor_apply(body: ActorApply, request: Request, user=Depends(require_user)):
     """สมัครเป็นนักพากย์พร้อมยอมรับหนังสือยินยอม รอผู้ดูแลอนุมัติ"""
     try:
         return actors.apply(user["id"], body.stage_name.strip(), body.gender, body.bio.strip(), body.contact.strip(),
-                            body.consent_version, *_client(request))
+                            body.consent_version, body.consent_items, *_client(request))
     except accounts.AccountError as e:
         raise _actor_fail(e)
 
@@ -1331,7 +1333,7 @@ def actor_apply(body: ActorApply, request: Request, user=Depends(require_user)):
 def actor_accept(body: ConsentAccept, request: Request, user=Depends(require_user)):
     """ยอมรับหนังสือยินยอมเวอร์ชันใหม่"""
     try:
-        actors.accept_consent(user["id"], body.version, *_client(request))
+        actors.accept_consent(user["id"], body.version, body.items, *_client(request))
     except accounts.AccountError as e:
         raise _actor_fail(e)
 
@@ -1413,6 +1415,12 @@ def actor_withdraw(user=Depends(require_user)):
 @app.get("/admin/actors", dependencies=[Depends(require_key)])
 def admin_actors(_=Depends(require_admin)):
     return actors.all_actors()
+
+
+@app.get("/admin/actors/{user_id}/consents", dependencies=[Depends(require_key)])
+def admin_actor_consents(user_id: str, _=Depends(require_admin)):
+    """ประวัติการกดยอมรับและถอนความยินยอมของนักพากย์ (หลักฐาน)"""
+    return actors.consent_history(user_id)
 
 
 @app.post("/admin/actors/{user_id}/review", status_code=204, dependencies=[Depends(require_key)])

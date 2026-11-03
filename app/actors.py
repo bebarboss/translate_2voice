@@ -19,7 +19,14 @@ from .config import settings
 
 log = logging.getLogger("dubbing.actors")
 
-CONSENT_VERSION = "2026-11-03"
+CONSENT_VERSION = "2026-11-03.2"
+# ข้อที่ต้องติ๊กทีละข้อ (บันทึกว่ายอมรับข้อไหน) ต้องครบทุกข้อถึงจะสมัครหรือส่งเสียงได้
+CONSENT_ITEMS = {
+    "biometric": "ข้าพเจ้ายินยอมโดยชัดแจ้งให้เก็บและใช้เสียงและลายเสียงของข้าพเจ้า (ข้อมูลชีวภาพ) ตามวัตถุประสงค์ในหนังสือนี้",
+    "transfer": "ข้าพเจ้ายินยอมให้ส่งเสียงและข้อมูลของข้าพเจ้าไปประมวลผลกับผู้ให้บริการในต่างประเทศตามข้อ 4",
+    "license": "ข้าพเจ้าอนุญาตให้ผู้ใช้ในระบบใช้เสียงของข้าพเจ้าสร้างและเผยแพร่งานพากย์ และรับรองว่าเสียงที่ส่งเป็นเสียงของข้าพเจ้าเอง",
+    "age": "ข้าพเจ้ามีอายุ 20 ปีบริบูรณ์ขึ้นไป หรือผู้ใช้อำนาจปกครองได้อ่านและยินยอมตามหนังสือนี้ด้วยแล้ว",
+}
 TZ = 7 * 3600  # เดือนของค่าตอบแทนนับตามเวลาไทย
 
 CONSENT_TEXT = """หนังสือให้ความยินยอมเก็บและใช้ข้อมูลเสียง และอนุญาตให้ใช้เสียง (เวอร์ชัน {version})
@@ -48,7 +55,13 @@ CONSENT_TEXT = """หนังสือให้ความยินยอม�
 เก็บจนกว่าท่านจะถอนความยินยอม เมื่อถอน ระบบลบเสียง ไฟล์ และลายเสียงของท่านออกจากคลังทันที ผลงานพากย์ที่ผู้ใช้สร้างเสร็จก่อนถอนไม่ถูกลบ ประวัติการใช้งานและการจ่ายค่าตอบแทนเก็บไว้ตามที่กฎหมายบัญชีและภาษีกำหนด
 
 8. สิทธิ์ของท่าน
-ท่านมีสิทธิ์ขอเข้าถึง ขอสำเนา ขอแก้ไข ขอลบ ขอระงับการใช้ คัดค้าน และถอนความยินยอมเมื่อใดก็ได้ (กดถอนได้ที่หน้านักพากย์) การถอนไม่กระทบการใช้ที่เกิดขึ้นก่อนถอน และท่านร้องเรียนต่อสำนักงานคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล (สคส.) ได้"""
+ท่านมีสิทธิ์ขอเข้าถึง ขอสำเนา ขอแก้ไข ขอลบ ขอระงับการใช้ คัดค้าน และถอนความยินยอมเมื่อใดก็ได้ (กดถอนได้ที่หน้านักพากย์) การถอนไม่กระทบการใช้ที่เกิดขึ้นก่อนถอน และท่านร้องเรียนต่อสำนักงานคณะกรรมการคุ้มครองข้อมูลส่วนบุคคล (สคส.) ได้
+
+9. ผู้เยาว์
+ผู้ที่อายุยังไม่ถึง 20 ปีบริบูรณ์ ต้องให้ผู้ใช้อำนาจปกครองอ่านและยินยอมตามหนังสือนี้ด้วย ผู้ให้บริการอาจขอหลักฐานการยินยอมของผู้ใช้อำนาจปกครองก่อนอนุมัติ
+
+10. การบันทึกความยินยอม
+ระบบบันทึกเวอร์ชันของหนังสือนี้ ข้อที่ท่านยอมรับ เวลา IP และเบราว์เซอร์ทุกครั้งที่ท่านกดยอมรับหรือถอนความยินยอม เป็นหลักฐาน"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS actors (
@@ -81,7 +94,10 @@ def _init() -> None:
     if not _ready:
         from .accounts import _db, _lock
         with _lock:
-            _db().executescript(SCHEMA)
+            db = _db()
+            db.executescript(SCHEMA)
+            if "items" not in {r["name"] for r in db.execute("PRAGMA table_info(actor_consents)")}:
+                db.execute("ALTER TABLE actor_consents ADD COLUMN items TEXT NOT NULL DEFAULT ''")
         _ready = True
 
 
@@ -118,34 +134,47 @@ def has_consent(uid: str) -> bool:
     return c is not None and c["version"] == CONSENT_VERSION
 
 
-def _accept(db, uid: str, version: str, ip: str, ua: str) -> None:
+def document() -> dict:
+    """หนังสือยินยอมฉบับปัจจุบัน ข้อที่ต้องติ๊ก และอัตราค่าตอบแทน (อ่านได้โดยไม่ต้องล็อกอิน)"""
+    return {"version": CONSENT_VERSION, "text": consent_text(), "rate": settings.actor_rate,
+            "items": [{"id": k, "text": v} for k, v in CONSENT_ITEMS.items()]}
+
+
+def _accept(db, uid: str, version: str, items: list[str], ip: str, ua: str) -> None:
     if version != CONSENT_VERSION:
         raise AccountError(409, "หนังสือยินยอมมีเวอร์ชันใหม่ โหลดหน้าใหม่แล้วอ่านอีกครั้ง")
-    db.execute("INSERT INTO actor_consents (user_id, version, text_hash, ip, user_agent, accepted_at) "
-               "VALUES (?, ?, ?, ?, ?, ?)",
-               (uid, version, hashlib.sha256(consent_text().encode()).hexdigest(), ip[:64], ua[:300], time.time()))
+    missing = [k for k in CONSENT_ITEMS if k not in items]
+    if missing:
+        raise AccountError(400, "ต้องติ๊กยอมรับให้ครบทุกข้อ")
+    # แฮชรวมข้อความหนังสือและทุกข้อที่ติ๊ก พิสูจน์ได้ว่ายอมรับข้อความฉบับไหน
+    text = "\n".join([consent_text(), *CONSENT_ITEMS.values()])
+    db.execute("INSERT INTO actor_consents (user_id, version, text_hash, items, ip, user_agent, accepted_at) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?)",
+               (uid, version, hashlib.sha256(text.encode()).hexdigest(), ",".join(CONSENT_ITEMS), ip[:64], ua[:300],
+                time.time()))
 
 
-def apply(uid: str, stage_name: str, gender: str, bio: str, contact: str, version: str, ip: str, ua: str) -> dict:
+def apply(uid: str, stage_name: str, gender: str, bio: str, contact: str, version: str, items: list[str],
+          ip: str, ua: str) -> dict:
     """สมัคร (หรือสมัครใหม่หลังถูกปฏิเสธ/ถอนตัว) พร้อมยอมรับหนังสือยินยอม รอผู้ดูแลอนุมัติ"""
     _init()
     with _tx() as db:
         old = db.execute("SELECT status FROM actors WHERE user_id = ?", (uid,)).fetchone()
         if old is not None and old["status"] in ("pending", "approved"):
             raise AccountError(409, "สมัครไว้แล้ว")
-        _accept(db, uid, version, ip, ua)
+        _accept(db, uid, version, items, ip, ua)
         db.execute("INSERT OR REPLACE INTO actors (user_id, stage_name, gender, bio, contact, status, created_at) "
                    "VALUES (?, ?, ?, ?, ?, 'pending', ?)", (uid, stage_name, gender, bio, contact, time.time()))
     return actor(uid)
 
 
-def accept_consent(uid: str, version: str, ip: str, ua: str) -> None:
+def accept_consent(uid: str, version: str, items: list[str], ip: str, ua: str) -> None:
     """ยอมรับหนังสือยินยอมเวอร์ชันใหม่ (เวอร์ชันเก่าไม่ถอน แต่ส่งเสียงใหม่ไม่ได้จนกว่าจะยอมรับ)"""
     _init()
     with _tx() as db:
         if db.execute("SELECT 1 FROM actors WHERE user_id = ? AND status != 'withdrawn'", (uid,)).fetchone() is None:
             raise AccountError(404, "ยังไม่ได้สมัครเป็นนักพากย์")
-        _accept(db, uid, version, ip, ua)
+        _accept(db, uid, version, items, ip, ua)
 
 
 def review_actor(uid: str, approve: bool, note: str, by: str) -> None:
@@ -170,6 +199,13 @@ def withdraw(uid: str) -> list[str]:
         db.execute("UPDATE actors SET status = 'withdrawn', note = '' WHERE user_id = ?", (uid,))
         db.execute("DELETE FROM actor_voices WHERE user_id = ?", (uid,))
     return ids
+
+
+def consent_history(uid: str) -> list[dict]:
+    """ทุกครั้งที่กดยอมรับและถอน (ใหม่ก่อน) สำหรับผู้ดูแลและเจ้าของข้อมูล"""
+    _init()
+    return [dict(r) for r in _read("SELECT version, items, text_hash, ip, user_agent, accepted_at, withdrawn_at "
+                                   "FROM actor_consents WHERE user_id = ? ORDER BY id DESC", uid)]
 
 
 def all_actors() -> list[dict]:

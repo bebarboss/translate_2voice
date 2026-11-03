@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Recorder from "@/components/Recorder";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorMe, type Gender, type LibraryVoice, type Mood, type UsageRow } from "@/lib/api";
+import { api, fileUrl, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood, type UsageRow } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, MOODS, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
@@ -33,26 +33,38 @@ const fmtDate = (unix: number) =>
 const fmtMin = (sec: number) => `${(sec / 60).toLocaleString("th-TH", { maximumFractionDigits: 1 })} นาที`;
 const fmtMonth = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString("th-TH", { month: "long", year: "numeric" });
 
-function ConsentBox({ onAccept, busy, label }: { onAccept: (version: string) => void; busy: boolean; label: string }) {
-  const [doc, setDoc] = useState<{ version: string; text: string } | null>(null);
-  const [pdpa, setPdpa] = useState(false);
-  const [license, setLicense] = useState(false);
-  useEffect(() => { api.actorConsent().then(setDoc).catch(() => setDoc(null)); }, []);
+/** หนังสือยินยอม PDPA และสิทธิ์ใช้เสียง: อ่านในกล่อง (หรือเปิดเต็มหน้า) แล้วติ๊กให้ครบทุกข้อ */
+function ConsentBox({ onAccept, busy, label, disabled, hint }: {
+  onAccept: (version: string, items: string[]) => void; busy: boolean; label: string; disabled?: boolean; hint?: string;
+}) {
+  const [doc, setDoc] = useState<ActorConsentDoc | null>(null);
+  const [error, setError] = useState("");
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  useEffect(() => { api.actorConsent().then(setDoc).catch((e) => setError(e.message)); }, []);
+  if (error) return <div className="alert error" role="alert">{error}</div>;
   if (!doc) return <div className="empty">กำลังโหลดหนังสือยินยอม...</div>;
+  const all = doc.items.every((i) => checked[i.id]);
   return (
     <div className="field">
-      <span className="label">หนังสือยินยอม (อ่านให้ครบก่อนกดยอมรับ)</span>
-      <div className="consent-box" tabIndex={0}>{doc.text}</div>
-      <label className="agree">
-        <input type="checkbox" checked={pdpa} onChange={(e) => setPdpa(e.target.checked)} />
-        ข้าพเจ้ายินยอมโดยชัดแจ้งให้เก็บ ใช้ และส่งข้อมูลเสียงและลายเสียงของข้าพเจ้าไปประมวลผลต่างประเทศ ตามหนังสือข้างต้น
-      </label>
-      <label className="agree">
-        <input type="checkbox" checked={license} onChange={(e) => setLicense(e.target.checked)} />
-        ข้าพเจ้าอนุญาตให้ผู้ใช้ในระบบใช้เสียงของข้าพเจ้าสร้างงานพากย์ และรับรองว่าเสียงที่ส่งเป็นเสียงของข้าพเจ้าเอง
-      </label>
+      <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
+        <span className="label">หนังสือให้ความยินยอมและอนุญาตให้ใช้เสียง (ฉบับ {doc.version})</span>
+        <a href="/actor-consent" target="_blank" rel="noopener" className="dim" style={{ fontSize: 13 }}>เปิดอ่านเต็มหน้า</a>
+      </div>
+      <div className="consent-box" tabIndex={0} aria-label="ข้อความหนังสือยินยอม">{doc.text}</div>
+      <div className="consent-checks">
+        {doc.items.map((i) => (
+          <label key={i.id} className="agree">
+            <input type="checkbox" checked={!!checked[i.id]} onChange={(e) => setChecked({ ...checked, [i.id]: e.target.checked })} />
+            <span>{i.text}</span>
+          </label>
+        ))}
+      </div>
+      <span className="dim" style={{ fontSize: 13 }}>
+        ถอนความยินยอมได้ตลอดเวลาที่หน้านี้ ระบบจะลบเสียงทั้งหมดของคุณออกจากคลังทันที
+      </span>
       <button type="button" className="btn primary" style={{ alignSelf: "flex-start" }}
-        disabled={busy || !pdpa || !license} onClick={() => onAccept(doc.version)}>{label}</button>
+        disabled={busy || disabled || !all} onClick={() => onAccept(doc.version, doc.items.map((i) => i.id))}>{label}</button>
+      {hint && <span className="dim">{hint}</span>}
     </div>
   );
 }
@@ -64,11 +76,11 @@ function ApplyForm({ onDone }: { onDone: () => void }) {
   const [contact, setContact] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const submit = async (version: string) => {
+  const submit = async (version: string, items: string[]) => {
     setBusy(true);
     setError("");
     try {
-      await api.actorApply({ stage_name: name.trim(), gender, bio, contact, consent_version: version });
+      await api.actorApply({ stage_name: name.trim(), gender, bio, contact, consent_version: version, consent_items: items });
       onDone();
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
@@ -101,8 +113,8 @@ function ApplyForm({ onDone }: { onDone: () => void }) {
         <input id="contact" className="input" maxLength={200} value={contact} onChange={(e) => setContact(e.target.value)}
           placeholder="เช่น LINE ID หรือเบอร์โทร" />
       </div>
-      {name.trim() ? <ConsentBox busy={busy} label={busy ? "กำลังส่ง..." : "ยอมรับและส่งใบสมัคร"} onAccept={submit} />
-        : <span className="dim">กรอกชื่อในวงการก่อน แล้วจะเห็นหนังสือยินยอม</span>}
+      <ConsentBox busy={busy} label={busy ? "กำลังส่ง..." : "ยอมรับและส่งใบสมัคร"} onAccept={submit}
+        disabled={!name.trim()} hint={name.trim() ? undefined : "กรอกชื่อในวงการก่อนส่งใบสมัคร"} />
       {error && <div className="alert error" role="alert">{error}</div>}
     </section>
   );
@@ -275,9 +287,9 @@ export default function ActorPage() {
   const reload = useCallback(() => { api.actorMe().then(setMe).catch((e) => setError(e.message)); }, []);
   useEffect(() => { if (user) reload(); }, [user, reload]);
 
-  const accept = async (version: string) => {
+  const accept = async (version: string, items: string[]) => {
     setBusy(true);
-    try { await api.actorAccept(version); reload(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { await api.actorAccept(version, items); reload(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
   const withdraw = async () => {
     if (!window.confirm("ถอนความยินยอม? เสียงทั้งหมดของคุณจะถูกลบออกจากคลังทันที และกู้คืนไม่ได้")) return;
@@ -286,7 +298,14 @@ export default function ActorPage() {
 
   if (!loaded) return <main className="page"><div className="empty">กำลังโหลด...</div></main>;
   if (!config?.auth || !user) {
-    return <main className="page narrow"><div className="card"><span className="muted">เข้าสู่ระบบก่อนสมัครเป็นนักพากย์</span></div></main>;
+    return (
+      <main className="page narrow">
+        <div className="card">
+          <span className="muted">เข้าสู่ระบบก่อนสมัครเป็นนักพากย์</span>
+          <a href="/actor-consent">อ่านหนังสือยินยอมและเงื่อนไขค่าตอบแทนก่อนสมัคร</a>
+        </div>
+      </main>
+    );
   }
   const a = me?.actor;
   return (
