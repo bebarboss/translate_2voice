@@ -5,7 +5,6 @@ import "@fontsource/ibm-plex-sans-thai/500.css";
 import "@fontsource/ibm-plex-sans-thai/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "./globals.css";
-import AccountBar from "@/components/AccountBar";
 import LangInit from "@/components/LangInit";
 import ProfileGate from "@/components/ProfileGate";
 import Sidebar from "@/components/Sidebar";
@@ -28,7 +27,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <ProfileGate />
           <Sidebar />
           <div className="shell-main">
-            <AccountBar />
             {children}
           </div>
         </div>

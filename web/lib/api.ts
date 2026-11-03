@@ -487,6 +487,7 @@ export const fileUrl = {
   timelineExport: (id: string, formats: TimelineFormat[], mediaDir = "") =>
     `${BASE}/jobs/${id}/timeline/export?formats=${formats.join(",")}${mediaDir ? `&media_dir=${encodeURIComponent(mediaDir)}` : ""}`,
   source: (id: string) => `${BASE}/jobs/${id}/source`,
+  thumb: (id: string, version = "") => `${BASE}/jobs/${id}/thumb${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   result: (id: string, subs = false) => `${BASE}/jobs/${id}/result${subs ? "?subs=true" : ""}`,
   export: (id: string, subs = false) => `${BASE}/jobs/${id}/export${subs ? "?subs=true" : ""}`,
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,

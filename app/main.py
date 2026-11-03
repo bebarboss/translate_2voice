@@ -1652,6 +1652,26 @@ def export(job_id: str, subs: bool = False):
     return FileResponse(zip_path, media_type="application/zip", filename=out_name(job, ".zip"))
 
 
+@app.get("/jobs/{job_id}/thumb", dependencies=[Depends(require_key)])
+def get_thumb(job_id: str):
+    """ภาพตัวอย่างของคลิป (เฟรมราววินาทีที่ 1 กว้าง 480 px) สร้างครั้งแรกแล้วเก็บไว้ งานที่เป็นไฟล์เสียงล้วนไม่มีภาพ (404)"""
+    job = get_job_or_404(job_id)
+    out = store.dir(job_id) / "thumb.jpg"
+    src = Path(job.input_path) if job.input_path else None
+    if not out.exists():
+        if src is None or not src.exists() or src.suffix.lower() not in ALLOWED_EXT:
+            raise HTTPException(404, "งานนี้ไม่มีภาพ")
+        at = min(1.0, (job.duration or 3) / 3)
+        tmp = out.with_suffix(".part.jpg")
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", str(src), "-frames:v", "1",
+                            "-vf", "scale=480:-2", "-q:v", "5", str(tmp)], capture_output=True, timeout=60)
+        if r.returncode != 0 or not tmp.exists():
+            tmp.unlink(missing_ok=True)
+            raise HTTPException(404, "สร้างภาพตัวอย่างไม่ได้")
+        tmp.replace(out)
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/jobs/{job_id}/source", dependencies=[Depends(require_key)])
 def get_source(job_id: str):
     """คลิปต้นฉบับ ใช้เปิดในหน้าตรวจบท"""

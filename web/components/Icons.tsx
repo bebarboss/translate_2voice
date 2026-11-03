@@ -76,3 +76,9 @@ export const UserIcon = ({ size = 18, color = "currentColor" }: P) =>
 
 export const MenuIcon = ({ size = 20, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>);
+
+export const TagIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z" /><path d="M7.5 7.5h.01" /></>);
+
+export const ShieldIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>);

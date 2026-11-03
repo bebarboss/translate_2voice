@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, type Job, type JobStatus } from "@/lib/api";
+import { api, fileUrl, type Job, type JobStatus } from "@/lib/api";
 import { TARGET_LABEL, fmtDuration, fmtWhen, isActive, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
-import { PlusIcon, SearchIcon } from "@/components/Icons";
+import { PlusIcon, SearchIcon, ShuffleIcon, TrashIcon, WaveIcon, XIcon } from "@/components/Icons";
 
 import { tx } from "@/lib/i18n";
 type Filter = "all" | "active" | "awaiting_review" | "done" | "failed";
@@ -25,12 +25,59 @@ function actionFor(job: Job): { href: string; label: string } {
   return { href: `/jobs/${job.id}`, label: tx("ดูรายละเอียด") };
 }
 
+type View = "grid" | "list";
+const VIEW_KEY = "jobs-view";
+
+/** การ์ดงาน: ภาพตัวอย่าง (งานเสียงล้วนแสดงไอคอน) สถานะ ความยาว และปุ่มจัดการเมื่อชี้ */
+function JobCard({ job, busy, onRetry, onCancel, onDelete }: {
+  job: Job; busy: boolean; onRetry: () => void; onCancel: () => void; onDelete: () => void;
+}) {
+  const [noThumb, setNoThumb] = useState(false);
+  const stop = (fn: () => void) => (e: React.MouseEvent) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  return (
+    <Link href={`/jobs/${job.id}`} className="job-card">
+      <div className="job-thumb">
+        {noThumb ? <WaveIcon /> : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={fileUrl.thumb(job.id, job.input_path ? "1" : "")} alt="" loading="lazy" onError={() => setNoThumb(true)} />
+        )}
+        <StatusBadge job={job} />
+        {job.duration ? <span className="dur">{fmtDuration(job.duration)}</span> : null}
+        {job.status === "running" && <div className="bar"><div style={{ width: `${job.progress * 100}%` }} /></div>}
+        <div className="job-actions">
+          {(job.status === "failed" || job.status === "cancelled") && (
+            <button type="button" className="icon-btn" disabled={busy} title={tx("ลองใหม่")} aria-label={tx("ลองใหม่")} onClick={stop(onRetry)}><ShuffleIcon /></button>
+          )}
+          {isActive(job)
+            ? <button type="button" className="icon-btn" disabled={busy} title={tx("ยกเลิก")} aria-label={tx("ยกเลิก")} onClick={stop(onCancel)}><XIcon /></button>
+            : <button type="button" className="icon-btn" disabled={busy} title={tx("ลบ")} aria-label={tx("ลบ")} onClick={stop(onDelete)}><TrashIcon /></button>}
+        </div>
+      </div>
+      <div className="job-meta">
+        <span className="avatar-dot plain" aria-hidden="true">{job.filename.slice(0, 1).toUpperCase()}</span>
+        <div>
+          <b title={job.filename}>{job.filename}</b>
+          <span>{langName(job.detected_lang ?? job.source_lang)} → {tx(TARGET_LABEL[job.target_lang])} · {tx("แก้ไขเมื่อ {0}", { 0: fmtWhen(job.updated_at) })}</span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [view, setView] = useState<View>("grid");
+  useEffect(() => {
+    try { if (localStorage.getItem(VIEW_KEY) === "list") setView("list"); } catch { /* ใช้ค่าเริ่มต้น */ }
+  }, []);
+  const pickView = (v: View) => {
+    setView(v);
+    try { localStorage.setItem(VIEW_KEY, v); } catch { /* ไม่จำก็ได้ */ }
+  };
 
   const load = useCallback(() => {
     api.listJobs().then((j) => { setJobs(j); setError(""); }).catch((e) => setError(e.message));
@@ -63,31 +110,36 @@ export default function JobsPage() {
     <main className="page" style={{ maxWidth: 1200 }}>
       <div className="page-head">
         <h1>{tx("งานทั้งหมด")}</h1>
-        <Link href="/" className="btn primary"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
+        <Link href="/" className="btn primary small"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
       </div>
 
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="row" role="group" aria-label={tx("กรองตามสถานะ")} style={{ gap: 6 }}>
-          {FILTERS.map((f) => (
-            <button key={f.key} type="button" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}
-              className="btn small"
-              style={filter === f.key
-                ? { borderRadius: 999, borderColor: "var(--accent)", background: "var(--accent-soft)", color: "#FFB27F" }
-                : { borderRadius: 999, background: "transparent" }}>
-              {tx(f.label)} {counts[f.key]}
-            </button>
-          ))}
-        </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 12px", borderRadius: 10, border: "1px solid var(--border-2)", background: "var(--surface-2)", minWidth: 240 }}>
-          <SearchIcon color="#9AA1AD" />
+      <div className="row" style={{ gap: 8 }}>
+        <label className="search" style={{ flex: "1 1 260px", maxWidth: 360 }}>
+          <SearchIcon />
           <span className="sr-only">{tx("ค้นหางาน")}</span>
-          <input type="search" placeholder={tx("ค้นหาชื่อไฟล์")} value={query} onChange={(e) => setQuery(e.target.value)}
-            style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none" }} />
+          <input type="search" placeholder={tx("ค้นหาชื่อไฟล์")} value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
+        <select className="select pill-select" aria-label={tx("กรองตามสถานะ")} value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
+          {FILTERS.map((f) => <option key={f.key} value={f.key}>{tx(f.label)} ({counts[f.key]})</option>)}
+        </select>
+        <div className="seg" role="group" aria-label={tx("มุมมอง")}>
+          <button type="button" aria-pressed={view === "grid"} onClick={() => pickView("grid")}>{tx("การ์ด")}</button>
+          <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")}>{tx("รายการ")}</button>
+        </div>
       </div>
 
       {error && <div className="alert error" role="alert">{error}</div>}
 
+      {view === "grid" && jobs !== null && shown.length > 0 ? (
+        <div className="job-grid">
+          {shown.map((j) => (
+            <JobCard key={j.id} job={j} busy={busyId === j.id}
+              onRetry={() => act(j.id, () => api.retry(j.id))}
+              onCancel={() => act(j.id, () => api.cancel(j.id))}
+              onDelete={() => { if (window.confirm(tx("ลบงาน {0} และไฟล์ทั้งหมด?", { 0: j.filename }))) act(j.id, () => api.deleteJob(j.id)); }} />
+          ))}
+        </div>
+      ) : (
       <div className="table-wrap">
         {jobs === null ? (
           <div className="empty">{tx("กำลังโหลด...")}</div>
@@ -155,6 +207,7 @@ export default function JobsPage() {
           </table>
         )}
       </div>
+      )}
     </main>
   );
 }
