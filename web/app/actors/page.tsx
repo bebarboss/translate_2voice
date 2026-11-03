@@ -2,8 +2,8 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorConsentRecord, type ActorPayout, type AdminActor, type LibraryVoice, type UsageRow,
-  type UsageSummary } from "@/lib/api";
+import { api, fileUrl, type ActorConsentRecord, type ActorPayment, type ActorPayout, type AdminActor, type LibraryVoice,
+  type UsageRow, type UsageSummary, type WhtRule } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
@@ -171,7 +171,7 @@ function VoiceReview() {
 
 function Compensation() {
   const [month, setMonth] = useState(thisMonth());
-  const [data, setData] = useState<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[] } | null>(null);
+  const [data, setData] = useState<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[]; wht: WhtRule } | null>(null);
   const [open, setOpen] = useState("");
   const [rows, setRows] = useState<UsageRow[]>([]);
   const load = useCallback(() => { api.adminActorUsage(month).then(setData).catch(() => setData(null)); }, [month]);
@@ -183,8 +183,15 @@ function Compensation() {
     setRows([]);
     api.adminActorUsageRows(id, month).then(setRows).catch(() => setRows([]));
   };
+  const [payee, setPayee] = useState<{ id: string; p: ActorPayment } | null>(null);
+  const showPayee = (id: string) => {
+    if (payee?.id === id) { setPayee(null); return; }
+    api.adminActorPayment(id).then((p) => setPayee({ id, p })).catch(() => setPayee(null));
+  };
   const pay = (u: UsageSummary) => {
-    const note = window.prompt(`บันทึกว่าจ่าย ${fmtBaht(u.due)} ให้ ${u.stage_name} แล้ว หมายเหตุ (เช่น เลขอ้างอิงการโอน)`, "");
+    const net = u.due - u.wht;
+    const tax = u.wht > 0 ? ` (ยอด ${fmtBaht(u.due)} หักภาษี ณ ที่จ่าย ${fmtBaht(u.wht)})` : "";
+    const note = window.prompt(`บันทึกว่าโอน ${fmtBaht(net)}${tax} ให้ ${u.stage_name} แล้ว หมายเหตุ (เช่น เลขอ้างอิงการโอน)`, "");
     if (note === null) return;
     run(`p-${u.actor_id}`, () => api.adminPayout(u.actor_id, month, note), `บันทึกการจ่าย ${u.stage_name} แล้ว`);
   };
@@ -196,10 +203,12 @@ function Compensation() {
         <div className="row" style={{ gap: 8 }}>
           <input className="input" type="month" aria-label="เดือน" value={month} onChange={(e) => e.target.value && setMonth(e.target.value)} />
           <a className="btn small" href={fileUrl.actorUsageCsv(month)} download>ดาวน์โหลด CSV</a>
+          <a className="btn small" href={fileUrl.actorWhtCsv(month)} download title="การจ่ายที่จ่ายจริงในเดือนนี้ สำหรับยื่นแบบหักภาษี ณ ที่จ่ายและออกหนังสือรับรอง">รายการหักภาษี</a>
         </div>
       </div>
       {data && <span className="muted">อัตรา {fmtBaht(data.rate)} ต่อนาที (ตั้งที่ ACTOR_RATE_SATANG_PER_MIN) · ค้างจ่ายรวม {fmtBaht(total)}
-        · นับเฉพาะงานของผู้ใช้คนอื่น งานที่พากย์ใหม่นับรอบล่าสุด</span>}
+        · นับเฉพาะงานของผู้ใช้คนอื่น งานที่พากย์ใหม่นับรอบล่าสุด
+        {data.wht.percent > 0 ? ` · หักภาษี ณ ที่จ่ายร้อยละ ${data.wht.percent} เมื่อจ่ายครั้งละตั้งแต่ ${fmtBaht(data.wht.min)} (ACTOR_WHT_PERCENT)` : " · ไม่หักภาษี ณ ที่จ่าย"}</span>}
       <Alert m={message} />
       {!data ? <div className="empty">กำลังโหลด...</div> : data.rows.length === 0 ? <span className="dim">เดือนนี้ยังไม่มีการใช้เสียงนักพากย์</span> : (
         <table className="ledger">
@@ -213,14 +222,30 @@ function Compensation() {
                   <td>{u.jobs} / {u.users}</td>
                   <td>{fmtBaht(u.amount)}</td>
                   <td>{fmtBaht(u.paid)}</td>
-                  <td>{u.due < 0 ? <span className="dim">จ่ายเกิน {fmtBaht(-u.due)}</span> : fmtBaht(u.due)}</td>
+                  <td>
+                    {u.due < 0 ? <span className="dim">จ่ายเกิน {fmtBaht(-u.due)}</span> : fmtBaht(u.due)}
+                    {u.wht > 0 && <div className="dim">หักภาษี {fmtBaht(u.wht)} โอน {fmtBaht(u.due - u.wht)}</div>}
+                  </td>
                   <td>
                     <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                       <button type="button" className="btn small" onClick={() => toggle(u.actor_id)}>{open === u.actor_id ? "ซ่อน" : "รายการ"}</button>
-                      <button type="button" className="btn primary small" disabled={!!busy || u.due <= 0} onClick={() => pay(u)}>จ่ายแล้ว</button>
+                      {u.payee
+                        ? <button type="button" className="btn small" onClick={() => showPayee(u.actor_id)}>บัญชี</button>
+                        : <span className="dim" title="นักพากย์ต้องกรอกข้อมูลรับเงินที่หน้านักพากย์ก่อน">ยังไม่กรอกบัญชี</span>}
+                      <button type="button" className="btn primary small" disabled={!!busy || u.due <= 0 || !u.payee} onClick={() => pay(u)}>จ่ายแล้ว</button>
                     </div>
                   </td>
                 </tr>
+                {payee?.id === u.actor_id && (
+                  <tr><td colSpan={7}>
+                    <dl className="profile-list">
+                      <div><dt className="dim">ผู้รับเงิน</dt><dd>{payee.p.payee_name}</dd></div>
+                      <div><dt className="dim">เลขผู้เสียภาษี</dt><dd>{payee.p.tax_id}</dd></div>
+                      <div><dt className="dim">ที่อยู่</dt><dd>{payee.p.address}</dd></div>
+                      <div><dt className="dim">บัญชี</dt><dd>{payee.p.bank} {payee.p.account_no} ({payee.p.account_name})</dd></div>
+                    </dl>
+                  </td></tr>
+                )}
                 {open === u.actor_id && (
                   <tr><td colSpan={7}>
                     {rows.length === 0 ? <span className="dim">กำลังโหลด...</span> : (
@@ -250,7 +275,8 @@ function Compensation() {
           <table className="ledger">
             <tbody>{data.payouts.map((p) => (
               <tr key={p.id}>
-                <td>{fmtDate(p.paid_at)}</td><td>{p.month}</td><td>{fmtBaht(p.amount)}</td><td>{p.note}</td><td className="dim">{p.paid_by}</td>
+                <td>{fmtDate(p.paid_at)}</td><td>{p.month}</td><td>{p.payee_name || "-"}</td><td>{fmtBaht(p.amount)}</td>
+                <td>{p.wht > 0 ? `หัก ${fmtBaht(p.wht)}` : "-"}</td><td>โอน {fmtBaht(p.amount - p.wht)}</td><td>{p.note}</td><td className="dim">{p.paid_by}</td>
               </tr>
             ))}</tbody>
           </table>

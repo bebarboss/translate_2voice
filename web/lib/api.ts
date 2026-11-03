@@ -38,12 +38,34 @@ export interface Job {
   speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
   library?: boolean; // งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว
   saved_voices?: Record<string, string>; // ตัวละคร → id เสียงในคลังที่บันทึกจากงานนี้
+  timeline?: boolean; // งานไทม์ไลน์จากโปรแกรมตัดต่อ (ไม่มีวิดีโอ ผลลัพธ์ส่งออกเป็น XML + เสียงแยกแทร็ก)
   error: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type Gender = "male" | "female" | "";
+
+// ---- ไทม์ไลน์จากโปรแกรมตัดต่อ (POST /timeline) เวลาเป็นเฟรม timecode เป็นสตริงตามอัตราเฟรมของไทม์ไลน์
+export interface TimelineClip {
+  name: string; media: string; file: string | null; start: number; end: number; start_tc: string; end_tc: string;
+  channel: number | null;
+}
+export interface TimelineTrack {
+  index: number; name: string; clips: TimelineClip[]; speaker: string; enabled: boolean; duplicate_of: number | null;
+  speaker_name: string; voice_id: string | null;
+}
+export interface TimelineInfo {
+  format: string; source: string; name: string; fps: number; drop_frame: boolean; sample_rate: number;
+  start_tc: string; duration_tc: string; duration: number; tracks: TimelineTrack[]; missing: string[]; warnings: string[];
+}
+export interface TimelineState { job: Job; timeline: TimelineInfo }
+export interface TrackSetup { index: number; enabled?: boolean; speaker_name?: string; voice_id?: string | null }
+export interface TimelineImport {
+  fps?: number | null; dropFrame?: boolean | null; sourceLang: string; targetLang: TargetLang; genre: string;
+  glossary: string; review: boolean;
+}
+export type TimelineFormat = "xml" | "fcpxml" | "stems" | "mix" | "srt";
 
 // ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที (ทศนิยมได้ 2 ตำแหน่ง) เงินเป็นสตางค์
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
@@ -56,7 +78,7 @@ export interface User {
   id: string; email: string; name: string; admin: boolean; owner: boolean; credits: number;
   profile_complete: boolean; profile: Profile;
   /** ยอมรับข้อกำหนดและนโยบายฉบับปัจจุบันแล้ว (false = ต้องยอมรับก่อนใช้งาน) */
-  consent_current: boolean; marketing: boolean;
+  consent_current: boolean; marketing: boolean; notify_email: boolean;
   consent: { terms: ConsentRecord | null; privacy: ConsentRecord | null };
 }
 export interface ConsentRecord { version: string; at: number }
@@ -134,12 +156,24 @@ export interface Actor {
 export interface UsageSummary {
   actor_id: string; month: string; stage_name: string; email: string | null; seconds: number; self_seconds: number;
   jobs: number; users: number; amount: number; paid: number; due: number;
+  payee: boolean; // กรอกข้อมูลรับเงินแล้ว
+  wht: number; // ภาษีหัก ณ ที่จ่ายถ้าจ่ายยอดค้างตอนนี้ (สตางค์)
 }
 export interface UsageRow {
   job_id: string; voice_id: string; user_id: string; job_name: string; seconds: number; lines: number;
   month: string; created_at: number; updated_at: number; payable: boolean; amount: number;
 }
-export interface ActorPayout { id: number; actor_id: string; month: string; amount: number; note: string; paid_by: string; paid_at: number }
+/** amount = ยอดก่อนหักภาษี, wht = ภาษีหัก ณ ที่จ่าย (โอนจริง = amount − wht) */
+export interface ActorPayout {
+  id: number; actor_id: string; month: string; amount: number; wht: number; payee_name: string; tax_id: string;
+  note: string; paid_by: string; paid_at: number;
+}
+/** ข้อมูลรับค่าตอบแทน (หน้านักพากย์ได้เลขผู้เสียภาษีและเลขบัญชีแบบปิดเหลือ 4 ตัวท้าย) */
+export interface ActorPayment {
+  payee_name: string; tax_id: string; address: string; bank: string; account_no: string; account_name: string;
+  updated_at?: number;
+}
+export interface WhtRule { percent: number; min: number } // min เป็นสตางค์
 export interface ActorMe {
   actor: Actor | null;
   consent: { version: string; accepted_at: number } | null;
@@ -149,6 +183,9 @@ export interface ActorMe {
   voices: LibraryVoice[];
   usage: UsageSummary[];
   payouts: ActorPayout[];
+  payment: ActorPayment | null;
+  banks: string[];
+  wht: WhtRule;
 }
 export interface ActorConsentDoc { version: string; text: string; rate: number; items: { id: string; text: string }[] }
 export interface ActorConsentRecord {
@@ -309,6 +346,11 @@ export const api = {
   legal: () => request<Legal>("/legal"),
   acceptConsent: (body: ConsentChoice) => request<User>("/auth/consent", json("POST", body)),
   setMarketing: (on: boolean) => request<User>("/auth/marketing", json("PUT", { on })),
+  setNotify: (on: boolean) => request<User>("/auth/notify", json("PUT", { on })),
+  /** ปิดบัญชีและลบข้อมูล ต้องพิมพ์อีเมลของบัญชียืนยัน ย้อนกลับไม่ได้ */
+  closeAccount: (confirm: string) => request<void>("/auth/close", json("POST", { confirm })),
+  backups: () => request<Backups>("/admin/backups"),
+  backupNow: () => request<{ name: string; bytes: number }>("/admin/backups", { method: "POST" }),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),
@@ -341,6 +383,8 @@ export const api = {
   },
   actorDeleteVoice: (id: string) => request<void>(`/actor/voices/${id}`, { method: "DELETE" }),
   actorWithdraw: () => request<void>("/actor/withdraw", { method: "POST" }),
+  actorSavePayment: (body: ActorPayment) => request<ActorPayment>("/actor/payment", json("PUT", body)),
+  adminActorPayment: (userId: string) => request<ActorPayment>(`/admin/actors/${userId}/payment`),
   adminActors: () => request<AdminActor[]>("/admin/actors"),
   adminActorConsents: (userId: string) => request<ActorConsentRecord[]>(`/admin/actors/${userId}/consents`),
   adminReviewActor: (userId: string, approve: boolean, note = "") =>
@@ -349,10 +393,10 @@ export const api = {
   adminReviewVoice: (voiceId: string, approve: boolean, note = "") =>
     request<void>(`/admin/actor-voices/${voiceId}/review`, json("POST", { approve, note })),
   adminActorUsage: (month = "") =>
-    request<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[] }>(`/admin/actor-usage${month ? `?month=${month}` : ""}`),
+    request<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[]; wht: WhtRule }>(`/admin/actor-usage${month ? `?month=${month}` : ""}`),
   adminActorUsageRows: (userId: string, month: string) => request<UsageRow[]>(`/admin/actor-usage/${userId}?month=${month}`),
   adminPayout: (userId: string, month: string, note = "") =>
-    request<{ amount: number }>(`/admin/actor-payouts/${userId}`, json("POST", { month, note })),
+    request<{ amount: number; wht: number; net: number }>(`/admin/actor-payouts/${userId}`, json("POST", { month, note })),
   health: () => request<{ status: string; mock: boolean; queued: number }>("/health"),
   system: () => request<SystemInfo>("/system"),
   fonts: () => request<Fonts>("/fonts"),
@@ -399,6 +443,10 @@ export const api = {
     request<Job>(`/jobs/${id}/voices`, json("PUT", choice)),
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
+
+  getTimeline: (id: string) => request<TimelineState>(`/jobs/${id}/timeline`),
+  setupTimeline: (id: string, tracks: TrackSetup[]) => request<TimelineState>(`/jobs/${id}/timeline`, json("PUT", { tracks })),
+  startTimeline: (id: string) => request<{ id: string }>(`/jobs/${id}/timeline/start`, { method: "POST" }),
   /** เพิ่มเสียงจากลิงก์คลิป (ระบบดาวน์โหลดเองตอนเตรียมเสียง) */
   createVoiceFromUrl: (url: string, meta: VoiceMeta) => {
     const form = new FormData();
@@ -428,12 +476,21 @@ export const api = {
   },
 };
 
+export type Backups = {
+  dir: string; hours: number; keep: number;
+  backups: { name: string; bytes: number; created_at: number }[];
+};
+
 export const fileUrl = {
+  myData: () => `${BASE}/auth/export`,
+  timelineExport: (id: string, formats: TimelineFormat[], mediaDir = "") =>
+    `${BASE}/jobs/${id}/timeline/export?formats=${formats.join(",")}${mediaDir ? `&media_dir=${encodeURIComponent(mediaDir)}` : ""}`,
   source: (id: string) => `${BASE}/jobs/${id}/source`,
   result: (id: string, subs = false) => `${BASE}/jobs/${id}/result${subs ? "?subs=true" : ""}`,
   export: (id: string, subs = false) => `${BASE}/jobs/${id}/export${subs ? "?subs=true" : ""}`,
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
   actorUsageCsv: (month: string) => `${BASE}/admin/actor-usage-csv?month=${month}`,
+  actorWhtCsv: (month: string) => `${BASE}/admin/actor-wht-csv?month=${month}`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceImage: (id: string, version = "") => `${BASE}/voices/${id}/image${version ? `?v=${encodeURIComponent(version)}` : ""}`,
@@ -470,7 +527,8 @@ function buildForm(opts: CreateOptions): FormData {
   return form;
 }
 
-type UploadPath = "jobs" | "voices" | `voices/${string}/moods` | `voices/${string}/image`;
+type UploadPath = "jobs" | "timeline" | `jobs/${string}/timeline/media` | "voices" | `voices/${string}/moods`
+  | `voices/${string}/image`;
 
 /** ที่อัปโหลด: ตรงไปที่ API พร้อมตั๋ว (บน Vercel) หรือผ่าน proxy /api */
 async function uploadTarget(path: UploadPath): Promise<{ url: string; token: string | null }> {
@@ -490,6 +548,37 @@ export function uploadJob(
   const form = buildForm(opts);
   form.append("file", file);
   return upload<{ id: string }>("jobs", form, onProgress);
+}
+
+/** นำเข้าไทม์ไลน์ (.xml .fcpxml .edl .otio หรือ zip) พร้อมไฟล์สื่อที่อ้างถึง (ส่งทีหลังได้) */
+export function uploadTimeline(
+  file: File,
+  media: File[],
+  opts: TimelineImport,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<TimelineState>; abort: () => void } {
+  const form = new FormData();
+  form.append("file", file);
+  media.forEach((m) => form.append("media", m));
+  if (opts.fps) form.append("fps", String(opts.fps));
+  if (opts.dropFrame != null) form.append("drop_frame", String(opts.dropFrame));
+  if (opts.sourceLang) form.append("source_lang", opts.sourceLang);
+  form.append("target_lang", opts.targetLang);
+  if (opts.genre) form.append("genre", opts.genre);
+  if (opts.glossary) form.append("glossary", opts.glossary);
+  form.append("review", String(opts.review));
+  return upload<TimelineState>("timeline", form, onProgress);
+}
+
+/** อัปโหลดไฟล์สื่อที่ไทม์ไลน์ยังขาด (หรือ zip) คืนสถานะใหม่ที่จับคู่ไฟล์แล้ว */
+export function uploadTimelineMedia(
+  jobId: string,
+  files: File[],
+  onProgress: (fraction: number) => void,
+): { promise: Promise<TimelineState>; abort: () => void } {
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  return upload<TimelineState>(`jobs/${jobId}/timeline/media`, form, onProgress);
 }
 
 export function uploadVoice(

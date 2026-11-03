@@ -12,12 +12,15 @@ services:
     env_file: .env
     environment:
       DATA_DIR: /app/data
+      BACKUP_DIR: /app/backups
       FONTS_DIR: ""
       WORKER: modal
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
+      # ไฟล์สำรองข้อมูล (backup.py) ตั้ง BACKUP_PATH ใน .env เป็นโฟลเดอร์ที่ซิงก์ขึ้นคลาวด์หรือดิสก์อีกลูก
+      - ${BACKUP_PATH:-./backups}:/app/backups
 
   # Cloudflare quick tunnel ฟรี ไม่จำกัดปริมาณข้อมูล แต่ลิงก์ *.trycloudflare.com เปลี่ยนทุกครั้งที่ container เริ่มใหม่
   # (ต้องแก้ BACKEND_URL บน Vercel ตาม) และรับ request ได้ครั้งละไม่เกิน 100 MB

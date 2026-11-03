@@ -139,6 +139,10 @@ def _migrate(db: sqlite3.Connection) -> None:
         for col in ("full_name", "phone", "account_type", "company", "use_case"):
             db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
         db.execute("ALTER TABLE users ADD COLUMN profile_at REAL")
+    if "deleted_at" not in cols("users"):  # ปิดบัญชี (close_account): ลบข้อมูลส่วนตัวแล้ว เหลือแถวไว้ผูกกับสมุดบัญชี
+        db.execute("ALTER TABLE users ADD COLUMN deleted_at REAL")
+    if "notify_email" not in cols("users"):  # อีเมลแจ้งเมื่องานรอตรวจบท พากย์เสร็จ หรือล้มเหลว (notify.py)
+        db.execute("ALTER TABLE users ADD COLUMN notify_email INTEGER NOT NULL DEFAULT 1")
 
 
 class _tx:
@@ -200,7 +204,7 @@ def profile_complete(row: sqlite3.Row) -> bool:
 def public_user(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row),
             "owner": is_owner(row["email"]), "credits": credits_out(row["credits"]),
-            "profile_complete": profile_complete(row), **_consent_out(row["id"]),
+            "profile_complete": profile_complete(row), **_consent_out(row["id"]), "notify_email": bool(row["notify_email"]),
             "profile": {k: row[k] for k in ("full_name", "phone", "account_type", "company", "use_case")}}
 
 
@@ -301,7 +305,7 @@ def all_users() -> list[dict]:
     """สำหรับหน้าผู้ดูแล: ผู้ใช้ทุกคนพร้อมเครดิตและแพ็กเกจ"""
     with _lock:
         db = _db()
-        rows = db.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+        rows = db.execute("SELECT * FROM users WHERE deleted_at IS NULL ORDER BY created_at DESC").fetchall()
         return [{**public_user(r), "created_at": r["created_at"],
                  "subscription": _sub_out(_subscription(db, r["id"]))} for r in rows]
 
@@ -321,6 +325,61 @@ def set_admin(uid: str, admin: bool, by: sqlite3.Row) -> None:
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
+def set_notify(uid: str, on: bool) -> dict:
+    """เปิดหรือปิดอีเมลแจ้งเตือนงาน คืนข้อมูลผู้ใช้ล่าสุด"""
+    with _tx() as db:
+        db.execute("UPDATE users SET notify_email = ? WHERE id = ?", (int(on), uid))
+        row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    return public_user(row)
+
+
+def export_data(uid: str) -> dict:
+    """ข้อมูลบัญชีทั้งหมดของผู้ใช้ (สิทธิ์ขอสำเนาข้อมูลตาม PDPA) ไม่มีโทเคนเข้าสู่ระบบและรหัสอ้างอิงบัตรที่ผู้ให้บริการชำระเงิน"""
+    with _lock:
+        db = _db()
+        u = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if u is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        q = lambda sql: [dict(r) for r in db.execute(sql, (uid,)).fetchall()]  # noqa: E731
+        sub = q("SELECT plan_id, minutes_left, started_at, expires_at FROM subscriptions WHERE user_id = ?")
+        ledger = q("SELECT kind, credits, minutes, amount, ref, note, created_at FROM ledger WHERE user_id = ? ORDER BY id")
+        topups = q("SELECT id, amount, credits, plan_id, provider, status, created_at, paid_at FROM topups "
+                   "WHERE user_id = ? ORDER BY created_at")
+        cards = q("SELECT brand, last4, exp_month, exp_year, created_at FROM cards WHERE user_id = ? ORDER BY created_at")
+    return {
+        "account": {k: u[k] for k in ("id", "email", "name", "full_name", "phone", "account_type", "company",
+                                      "use_case", "created_at", "profile_at", "notify_email")},
+        "credits": credits_out(u["credits"]),
+        "subscription": {**sub[0], "minutes_left": credits_out(sub[0]["minutes_left"])} if sub else None,
+        "ledger": [{**r, "credits": credits_out(r["credits"]), "minutes": credits_out(r["minutes"])} for r in ledger],
+        "topups": topups,
+        "cards": cards,
+    }
+
+
+def close_account(uid: str) -> float:
+    """ปิดบัญชี: ลบข้อมูลส่วนตัว เซสชัน แพ็กเกจ และบัตร เครดิตที่เหลือถูกยกเลิก (ไม่คืนเป็นเงิน)
+    แถวผู้ใช้กับสมุดบัญชีและรายการชำระเงินยังเก็บไว้ตามกฎหมายบัญชีและภาษี แต่ไม่มีชื่อ อีเมล หรือเบอร์โทรแล้ว
+    ล็อกอินด้วย Google อีเมลเดิมอีกครั้งจะได้บัญชีใหม่ คืนเครดิตที่ยกเลิก"""
+    with _tx() as db:
+        u = db.execute("SELECT * FROM users WHERE id = ? AND deleted_at IS NULL", (uid,)).fetchone()
+        if u is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        if is_owner(u["email"]):
+            raise AccountError(409, "บัญชีผู้ดูแลหลัก (ADMIN_EMAILS) ปิดไม่ได้ เอาอีเมลออกจาก ADMIN_EMAILS ก่อน")
+        cards = db.execute("SELECT provider, ref FROM cards WHERE user_id = ?", (uid,)).fetchall()
+        if u["credits"]:
+            _log(db, uid, "closed", credits=-u["credits"], note="ปิดบัญชี เครดิตที่เหลือถูกยกเลิก")
+        for t in ("sessions", "subscriptions", "cards"):
+            db.execute(f"DELETE FROM {t} WHERE user_id = ?", (uid,))
+        db.execute("UPDATE users SET email = ?, name = 'บัญชีที่ปิดแล้ว', pw_hash = '', credits = 0, admin = 0, "
+                   "full_name = '', phone = '', account_type = '', company = '', use_case = '', deleted_at = ? "
+                   "WHERE id = ?", (f"closed-{uid}@deleted.invalid", time.time(), uid))
+    for c in cards:
+        _detach_card(c["provider"], c["ref"])
+    return credits_out(u["credits"])
+
+
 def _log(db, uid: str, kind: str, credits: int = 0, minutes: int = 0, amount: int = 0,
          ref: Optional[str] = None, note: str = ""):
     """credits = เครดิตเติมที่เปลี่ยน, minutes = เครดิตแพ็กเกจที่เปลี่ยน, amount = เงินที่จ่าย (สตางค์ บันทึกไว้ดู)"""

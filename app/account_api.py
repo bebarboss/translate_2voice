@@ -159,6 +159,12 @@ def accept_consent(body: ConsentAccept, request: Request, user=Depends(require_u
     return accounts.public_user(accounts.user_by_id(user["id"]))
 
 
+@router.put("/auth/notify")
+def set_notify(body: Marketing, user=Depends(require_user)):
+    """เปิดหรือปิดอีเมลแจ้งเตือนเมื่องานรอตรวจบท พากย์เสร็จ หรือล้มเหลว"""
+    return accounts.set_notify(user["id"], body.on)
+
+
 @router.put("/auth/marketing")
 def set_marketing(body: Marketing, request: Request, user=Depends(require_user)):
     """เปิดหรือปิดการรับข่าวสาร (ถอนความยินยอมได้ตลอด)"""

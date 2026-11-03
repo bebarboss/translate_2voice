@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Recorder from "@/components/Recorder";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood, type UsageRow } from "@/lib/api";
+import { api, fileUrl, type ActorConsentDoc, type ActorMe, type ActorPayment, type Gender, type LibraryVoice, type Mood,
+  type UsageRow } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, MOODS, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
@@ -226,6 +227,73 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   );
 }
 
+const EMPTY_PAYMENT: ActorPayment = { payee_name: "", tax_id: "", address: "", bank: "", account_no: "", account_name: "" };
+
+/** ข้อมูลรับค่าตอบแทน: ผู้ดูแลบันทึกการจ่ายไม่ได้จนกว่าจะกรอก แก้ต้องกรอกเลขใหม่ทั้งหมด (หน้านี้เห็นแค่ 4 ตัวท้าย) */
+function PaymentSection({ me, reload }: { me: ActorMe; reload: () => void }) {
+  const [edit, setEdit] = useState(!me.payment);
+  const [form, setForm] = useState<ActorPayment>(me.payment ? { ...me.payment, tax_id: "", account_no: "" } : EMPTY_PAYMENT);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k: keyof ActorPayment) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try { await api.actorSavePayment(form); setEdit(false); reload(); }
+    catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  };
+  const p = me.payment;
+  const wht = me.wht.percent > 0
+    ? `หักภาษี ณ ที่จ่ายร้อยละ ${me.wht.percent} เมื่อจ่ายครั้งละตั้งแต่ ${fmtBaht(me.wht.min)} และออกหนังสือรับรองการหักภาษีให้`
+    : "";
+  return (
+    <section className="card" aria-labelledby="pay-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="pay-title" style={{ margin: 0 }}>ข้อมูลรับเงิน</h2>
+        {p && !edit && <button type="button" className="btn small" onClick={() => setEdit(true)}>แก้ไข</button>}
+      </div>
+      <span className="muted" style={{ fontSize: 14 }}>
+        ใช้โอนค่าตอบแทนและยื่นภาษี {wht} ข้อมูลนี้เห็นเฉพาะคุณและผู้ดูแล
+      </span>
+      {!p && <div className="alert info">กรอกข้อมูลรับเงินก่อน ผู้ดูแลถึงจะจ่ายค่าตอบแทนให้ได้</div>}
+      {p && !edit ? (
+        <dl className="profile-list">
+          <div><dt className="dim">ผู้รับเงิน</dt><dd>{p.payee_name}</dd></div>
+          <div><dt className="dim">เลขผู้เสียภาษี</dt><dd>{p.tax_id}</dd></div>
+          <div><dt className="dim">ที่อยู่</dt><dd>{p.address}</dd></div>
+          <div><dt className="dim">บัญชี</dt><dd>{p.bank} {p.account_no} ({p.account_name})</dd></div>
+        </dl>
+      ) : (
+        <form onSubmit={save} style={{ display: "grid", gap: 12 }}>
+          <div className="field"><label htmlFor="pp-name">ชื่อ-นามสกุลผู้รับเงิน (ตามบัตรประชาชน)</label>
+            <input id="pp-name" className="input" value={form.payee_name} onChange={set("payee_name")} required maxLength={100} /></div>
+          <div className="field"><label htmlFor="pp-tax">เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก</label>
+            <input id="pp-tax" className="input" value={form.tax_id} onChange={set("tax_id")} required inputMode="numeric"
+              autoComplete="off" placeholder={p ? `เดิม ${p.tax_id} (กรอกใหม่ทั้งหมด)` : ""} /></div>
+          <div className="field"><label htmlFor="pp-addr">ที่อยู่ตามบัตรประชาชน</label>
+            <textarea id="pp-addr" className="textarea" rows={2} value={form.address} onChange={set("address")} required maxLength={300} /></div>
+          <div className="field"><label htmlFor="pp-bank">ธนาคาร</label>
+            <select id="pp-bank" className="select" value={form.bank} onChange={set("bank")} required>
+              <option value="">เลือกธนาคาร</option>
+              {me.banks.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select></div>
+          <div className="field"><label htmlFor="pp-acc">เลขบัญชี{form.bank === "พร้อมเพย์" ? " (เบอร์โทรหรือเลขบัตรประชาชน)" : ""}</label>
+            <input id="pp-acc" className="input" value={form.account_no} onChange={set("account_no")} required inputMode="numeric"
+              autoComplete="off" placeholder={p ? `เดิม ${p.account_no} (กรอกใหม่ทั้งหมด)` : ""} /></div>
+          <div className="field"><label htmlFor="pp-accname">ชื่อบัญชี</label>
+            <input id="pp-accname" className="input" value={form.account_name} onChange={set("account_name")} required maxLength={100} /></div>
+          {error && <div className="alert error" role="alert">{error}</div>}
+          <div className="row" style={{ gap: 10 }}>
+            <button type="submit" className="btn primary small" disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึกข้อมูลรับเงิน"}</button>
+            {p && <button type="button" className="btn small" onClick={() => { setEdit(false); setError(""); }}>ยกเลิก</button>}
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function Earnings({ me }: { me: ActorMe }) {
   const [open, setOpen] = useState("");
   const [rows, setRows] = useState<UsageRow[]>([]);
@@ -274,6 +342,20 @@ function Earnings({ me }: { me: ActorMe }) {
             ))}
           </tbody>
         </table>
+      )}
+      {me.payouts.length > 0 && (
+        <details>
+          <summary className="dim">ประวัติการรับเงิน</summary>
+          <table className="ledger">
+            <thead><tr><th>วันที่จ่าย</th><th>ค่าตอบแทนเดือน</th><th>ยอดก่อนหักภาษี</th><th>ภาษีหัก ณ ที่จ่าย</th><th>โอนจริง</th></tr></thead>
+            <tbody>{me.payouts.map((p) => (
+              <tr key={p.id}>
+                <td>{fmtDate(p.paid_at)}</td><td>{fmtMonth(p.month)}</td><td>{fmtBaht(p.amount)}</td>
+                <td>{fmtBaht(p.wht)}</td><td>{fmtBaht(p.amount - p.wht)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </details>
       )}
     </section>
   );
@@ -340,6 +422,7 @@ export default function ActorPage() {
           <>
             <Studio me={me} reload={reload} />
             <Earnings me={me} />
+            <PaymentSection key={me.payment?.updated_at ?? 0} me={me} reload={reload} />
             {me.consent && <span className="dim">ยอมรับหนังสือยินยอมเวอร์ชัน {me.consent.version} เมื่อ {fmtDate(me.consent.accepted_at)}</span>}
           </>
         )}

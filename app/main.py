@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import accounts, actors, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, notify, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -44,6 +44,7 @@ worker = Worker(store, voice_store)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     worker.start()
+    backup.start()
     yield
 
 
@@ -1268,6 +1269,15 @@ class Review(BaseModel):
     note: str = Field("", max_length=300)
 
 
+class ActorPayment(BaseModel):
+    payee_name: str = Field(..., max_length=100, description="ชื่อ-นามสกุลผู้รับเงินตามบัตรประชาชน")
+    tax_id: str = Field(..., max_length=20, description="เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก")
+    address: str = Field(..., max_length=300, description="ที่อยู่ตามบัตรประชาชน")
+    bank: str = Field(..., max_length=40)
+    account_no: str = Field(..., max_length=30, description="เลขบัญชี หรือเบอร์/เลขพร้อมเพย์")
+    account_name: str = Field(..., max_length=100)
+
+
 class Payout(BaseModel):
     month: str = Field(..., pattern=r"^\d{4}-\d{2}$")
     note: str = Field("", max_length=200)
@@ -1316,6 +1326,8 @@ def actor_me(user=Depends(require_user)):
             "consent": {"version": c["version"], "accepted_at": c["accepted_at"]} if c else None,
             "consent_current": actors.has_consent(user["id"]), "consent_version": actors.CONSENT_VERSION,
             "rate": settings.actor_rate, "voices": [v.model_dump(mode="json") for v in voices],
+            "payment": actors.payment_out(user["id"]), "banks": actors.BANKS,
+            "wht": {"percent": settings.actor_wht_percent, "min": settings.actor_wht_min},
             "usage": actors.summary(user["id"]), "payouts": actors.payouts(user["id"])}
 
 
@@ -1323,10 +1335,12 @@ def actor_me(user=Depends(require_user)):
 def actor_apply(body: ActorApply, request: Request, user=Depends(require_user)):
     """สมัครเป็นนักพากย์พร้อมยอมรับหนังสือยินยอม รอผู้ดูแลอนุมัติ"""
     try:
-        return actors.apply(user["id"], body.stage_name.strip(), body.gender, body.bio.strip(), body.contact.strip(),
-                            body.consent_version, body.consent_items, *_client(request))
+        a = actors.apply(user["id"], body.stage_name.strip(), body.gender, body.bio.strip(), body.contact.strip(),
+                         body.consent_version, body.consent_items, *_client(request))
     except accounts.AccountError as e:
         raise _actor_fail(e)
+    notify.actor_applied(user["id"], a["stage_name"])
+    return a
 
 
 @app.post("/actor/consent", status_code=204, dependencies=[Depends(require_key)])
@@ -1378,7 +1392,9 @@ async def actor_record(
                                filename=label, source_url=None, denoise=denoise)
         actors.resubmit_voice(voice_id)
         worker.submit_voice(voice_id, mood or "")
-        return _own_voice(user, voice_id)
+        out = _own_voice(user, voice_id)
+        notify.actor_voice_submitted(user["id"], out.name)
+        return out
     if mood:
         raise HTTPException(400, "อัดเสียงหลักก่อน แล้วค่อยเพิ่มเสียงอารมณ์")
     voice_id = voice_store.new_id()
@@ -1389,6 +1405,7 @@ async def actor_record(
                                  categories=["นักพากย์"], filename=label, denoise=denoise))
     actors.add_voice(voice_id, user["id"])
     worker.submit_voice(voice_id)
+    notify.actor_voice_submitted(user["id"], a["stage_name"])
     return _own_voice(user, voice_id)
 
 
@@ -1401,6 +1418,16 @@ def actor_delete_voice(voice_id: str, user=Depends(require_user)):
     actors.remove_voice(voice_id)
 
 
+@app.put("/actor/payment", dependencies=[Depends(require_key)])
+def actor_payment(body: ActorPayment, user=Depends(require_user)):
+    """ข้อมูลรับค่าตอบแทน: ชื่อผู้รับเงิน เลขผู้เสียภาษี ที่อยู่ และบัญชีธนาคาร (ต้องมีก่อนผู้ดูแลบันทึกการจ่าย)"""
+    try:
+        return actors.save_payment(user["id"], body.payee_name, body.tax_id, body.address, body.bank,
+                                   body.account_no, body.account_name)
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+
+
 @app.post("/actor/withdraw", status_code=204, dependencies=[Depends(require_key)])
 def actor_withdraw(user=Depends(require_user)):
     """ถอนความยินยอม: ลบเสียงทั้งหมดของนักพากย์ออกจากคลังทันที"""
@@ -1410,6 +1437,76 @@ def actor_withdraw(user=Depends(require_user)):
         raise _actor_fail(e)
     for voice_id in ids:
         voice_store.delete(voice_id)
+
+
+class CloseAccount(BaseModel):
+    confirm: str = Field(..., max_length=200, description="พิมพ์อีเมลของบัญชีเพื่อยืนยัน")
+
+
+@app.get("/auth/export", dependencies=[Depends(require_key)])
+def export_my_data(user=Depends(require_user)):
+    """สำเนาข้อมูลทั้งหมดของผู้ใช้เป็นไฟล์ JSON (สิทธิ์ขอสำเนาและโอนย้ายข้อมูลตาม PDPA)
+    มีบัญชี ความยินยอม เครดิต งานพร้อมบท และข้อมูลนักพากย์ ไฟล์คลิปและเสียงดาวน์โหลดได้จากหน้างานแต่ละงาน"""
+    uid = user["id"]
+    try:
+        out = accounts.export_data(uid)
+    except accounts.AccountError as e:
+        raise HTTPException(e.status, str(e))
+    jobs = []
+    for j in store.all():
+        if j.owner == uid:
+            lines = [u.model_dump(mode="json", include={"id", "start", "end", "speaker", "source", "target", "mood"})
+                     for u in store.load_transcript(j.id)]
+            jobs.append({**j.model_dump(mode="json", exclude={"input_path", "queue_position"}), "transcript": lines})
+    mine = {v for v, a in actors.voice_actors().items() if a["user_id"] == uid}
+    out.update(consents=consent.history(uid), jobs=jobs, actor=actors.export_data(uid),
+               actor_voices=[v.model_dump(mode="json") for v in voice_store.all() if v.id in mine],
+               exported_at=time.time())
+    return JSONResponse(out, headers={"Content-Disposition": f'attachment; filename="my-data-{uid}.json"'})
+
+
+@app.post("/auth/close", status_code=204, dependencies=[Depends(require_key)])
+def close_my_account(body: CloseAccount, user=Depends(require_user)):
+    """ปิดบัญชีและลบข้อมูล (สิทธิ์ขอลบข้อมูลตาม PDPA): งานและไฟล์ทั้งหมด เสียงนักพากย์ ข้อมูลส่วนตัว และเครดิตที่เหลือ
+    ประวัติการเงินเก็บไว้ตามกฎหมายโดยไม่มีชื่อ อีเมล หรือเบอร์โทร ย้อนกลับไม่ได้"""
+    uid = user["id"]
+    if body.confirm.strip().lower() != user["email"].lower():
+        raise HTTPException(400, "พิมพ์อีเมลของบัญชีให้ตรงเพื่อยืนยัน")
+    if accounts.is_owner(user["email"]):
+        raise HTTPException(409, "บัญชีผู้ดูแลหลัก (ADMIN_EMAILS) ปิดไม่ได้ เอาอีเมลออกจาก ADMIN_EMAILS ก่อน")
+    jobs = [j for j in store.all() if j.owner == uid]
+    if any(j.status in ACTIVE for j in jobs):
+        raise HTTPException(409, "มีงานที่กำลังทำหรือรอคิวอยู่ กดยกเลิกงานก่อนแล้วค่อยปิดบัญชี")
+    due = actors.due_total(uid)
+    if due > 0:
+        raise HTTPException(409, f"มีค่าตอบแทนนักพากย์ค้างจ่าย {due / 100:,.2f} บาท ติดต่อผู้ดูแลให้จ่ายก่อนปิดบัญชี")
+    mine = [v for v, a in actors.voice_actors().items() if a["user_id"] == uid]
+    if any(v and v.status == VoiceStatus.processing and v.stage != "queued" for v in map(voice_store.get, mine)):
+        raise HTTPException(409, "กำลังเตรียมเสียงของคุณอยู่ รอให้เสร็จก่อนแล้วค่อยปิดบัญชี")
+    for voice_id in actors.forget(uid):
+        voice_store.delete(voice_id)
+    for j in jobs:
+        store.delete(j.id)
+    consent.forget(uid)
+    try:
+        accounts.close_account(uid)
+    except accounts.AccountError as e:
+        raise HTTPException(e.status, str(e))
+    logging.getLogger(__name__).info("account %s closed (%d jobs)", uid, len(jobs))
+
+
+@app.get("/admin/backups", dependencies=[Depends(require_key)])
+def admin_backups(_=Depends(require_admin)):
+    """ไฟล์สำรองข้อมูลที่มี (ใหม่ก่อน) และตั้งค่าปัจจุบัน"""
+    return {"dir": str(settings.backup_dir), "hours": settings.backup_hours, "keep": settings.backup_keep,
+            "backups": backup.list_backups()}
+
+
+@app.post("/admin/backups", dependencies=[Depends(require_key)])
+def admin_backup_now(_=Depends(require_admin)):
+    """สำรองข้อมูลทันที"""
+    out = backup.run()
+    return {"name": out.name, "bytes": out.stat().st_size}
 
 
 @app.get("/admin/actors", dependencies=[Depends(require_key)])
@@ -1430,6 +1527,7 @@ def admin_review_actor(user_id: str, body: Review, admin=Depends(require_admin))
         actors.review_actor(user_id, body.approve, body.note.strip(), admin["email"])
     except accounts.AccountError as e:
         raise _actor_fail(e)
+    notify.actor_reviewed(user_id, body.approve, body.note.strip())
 
 
 @app.get("/admin/actor-voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
@@ -1450,12 +1548,48 @@ def admin_review_voice(voice_id: str, body: Review, admin=Depends(require_admin)
         actors.review_voice(voice_id, body.approve, body.note.strip(), admin["email"])
     except accounts.AccountError as e:
         raise _actor_fail(e)
+    owner = actors.voice_actors().get(voice_id)
+    if owner:
+        notify.voice_reviewed(owner["user_id"], v.name, body.approve, body.note.strip())
 
 
 @app.get("/admin/actor-usage", dependencies=[Depends(require_key)])
 def admin_actor_usage(month: Optional[str] = None, _=Depends(require_admin)):
-    """ยอดใช้เสียงและค่าตอบแทนต่อนักพากย์ต่อเดือน (ไม่ส่ง month = ทุกเดือน) จำนวนเงินเป็นสตางค์"""
-    return {"rate": settings.actor_rate, "rows": actors.report(month), "payouts": actors.payouts()}
+    """ยอดใช้เสียงและค่าตอบแทนต่อนักพากย์ต่อเดือน (ไม่ส่ง month = ทุกเดือน) จำนวนเงินเป็นสตางค์
+    wht = ภาษีหัก ณ ที่จ่ายถ้าจ่ายยอดค้างตอนนี้, payee = นักพากย์กรอกข้อมูลรับเงินแล้ว"""
+    return {"rate": settings.actor_rate, "rows": actors.report(month), "payouts": actors.payouts(),
+            "wht": {"percent": settings.actor_wht_percent, "min": settings.actor_wht_min}}
+
+
+@app.get("/admin/actors/{user_id}/payment", dependencies=[Depends(require_key)])
+def admin_actor_payment(user_id: str, _=Depends(require_admin)):
+    """ข้อมูลรับเงินเต็มของนักพากย์ (สำหรับโอนเงินและออกหนังสือรับรองการหักภาษี)"""
+    p = actors.payment(user_id)
+    if p is None:
+        raise HTTPException(404, "นักพากย์ยังไม่ได้กรอกข้อมูลรับเงิน")
+    return p
+
+
+@app.get("/admin/actor-wht-csv", dependencies=[Depends(require_key)])
+def admin_actor_wht_csv(month: str, _=Depends(require_admin)):
+    """รายการหักภาษี ณ ที่จ่ายของการจ่ายในเดือนนั้น (นับตามวันที่จ่ายจริง) สำหรับยื่นแบบและออกหนังสือรับรอง"""
+    import csv
+    import io
+
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(400, "month ต้องเป็น YYYY-MM")
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ลำดับ", "เลขประจำตัวผู้เสียภาษี", "ชื่อผู้มีเงินได้", "ที่อยู่", "วันที่จ่าย", "ประเภทเงินได้",
+                "อัตราภาษี (%)", "จำนวนเงินที่จ่าย", "ภาษีที่หัก", "โอนจริง", "ค่าตอบแทนเดือน", "หมายเหตุ"])
+    for i, p in enumerate(actors.wht_rows(month), 1):
+        day = time.strftime("%d/%m/%Y", time.gmtime(p["paid_at"] + actors.TZ))
+        rate = f"{settings.actor_wht_percent:g}" if p["wht"] else "0"
+        w.writerow([i, p["tax_id"], p["payee_name"], p["address"], day, settings.actor_income_type, rate,
+                    f"{p['amount'] / 100:.2f}", f"{p['wht'] / 100:.2f}", f"{(p['amount'] - p['wht']) / 100:.2f}",
+                    p["month"], p["note"]])
+    return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv",
+                    headers={"content-disposition": f"attachment; filename=actor-wht-{month}.csv"})
 
 
 @app.get("/admin/actor-usage/{user_id}", dependencies=[Depends(require_key)])
@@ -1485,9 +1619,11 @@ def admin_actor_usage_csv(month: str, _=Depends(require_admin)):
 def admin_payout(user_id: str, body: Payout, admin=Depends(require_admin)):
     """บันทึกว่าจ่ายค่าตอบแทนยอดค้างของเดือนนั้นแล้ว"""
     try:
-        return {"amount": actors.add_payout(user_id, body.month, body.note.strip(), admin["email"])}
+        out = actors.add_payout(user_id, body.month, body.note.strip(), admin["email"])
     except accounts.AccountError as e:
         raise _actor_fail(e)
+    notify.actor_paid(user_id, body.month, out["amount"], out["wht"])
+    return out
 
 
 # ---------------------------------------------------------------- ไฟล์

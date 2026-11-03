@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type AccountType, type AdminUser, type Cards, type Plan, type User, type Wallet } from "@/lib/api";
+import { api, fileUrl, type AccountType, type AdminUser, type Backups, type Cards, type Plan, type User, type Wallet } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
   topup: "ซื้อเครดิต", subscribe: "ซื้อแพ็กเกจ", charge: "ใช้พากย์", refund: "คืนเครดิต", adjust: "ผู้ดูแลปรับ", bonus: "เครดิตฟรี",
+  closed: "ปิดบัญชี",
 };
 const fmtDate = (unix: number) =>
   new Date(unix * 1000).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
@@ -23,9 +24,9 @@ function ProfileSection({ user: initial }: { user: User }) {
   const [user, setUser] = useState(initial);
   const [saving, setSaving] = useState(false);
   const p = user.profile;
-  const toggle = async () => {
+  const toggle = async (fn: () => Promise<User>) => {
     setSaving(true);
-    try { setUser(await api.setMarketing(!user.marketing)); } catch { /* คงค่าเดิม */ } finally { setSaving(false); }
+    try { setUser(await fn()); } catch { /* คงค่าเดิม */ } finally { setSaving(false); }
   };
   const rows: [string, string][] = [
     ["ชื่อ-นามสกุล", p.full_name], ["เบอร์โทร", p.phone],
@@ -50,9 +51,100 @@ function ProfileSection({ user: initial }: { user: User }) {
           {user.consent.privacy && ` ฉบับ ${user.consent.privacy.version}`}
         </span>
         <label className="agree" style={{ fontSize: 14 }}>
-          <input type="checkbox" checked={user.marketing} disabled={saving} onChange={toggle} />รับข่าวสารและโปรโมชันทางอีเมล
+          <input type="checkbox" checked={user.marketing} disabled={saving} onChange={() => toggle(() => api.setMarketing(!user.marketing))} />รับข่าวสารและโปรโมชันทางอีเมล
+        </label>
+        <label className="agree" style={{ fontSize: 14 }}>
+          <input type="checkbox" checked={user.notify_email} disabled={saving} onChange={() => toggle(() => api.setNotify(!user.notify_email))} />แจ้งทางอีเมลเมื่องานรอตรวจบท พากย์เสร็จ หรือไม่สำเร็จ
         </label>
       </div>
+    </section>
+  );
+}
+
+/** สิทธิ์ตาม PDPA: ดาวน์โหลดสำเนาข้อมูล และปิดบัญชีพร้อมลบข้อมูล */
+function MyDataSection({ user }: { user: User }) {
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const close = async () => {
+    setBusy(true); setError("");
+    try {
+      await api.closeAccount(confirm);
+      window.location.href = "/welcome";
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ปิดบัญชีไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card" aria-labelledby="mydata-title">
+      <h2 id="mydata-title" style={{ margin: 0 }}>ข้อมูลของฉัน</h2>
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <span className="muted" style={{ fontSize: 14 }}>
+          สำเนาข้อมูลบัญชี ความยินยอม ประวัติเครดิต งานพร้อมบทพากย์ และข้อมูลนักพากย์ เป็นไฟล์ JSON
+          (ไฟล์คลิปและเสียงดาวน์โหลดได้จากหน้างานแต่ละงาน)
+        </span>
+        <a className="btn small" href={fileUrl.myData()} download>ดาวน์โหลดข้อมูลของฉัน</a>
+      </div>
+      {!open ? (
+        <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+          <span className="muted" style={{ fontSize: 14 }}>ปิดบัญชีและลบข้อมูลทั้งหมด</span>
+          <button type="button" className="btn small danger" onClick={() => setOpen(true)}>ปิดบัญชี</button>
+        </div>
+      ) : (
+        <div className="alert error" role="alert" style={{ display: "grid", gap: 10 }}>
+          <strong>ปิดบัญชีแล้วย้อนกลับไม่ได้</strong>
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            <li>ลบงานทุกงาน พร้อมคลิป บทพากย์ และไฟล์ผลลัพธ์</li>
+            <li>ลบข้อมูลเบื้องต้น (ชื่อ เบอร์โทร บริษัท) และออกจากระบบทุกเครื่อง</li>
+            <li>เครดิตและแพ็กเกจที่เหลือถูกยกเลิก ไม่คืนเป็นเงิน</li>
+            <li>ถ้าเป็นนักพากย์: ถอนความยินยอมและลบเสียงทั้งหมดออกจากคลัง</li>
+            <li>ประวัติการซื้อและค่าตอบแทนเก็บไว้ตามกฎหมายบัญชีและภาษี โดยไม่มีชื่อ อีเมล หรือเบอร์โทร</li>
+          </ul>
+          <span>ดาวน์โหลดข้อมูลของฉันไว้ก่อนถ้าต้องการเก็บ พิมพ์ <b>{user.email}</b> เพื่อยืนยัน</span>
+          <input className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={user.email}
+            aria-label="พิมพ์อีเมลเพื่อยืนยันการปิดบัญชี" autoComplete="off" />
+          {error && <span>{error}</span>}
+          <div className="row" style={{ gap: 10 }}>
+            <button type="button" className="btn small danger" onClick={close}
+              disabled={busy || confirm.trim().toLowerCase() !== user.email.toLowerCase()}>
+              {busy ? "กำลังปิดบัญชี..." : "ปิดบัญชีและลบข้อมูล"}
+            </button>
+            <button type="button" className="btn small" onClick={() => { setOpen(false); setConfirm(""); setError(""); }}>ยกเลิก</button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** ผู้ดูแล: ไฟล์สำรองข้อมูลอัตโนมัติ และปุ่มสำรองทันที */
+function BackupSection() {
+  const [data, setData] = useState<Backups | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = () => api.backups().then(setData).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+  const now = async () => {
+    setBusy(true); setError("");
+    try { await api.backupNow(); await load(); } catch (e) { setError(e instanceof Error ? e.message : "สำรองไม่สำเร็จ"); }
+    finally { setBusy(false); }
+  };
+  const last = data?.backups[0];
+  return (
+    <section className="card" aria-labelledby="backup-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="backup-title" style={{ margin: 0 }}>สำรองข้อมูล</h2>
+        <button type="button" className="btn small" onClick={now} disabled={busy}>{busy ? "กำลังสำรอง..." : "สำรองทันที"}</button>
+      </div>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {data && (
+        <span className="muted" style={{ fontSize: 14 }}>
+          {data.hours > 0 ? `สำรองอัตโนมัติทุก ${data.hours} ชั่วโมง เก็บ ${data.keep} ชุดล่าสุด` : "ปิดการสำรองอัตโนมัติอยู่ (BACKUP_HOURS=0)"}
+          {" · "}{last ? `ล่าสุด ${new Date(last.created_at * 1000).toLocaleString("th-TH")} (${(last.bytes / 1e6).toFixed(1)} MB) ทั้งหมด ${data.backups.length} ชุด` : "ยังไม่มีไฟล์สำรอง"}
+        </span>
+      )}
     </section>
   );
 }
@@ -364,6 +456,8 @@ export default function AccountPage() {
         <div className="card"><span className="muted">เครดิตและแพ็กเกจยังไม่เปิดใช้งาน</span></div>
       )}
       {config.billing && user.admin && <AdminSection me={user.id} />}
+      {user.admin && <BackupSection />}
+      <MyDataSection user={user} />
     </main>
   );
 }

@@ -157,6 +157,13 @@ def set_marketing(uid: str, on: bool, ip: str, ua: str) -> None:
                    "VALUES (?, 'marketing', '1', ?, ?, ?, ?)", (uid, int(on), ip[:64], ua[:300], time.time()))
 
 
+def forget(uid: str) -> None:
+    """ปิดบัญชี: ลบ IP และเบราว์เซอร์ออกจากประวัติ เหลือเวอร์ชันและเวลาที่ยอมรับ"""
+    _init()
+    with _tx() as db:
+        db.execute("UPDATE user_consents SET ip = '', user_agent = '' WHERE user_id = ?", (uid,))
+
+
 def history(uid: str) -> list[dict]:
     _init()
     return [dict(r) for r in _read("SELECT kind, version, accepted, ip, user_agent, created_at FROM user_consents "

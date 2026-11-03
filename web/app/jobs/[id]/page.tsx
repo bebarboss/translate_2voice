@@ -9,6 +9,8 @@ import LibraryJobView from "@/components/LibraryJobView";
 import ProcessingView from "@/components/ProcessingView";
 import ReviewView from "@/components/ReviewView";
 import ResultView from "@/components/ResultView";
+import TimelineResultView from "@/components/TimelineResultView";
+import TimelineSetup from "@/components/TimelineSetup";
 
 export default function JobPage() {
   const { id } = useParams<{ id: string }>();
@@ -54,6 +56,12 @@ export default function JobPage() {
     );
   }
 
+  if (job.timeline && job.status === "awaiting_review" && job.stage === "timeline_setup") {
+    return <TimelineSetup job={job} onChanged={refresh} />;
+  }
+  if (job.timeline && job.status === "done" && !editing) {
+    return <TimelineResultView job={job} onEdit={() => setEditing(true)} />;
+  }
   if (job.library && (job.status === "awaiting_review" || job.status === "done")) {
     return <LibraryJobView job={job} onChanged={refresh} />;
   }

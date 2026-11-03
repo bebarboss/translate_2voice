@@ -293,6 +293,8 @@ class Worker:
 
     def _execute(self, job_id: str, phase: str) -> None:
         from .pipeline import library, runner
+        started = time.time()
+        event = ""  # อีเมลแจ้งผู้ใช้หลังงานจบ (notify.py) แปลบทใหม่เร็ว ไม่แจ้ง
         try:
             if phase == "voice":
                 voice_id, _, mood = job_id.partition(":")
@@ -305,6 +307,7 @@ class Worker:
             if phase == "render":
                 runner.run_render(self.store, job_id)
                 self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+                event = "done"
                 return
             if phase == "translate":  # แปลบทใหม่ แล้วรอให้ตรวจก่อนพากย์ใหม่เสมอ
                 runner.run_translate(self.store, job_id)
@@ -315,10 +318,12 @@ class Worker:
                 job = self.store.get(job_id)
                 if job and job.review:
                     self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
+                    event = "review"
                     return
                 self.store.update(job_id, phase="synthesize")
             runner.run_synthesize(self.store, job_id, self.voices)
             self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+            event = "done"
         except Cancelled:
             log.info("job %s cancelled", job_id)
             if self.store.get(job_id):
@@ -328,9 +333,16 @@ class Worker:
             job = self.store.get(job_id)
             if job and phase != "voice":
                 self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
+                event = "failed"
                 if phase == "analyze" and job.owner:  # วิเคราะห์ไม่สำเร็จ คืนนาทีที่ตัดไป
                     from . import accounts
                     accounts.refund_job(job.owner, job_id)
         finally:
             if phase != "voice":
                 self.store.clear_cancel(job_id)
+            if event:
+                try:
+                    from . import notify
+                    notify.job_event(job_id, event, time.time() - started)
+                except Exception:  # noqa: BLE001
+                    log.exception("notify job %s failed", job_id)

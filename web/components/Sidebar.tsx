@@ -4,10 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/useAuth";
-import { GearIcon, ListIcon, MenuIcon, MicIcon, UploadIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
+import { GearIcon, ListIcon, MenuIcon, MicIcon, ScissorsIcon, UploadIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
   { href: "/", label: "อัปโหลด", icon: <UploadIcon size={18} /> },
+  { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <ScissorsIcon size={18} /> },
   { href: "/jobs", label: "งานทั้งหมด", icon: <ListIcon /> },
   { href: "/voices", label: "คลังเสียง", icon: <WaveIcon /> },
   { href: "/settings", label: "ตั้งค่า", icon: <GearIcon /> },

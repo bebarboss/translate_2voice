@@ -34,6 +34,18 @@ class Settings:
     # ระบบทั่วไป
     data_dir: Path = Path(_env("DATA_DIR", "data")).resolve()
     api_key: str = _env("API_KEY")  # ว่างไว้ = ไม่ต้องใช้คีย์
+    # สำรองข้อมูลอัตโนมัติ (backup.py): ปลายทาง ทุกกี่ชั่วโมง (0 = ปิด) และเก็บกี่ชุดล่าสุด
+    backup_dir: Path = Path(_env("BACKUP_DIR") or Path(_env("DATA_DIR", "data")) / "backups").resolve()
+    backup_hours: int = _int("BACKUP_HOURS", 24)
+    backup_keep: int = _int("BACKUP_KEEP", 14)
+    # อีเมลแจ้งเตือน (notify.py) ผ่าน SMTP ไม่ตั้ง SMTP_HOST / MAIL_FROM = ไม่ส่ง พอร์ต 465 = SSL, อื่น ๆ = STARTTLS
+    smtp_host: str = _env("SMTP_HOST")
+    smtp_port: int = _int("SMTP_PORT", 587)
+    smtp_user: str = _env("SMTP_USER")
+    smtp_password: str = _env("SMTP_PASSWORD")
+    mail_from: str = _env("MAIL_FROM")
+    web_url: str = _env("WEB_URL")  # ที่อยู่หน้าเว็บ ใช้ทำลิงก์ในอีเมล เช่น https://<โปรเจกต์>.vercel.app
+    notify_min_seconds: int = _int("NOTIFY_MIN_SECONDS", 120)  # งานที่เสร็จเร็วกว่านี้ไม่ส่งอีเมล
     max_upload_mb: int = _int("MAX_UPLOAD_MB", 500)
     mock_pipeline: bool = _bool("MOCK_PIPELINE")  # ทดสอบ API โดยไม่โหลดโมเดลจริง
     device: str = _env("DEVICE", "cuda")
@@ -52,6 +64,11 @@ class Settings:
     payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ)
     # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
     actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
+    # ภาษีหัก ณ ที่จ่ายค่าตอบแทนนักพากย์: กี่เปอร์เซ็นต์ (0 = ไม่หัก) หักเมื่อจ่ายครั้งละตั้งแต่กี่สตางค์ และประเภทเงินได้ในรายงาน
+    # ค่าเริ่มต้นเป็นแนวปฏิบัติทั่วไปกับฟรีแลนซ์ ตรวจกับนักบัญชีก่อนใช้จริง
+    actor_wht_percent: float = float(_env("ACTOR_WHT_PERCENT", "3"))
+    actor_wht_min: int = _int("ACTOR_WHT_MIN_SATANG", 100_000)
+    actor_income_type: str = _env("ACTOR_INCOME_TYPE", "40(2)")
     controller_name: str = _env("PDPA_CONTROLLER_NAME", "[ชื่อผู้ให้บริการ]")
     controller_contact: str = _env("PDPA_CONTROLLER_CONTACT", "[อีเมลหรือช่องทางติดต่อ]")
 

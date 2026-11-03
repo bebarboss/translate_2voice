@@ -92,6 +92,9 @@ export default function UploadPage() {
         <button type="button" aria-pressed={mode === "file"} onClick={() => setMode("file")}>อัปโหลดไฟล์</button>
         <button type="button" aria-pressed={mode === "url"} onClick={() => setMode("url")}>วางลิงก์</button>
       </div>
+      <span className="dim" style={{ marginTop: -8 }}>
+        ตัดต่อใน Premiere Pro หรือ DaVinci Resolve แยกเสียงคนละแทร็กไว้แล้ว? <Link href="/timeline">นำเข้าไทม์ไลน์</Link> ได้แทร็กพากย์ไทยกลับไปวางในโปรเจกต์เลย
+      </span>
 
       {mode === "file" ? (
         <label
