@@ -6,6 +6,7 @@ import { MOOD_LABEL, fmtTime, speakerColor } from "@/lib/format";
 import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
 import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon, TrashIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 /** แก้ประโยคเดียว: ตัวละคร บทพากย์ แยกประโยค รวมกับประโยคถัดไป */
 export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onSeek, onFocusText, boxRef, tools, retake }: {
   u: Utterance;
@@ -38,54 +39,55 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
   return (
     <div ref={boxRef} className={`line${active ? " active" : ""}${speaking ? " speaking" : ""}`}>
       <div className="row" style={{ gap: 8 }}>
-        <button type="button" className="time-btn" onClick={() => onSeek(u.start)} aria-label={`ไปที่ ${fmtTime(u.start)}`}>
+        <button type="button" className="time-btn" onClick={() => onSeek(u.start)} aria-label={tx("ไปที่ {0}", { 0: fmtTime(u.start) })}>
           {fmtTime(u.start)}
         </button>
         <span className="swatch" style={{ background: speakerColor(d.speaker, tr.speakers) }} />
-        <label className="sr-only" htmlFor={`spk-${u.id}`}>ตัวละครของประโยคที่ {u.id}</label>
+        <label className="sr-only" htmlFor={`spk-${u.id}`}>{tx("ตัวละครของประโยคที่")} {u.id}</label>
         <select id={`spk-${u.id}`} className="spk-select" value={d.speaker} disabled={tr.busy === "edit"}
           onChange={(e) => tr.changeSpeaker(u, e.target.value)}>
           {tr.speakers.map((s) => <option key={s} value={s}>{tr.label(s)}</option>)}
-          <option value={NEW_SPEAKER}>+ ตัวละครใหม่</option>
+          <option value={NEW_SPEAKER}>{tx("+ ตัวละครใหม่")}</option>
         </select>
         {showMood && (
           <>
-            <label className="sr-only" htmlFor={`mood-${u.id}`}>อารมณ์ของประโยคที่ {u.id}</label>
+            <label className="sr-only" htmlFor={`mood-${u.id}`}>{tx("อารมณ์ของประโยคที่")} {u.id}</label>
             <select id={`mood-${u.id}`} className="spk-select" value={d.mood}
-              title="อัตโนมัติ: ระบบเลือกอารมณ์จากบทและน้ำเสียงต้นฉบับตอนพากย์ หรือเลือกเองเพื่อใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง"
+              title={tx("อัตโนมัติ: ระบบเลือกอารมณ์จากบทและน้ำเสียงต้นฉบับตอนพากย์ หรือเลือกเองเพื่อใช้เสียงตัวอย่างอารมณ์นั้นของเสียงในคลัง")}
               onChange={(e) => tr.setDraft(u.id, { mood: e.target.value as typeof d.mood })}>
-              <option value="">{auto ? `อัตโนมัติ · ${MOOD_LABEL[auto]}` : "อารมณ์อัตโนมัติ"}</option>
-              <option value="normal">อารมณ์ปกติ</option>
-              {moods.map((m) => <option key={m} value={m}>{MOOD_LABEL[m]}</option>)}
-              {d.mood && d.mood !== "normal" && !moods.includes(d.mood) && <option value={d.mood}>{MOOD_LABEL[d.mood]} (ไม่มีในเสียงนี้ ใช้เสียงปกติ)</option>}
+              <option value="">{auto ? tx("อัตโนมัติ · {0}", { 0: MOOD_LABEL[auto] }) : tx("อารมณ์อัตโนมัติ")}</option>
+              <option value="normal">{tx("อารมณ์ปกติ")}</option>
+              {moods.map((m) => <option key={m} value={m}>{tx(MOOD_LABEL[m])}</option>)}
+              {d.mood && d.mood !== "normal" && !moods.includes(d.mood) && <option value={d.mood}>{tx(MOOD_LABEL[d.mood])}  {tx("(ไม่มีในเสียงนี้ ใช้เสียงปกติ)")}</option>}
             </select>
           </>
         )}
         <span style={{ marginLeft: "auto" }} className="row">
-          {d.take > 0 && <span className="badge" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>เสียงรอบที่ {d.take + 1}</span>}
-          {tr.overlaps.ids.has(u.id) && <span className="badge overlap" title="ตัวละครอื่นพูดพร้อมกันในช่วงนี้ เสียงพากย์จะเล่นทับกัน">พูดซ้อน</span>}
-          {changed && <span className="badge awaiting_review">แก้แล้ว</span>}
-          {tooLong && <span className="badge warn">ยาวเกินเวลา</span>}
+          {d.take > 0 && <span className="badge" style={{ background: "var(--surface-2)", color: "var(--text-2)" }}>{tx("เสียงรอบที่")} {d.take + 1}</span>}
+          {tr.overlaps.ids.has(u.id) && <span className="badge overlap" title={tx("ตัวละครอื่นพูดพร้อมกันในช่วงนี้ เสียงพากย์จะเล่นทับกัน")}>{tx("พูดซ้อน")}</span>}
+          {changed && <span className="badge awaiting_review">{tx("แก้แล้ว")}</span>}
+          {tooLong && <span className="badge warn">{tx("ยาวเกินเวลา")}</span>}
         </span>
       </div>
       <p className="src">{u.source}</p>
       <div className="row time-range" style={{ gap: 6 }}>
-        <label htmlFor={`st-${u.id}`}>เริ่ม</label>
+        <label htmlFor={`st-${u.id}`}>{tx("เริ่ม")}</label>
         <input id={`st-${u.id}`} type="number" step={0.05} min={0} value={d.start}
           onChange={(e) => setTime("start", e.target.value)} />
-        <label htmlFor={`en-${u.id}`}>จบ</label>
+        <label htmlFor={`en-${u.id}`}>{tx("จบ")}</label>
         <input id={`en-${u.id}`} type="number" step={0.05} min={0} value={d.end}
           onChange={(e) => setTime("end", e.target.value)} />
-        <span className="dim">วิ · ยาว {(d.end - d.start).toFixed(2)} วิ</span>
+        <span className="dim">{tx("วิ · ยาว")} {(d.end - d.start).toFixed(2)}  {tx("วิ")}</span>
         {retimed && (
           <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { start: u.start, end: u.end })}>
-            คืนเวลาเดิม
+            
+            {tx("คืนเวลาเดิม")}
           </button>
         )}
       </div>
-      <label className="sr-only" htmlFor={`tg-${u.id}`}>บทพากย์ประโยคที่ {u.id}</label>
+      <label className="sr-only" htmlFor={`tg-${u.id}`}>{tx("บทพากย์ประโยคที่")} {u.id}</label>
       <textarea id={`tg-${u.id}`} className="textarea" rows={2} value={d.target}
-        title="/ คือจุดหยุดหายใจตามต้นฉบับ เสียงพากย์จะเว้นตรงนั้น ลบหรือย้ายได้"
+        title={tx("/ คือจุดหยุดหายใจตามต้นฉบับ เสียงพากย์จะเว้นตรงนั้น ลบหรือย้ายได้")}
         onChange={(e) => tr.setDraft(u.id, { target: e.target.value })}
         onSelect={(e) => { tr.cursors.current[u.id] = e.currentTarget.selectionStart; }}
         onFocus={onFocusText} />
@@ -95,27 +97,27 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           <>
             {d.take > 0 && (
               <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { take: d.take - 1 })}
-                title="กลับไปใช้เสียงพากย์รอบก่อน (ใช้เสียงที่เก็บไว้ ไม่ต้องพากย์ซ้ำ)">
-                <ArrowLeft size={13} />รอบก่อน
+                title={tx("กลับไปใช้เสียงพากย์รอบก่อน (ใช้เสียงที่เก็บไว้ ไม่ต้องพากย์ซ้ำ)")}>
+                <ArrowLeft size={13} />{tx("รอบก่อน")}
               </button>
             )}
             <button type="button" className="icon-btn" onClick={() => tr.setDraft(u.id, { take: d.take + 1 })}
-              title="ให้ระบบพากย์ประโยคนี้ใหม่ ได้น้ำเสียงหรือการออกเสียงแบบใหม่ บทเหมือนเดิม">
-              <ShuffleIcon />สุ่มเสียงใหม่
+              title={tx("ให้ระบบพากย์ประโยคนี้ใหม่ ได้น้ำเสียงหรือการออกเสียงแบบใหม่ บทเหมือนเดิม")}>
+              <ShuffleIcon />{tx("สุ่มเสียงใหม่")}
             </button>
           </>
         )}
         <button type="button" className="icon-btn" onClick={() => tr.split(u)} disabled={!!tr.busy}
-          title="แยกตรงเคอร์เซอร์ในบท หรือตรงเวลาที่หยุดวิดีโอไว้">
-          <ScissorsIcon />แยกประโยค
+          title={tx("แยกตรงเคอร์เซอร์ในบท หรือตรงเวลาที่หยุดวิดีโอไว้")}>
+          <ScissorsIcon />{tx("แยกประโยค")}
         </button>
         <button type="button" className="icon-btn" onClick={() => tr.merge(u)}
-          disabled={!!tr.busy || isLast} title="รวมกับประโยคถัดไป">
-          <MergeIcon />รวมกับถัดไป
+          disabled={!!tr.busy || isLast} title={tx("รวมกับประโยคถัดไป")}>
+          <MergeIcon />{tx("รวมกับถัดไป")}
         </button>
-        <button type="button" className="icon-btn" disabled={!!tr.busy} title="ลบประโยคนี้ ช่วงนั้นจะไม่มีเสียงพากย์"
-          onClick={() => window.confirm("ลบประโยคนี้? ช่วงนั้นจะไม่มีเสียงพากย์") && tr.removeLine(u)}>
-          <TrashIcon />ลบ
+        <button type="button" className="icon-btn" disabled={!!tr.busy} title={tx("ลบประโยคนี้ ช่วงนั้นจะไม่มีเสียงพากย์")}
+          onClick={() => window.confirm(tx("ลบประโยคนี้? ช่วงนั้นจะไม่มีเสียงพากย์")) && tr.removeLine(u)}>
+          <TrashIcon />{tx("ลบ")}
         </button>
       </div>
     </div>

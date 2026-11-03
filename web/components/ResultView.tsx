@@ -13,6 +13,7 @@ import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./Voic
 import SubtitleStylePanel from "./SubtitleStylePanel";
 import { ArrowLeft, ArrowRight, CheckIcon, DownloadIcon, MicIcon, PlayIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 function defaultStyle(s: RuntimeSettings | null, lang: Job["target_lang"]): SubtitleStyle {
   return {
     font: (lang === "en" ? s?.sub_font_en : s?.sub_font_th) ?? (lang === "en" ? "Noto Sans" : "Noto Sans Thai"),
@@ -69,8 +70,8 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       const j = await api.setJobVoices(job.id, Object.fromEntries(changed.map((s) => [s, choice[s]])));
       setVoiceMap(j.voice_map ?? {});
       setVoiceChanged(true);
-      const who = changed.length === 1 ? tr.label(changed[0]) : `${changed.length} ตัวละคร`;
-      tr.setMessage({ kind: "info", text: `เปลี่ยนเสียงพากย์ของ${who}แล้ว กดพากย์ใหม่เพื่อฟังเสียงใหม่` });
+      const who = changed.length === 1 ? tr.label(changed[0]) : tx("{0} ตัวละคร", { 0: changed.length });
+      tr.setMessage({ kind: "info", text: tx("เปลี่ยนเสียงพากย์ของ{0}แล้ว กดพากย์ใหม่เพื่อฟังเสียงใหม่", { 0: who }) });
     } catch (e) {
       tr.setMessage({ kind: "error", text: (e as Error).message });
     }
@@ -117,7 +118,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     tr.setMessage(null);
     try {
       await tr.saveLines();
-      tr.setMessage({ kind: "info", text: "บันทึกบทแล้ว กดพากย์ใหม่เพื่อฟังเสียงที่แก้" });
+      tr.setMessage({ kind: "info", text: tx("บันทึกบทแล้ว กดพากย์ใหม่เพื่อฟังเสียงที่แก้") });
     } catch (e) {
       tr.setMessage({ kind: "error", text: (e as Error).message });
     } finally { tr.setBusy(""); }
@@ -190,7 +191,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
         return;
       }
       if (res.status === 409 && burn) {
-        if (window.confirm("ยังไม่มีวิดีโอฝังซับตามรูปแบบนี้ สร้างตอนนี้เลยไหม? (ไม่ต้องพากย์ใหม่ ใช้เวลาไม่กี่นาที)")) {
+        if (window.confirm(tx("ยังไม่มีวิดีโอฝังซับตามรูปแบบนี้ สร้างตอนนี้เลยไหม? (ไม่ต้องพากย์ใหม่ ใช้เวลาไม่กี่นาที)"))) {
           await api.render(job.id);
           onChanged();
         }
@@ -212,29 +213,30 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       <div className="page-head">
         <div className="row" style={{ gap: 14, minWidth: 0 }}>
           <h1 style={{ fontSize: 24, wordBreak: "break-all" }}>{job.filename}</h1>
-          <span className="badge done"><CheckIcon size={14} />พากย์{TARGET_LABEL[job.target_lang]}เสร็จแล้ว</span>
+          <span className="badge done"><CheckIcon size={14} />{tx("พากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("เสร็จแล้ว")}</span>
         </div>
         <div className="row">
           {needsDub && (
             <button type="button" className="btn primary" onClick={redub} disabled={!!tr.busy}>
-              <MicIcon size={17} />{tr.busy === "dub" ? "กำลังส่ง..." : "พากย์ใหม่ช่วงที่แก้"}
+              <MicIcon size={17} />{tr.busy === "dub" ? tx("กำลังส่ง...") : tx("พากย์ใหม่ช่วงที่แก้")}
             </button>
           )}
-          <button type="button" className="btn" onClick={onEdit}>แก้บททั้งหมด</button>
-          <Link href="/" className="btn">ส่งคลิปถัดไป</Link>
+          <button type="button" className="btn" onClick={onEdit}>{tx("แก้บททั้งหมด")}</button>
+          <Link href="/" className="btn">{tx("ส่งคลิปถัดไป")}</Link>
         </div>
       </div>
 
       {job.synth_stats && (
         <span className="dim" style={{ marginTop: -12 }}>
-          รอบล่าสุดพากย์ใหม่ {job.synth_stats.redubbed} ประโยค · ใช้เสียงเดิม {job.synth_stats.reused} ประโยค
+          
+          {tx("รอบล่าสุดพากย์ใหม่")} {job.synth_stats.redubbed}  {tx("ประโยค · ใช้เสียงเดิม")} {job.synth_stats.reused}  {tx("ประโยค")}
         </span>
       )}
       {message && <div className={`alert ${message.kind}`} role="alert">{message.text}</div>}
       {tr.message && <div className={`alert ${tr.message.kind}`} role={tr.message.kind === "error" ? "alert" : "status"}>{tr.message.text}</div>}
 
       <div className="split">
-        <section className="main" aria-label="วิดีโอที่พากย์แล้ว">
+        <section className="main" aria-label={tx("วิดีโอที่พากย์แล้ว")}>
           <div className="video-box">
             <video ref={videoRef} key={audio} src={audio === "dub" ? fileUrl.result(job.id) : fileUrl.source(job.id)}
               controls preload="metadata" playsInline
@@ -243,11 +245,11 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
               onPlay={() => { if (stopAt.current === null) setPicked(null); }} />
           </div>
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <div className="seg" role="group" aria-label="เสียงที่เล่น">
-              <button type="button" aria-pressed={audio === "dub"} onClick={() => switchAudio("dub")}>เสียงพากย์{TARGET_LABEL[job.target_lang]}</button>
-              <button type="button" aria-pressed={audio === "orig"} onClick={() => switchAudio("orig")}>เสียงต้นฉบับ</button>
+            <div className="seg" role="group" aria-label={tx("เสียงที่เล่น")}>
+              <button type="button" aria-pressed={audio === "dub"} onClick={() => switchAudio("dub")}>{tx("เสียงพากย์")}{tx(TARGET_LABEL[job.target_lang])}</button>
+              <button type="button" aria-pressed={audio === "orig"} onClick={() => switchAudio("orig")}>{tx("เสียงต้นฉบับ")}</button>
             </div>
-            <span className="dim">ตัวอย่างนี้ยังไม่ฝังซับ ซับจะฝังตอนดาวน์โหลด · <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span></span>
+            <span className="dim">{tx("ตัวอย่างนี้ยังไม่ฝังซับ ซับจะฝังตอนดาวน์โหลด ·")} <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span></span>
           </div>
 
           {sorted.length > 0 && (
@@ -258,13 +260,13 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
           )}
           <VoiceCastPicker vc={vc} job={{ ...job, speakers: tr.speakers, speaker_names: tr.names }} value={voiceMap} onChange={pickVoice} />
           {current && (
-            <section className="card tight" aria-label="แก้ช่วงที่เลือก">
+            <section className="card tight" aria-label={tx("แก้ช่วงที่เลือก")}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <h2 style={{ fontSize: 15 }}>ประโยคที่ {idx + 1} / {sorted.length}</h2>
+                <h2 style={{ fontSize: 15 }}>{tx("ประโยคที่")} {idx + 1} / {sorted.length}</h2>
                 <div className="row" style={{ gap: 6 }}>
-                  {needsDub && <span className="dim">{dirty.length ? `ยังไม่บันทึก ${dirty.length} ประโยค` : "บันทึกแล้ว รอพากย์ใหม่"}</span>}
+                  {needsDub && <span className="dim">{dirty.length ? tx("ยังไม่บันทึก {0} ประโยค", { 0: dirty.length }) : tx("บันทึกแล้ว รอพากย์ใหม่")}</span>}
                   <button type="button" className="btn small" onClick={saveEdits} disabled={!!tr.busy || !dirty.length}>
-                    {tr.busy === "save" ? "กำลังบันทึก..." : "บันทึก"}
+                    {tr.busy === "save" ? tx("กำลังบันทึก...") : tx("บันทึก")}
                   </button>
                 </div>
               </div>
@@ -272,36 +274,38 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
                 onSeek={seek} onFocusText={() => { videoRef.current?.pause(); setPicked(current.id); }}
                 tools={<>
                   <button type="button" className="icon-btn" disabled={idx <= 0} onClick={() => pick(sorted[idx - 1])}
-                    aria-label="ประโยคก่อนหน้า"><ArrowLeft size={14} /></button>
+                    aria-label={tx("ประโยคก่อนหน้า")}><ArrowLeft size={14} /></button>
                   <button type="button" className="icon-btn" onClick={() => playLine(current)}>
-                    <PlayIcon size={12} />เล่นช่วงนี้
+                    <PlayIcon size={12} />{tx("เล่นช่วงนี้")}
                   </button>
                   <button type="button" className="icon-btn" disabled={idx >= sorted.length - 1}
-                    onClick={() => pick(sorted[idx + 1])} aria-label="ประโยคถัดไป"><ArrowRight size={14} /></button>
+                    onClick={() => pick(sorted[idx + 1])} aria-label={tx("ประโยคถัดไป")}><ArrowRight size={14} /></button>
                   <span style={{ flex: 1 }} />
                 </>} />
-              <span className="dim">เสียงในวิดีโอยังเป็นเสียงพากย์รอบก่อน แก้บท ตัวละคร หรือแยก/รวมประโยค แล้วกด &ldquo;พากย์ใหม่ช่วงที่แก้&rdquo; ระบบพากย์เฉพาะประโยคที่เปลี่ยน</span>
+              <span className="dim">{tx("เสียงในวิดีโอยังเป็นเสียงพากย์รอบก่อน แก้บท ตัวละคร หรือแยก/รวมประโยค แล้วกด “พากย์ใหม่ช่วงที่แก้” ระบบพากย์เฉพาะประโยคที่เปลี่ยน")}</span>
             </section>
           )}
 
           <div className="card">
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <h2>ดาวน์โหลด</h2>
+              <h2>{tx("ดาวน์โหลด")}</h2>
               <label className="row" style={{ gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={burn} style={{ width: 20, height: 20, accentColor: "var(--accent)" }}
                   onChange={(e) => { setBurn(e.target.checked); persist({ burn_subs: e.target.checked }); }} />
-                ฝังซับในวิดีโอ
+                
+                {tx("ฝังซับในวิดีโอ")}
               </label>
             </div>
             {burn && (
               <div className="card tight" style={{ background: "var(--surface-3)" }}>
                 <div className="row" style={{ justifyContent: "space-between" }}>
-                  <h2 style={{ fontSize: 15 }}>รูปแบบซับ</h2>
+                  <h2 style={{ fontSize: 15 }}>{tx("รูปแบบซับ")}</h2>
                   <div className="row">
-                    <span className="dim" aria-live="polite">{saving ? "กำลังบันทึก..." : "บันทึกอัตโนมัติ"}</span>
+                    <span className="dim" aria-live="polite">{saving ? tx("กำลังบันทึก...") : tx("บันทึกอัตโนมัติ")}</span>
                     {style && (
                       <button type="button" className="btn small" onClick={() => { setStyle(null); persist({ sub_style: null }); }}>
-                        ใช้ค่าเริ่มต้น
+                        
+                        {tx("ใช้ค่าเริ่มต้น")}
                       </button>
                     )}
                   </div>
@@ -311,49 +315,49 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
             )}
             <div className="row">
               <button type="button" className="btn primary" disabled={saving || !!busy} onClick={() => download("zip")}>
-                <DownloadIcon />{busy === "zip" ? "กำลังเตรียม..." : "ส่งออก (MP4 + SRT)"}
+                <DownloadIcon />{busy === "zip" ? tx("กำลังเตรียม...") : tx("ส่งออก (MP4 + SRT)")}
               </button>
               <button type="button" className="btn" disabled={saving || !!busy} onClick={() => download("mp4")}>
-                {busy === "mp4" ? "กำลังเตรียม..." : "เฉพาะ MP4"}
+                {busy === "mp4" ? tx("กำลังเตรียม...") : tx("เฉพาะ MP4")}
               </button>
-              <a className="btn" href={fileUrl.subtitles(job.id)} download>เฉพาะ SRT</a>
+              <a className="btn" href={fileUrl.subtitles(job.id)} download>{tx("เฉพาะ SRT")}</a>
             </div>
             <span className="dim">
-              {burn ? "วิดีโอจะมีซับฝังอยู่ในภาพ ถ้าเปลี่ยนรูปแบบซับ ระบบจะสร้างวิดีโอใหม่ก่อนดาวน์โหลด" : "วิดีโอไม่มีซับในภาพ ไฟล์ SRT แยกมาให้ใช้กับโปรแกรมตัดต่อหรืออัปโหลดขึ้นแพลตฟอร์ม"}
+              {burn ? tx("วิดีโอจะมีซับฝังอยู่ในภาพ ถ้าเปลี่ยนรูปแบบซับ ระบบจะสร้างวิดีโอใหม่ก่อนดาวน์โหลด") : tx("วิดีโอไม่มีซับในภาพ ไฟล์ SRT แยกมาให้ใช้กับโปรแกรมตัดต่อหรืออัปโหลดขึ้นแพลตฟอร์ม")}
             </span>
           </div>
         </section>
 
         <aside className="side">
           <section className="card" aria-labelledby="sum" style={{ gap: 4 }}>
-            <h2 id="sum" style={{ marginBottom: 8 }}>สรุปงาน</h2>
-            <div className="kv"><span>ภาษาต้นฉบับ</span><span>{langName(job.detected_lang ?? job.source_lang)}</span></div>
-            <div className="kv"><span>ภาษาพากย์</span><span>{TARGET_LABEL[job.target_lang]}</span></div>
-            <div className="kv"><span>ความยาวคลิป</span><span className="mono">{fmtDuration(job.duration)}</span></div>
-            <div className="kv"><span>ตัวละคร</span><span>{tr.speakers.length}</span></div>
-            {job.source_url && <div className="kv"><span>ที่มา</span><a href={job.source_url} target="_blank" rel="noreferrer">เปิดลิงก์</a></div>}
+            <h2 id="sum" style={{ marginBottom: 8 }}>{tx("สรุปงาน")}</h2>
+            <div className="kv"><span>{tx("ภาษาต้นฉบับ")}</span><span>{langName(job.detected_lang ?? job.source_lang)}</span></div>
+            <div className="kv"><span>{tx("ภาษาพากย์")}</span><span>{tx(TARGET_LABEL[job.target_lang])}</span></div>
+            <div className="kv"><span>{tx("ความยาวคลิป")}</span><span className="mono">{fmtDuration(job.duration)}</span></div>
+            <div className="kv"><span>{tx("ตัวละคร")}</span><span>{tr.speakers.length}</span></div>
+            {job.source_url && <div className="kv"><span>{tx("ที่มา")}</span><a href={job.source_url} target="_blank" rel="noreferrer">{tx("เปิดลิงก์")}</a></div>}
           </section>
 
           <section className="card" aria-labelledby="layers" style={{ gap: 10 }}>
-            <h2 id="layers">เลเยอร์เสียง (WAV)</h2>
+            <h2 id="layers">{tx("เลเยอร์เสียง (WAV)")}</h2>
             {speakerStems.map((s) => (
               <div key={s} className="row" style={{ fontSize: 14 }}>
                 <span className="swatch" style={{ background: speakerColor(s, job.speakers) }} />
-                <span style={{ flex: 1 }}>{tr.label(s)} · เสียงต้นฉบับ</span>
-                <a href={fileUrl.stem(job.id, s)} download>ดาวน์โหลด</a>
+                <span style={{ flex: 1 }}>{tr.label(s)}  {tx("· เสียงต้นฉบับ")}</span>
+                <a href={fileUrl.stem(job.id, s)} download>{tx("ดาวน์โหลด")}</a>
               </div>
             ))}
             {layerStems.map((s) => (
               <div key={s} className="row" style={{ fontSize: 14 }}>
                 <span className="swatch" style={{ background: "#8A919D" }} />
-                <span style={{ flex: 1 }}>{STEM_LABEL[s] ?? s}</span>
-                <a href={fileUrl.stem(job.id, s)} download>ดาวน์โหลด</a>
+                <span style={{ flex: 1 }}>{STEM_LABEL[s] ? tx(STEM_LABEL[s]) : s}</span>
+                <a href={fileUrl.stem(job.id, s)} download>{tx("ดาวน์โหลด")}</a>
               </div>
             ))}
-            {!stems.length && <span className="dim">ไม่มีไฟล์เลเยอร์</span>}
+            {!stems.length && <span className="dim">{tx("ไม่มีไฟล์เลเยอร์")}</span>}
           </section>
 
-          <p className="dim" style={{ margin: 0 }}>ก่อนเผยแพร่ โปรดตรวจว่าได้รับอนุญาตจากเจ้าของคลิปและเจ้าของเสียงแล้ว</p>
+          <p className="dim" style={{ margin: 0 }}>{tx("ก่อนเผยแพร่ โปรดตรวจว่าได้รับอนุญาตจากเจ้าของคลิปและเจ้าของเสียงแล้ว")}</p>
         </aside>
       </div>
     </main>

@@ -12,6 +12,7 @@ import ResultView from "@/components/ResultView";
 import TimelineResultView from "@/components/TimelineResultView";
 import TimelineSetup from "@/components/TimelineSetup";
 
+import { tx } from "@/lib/i18n";
 export default function JobPage() {
   const { id } = useParams<{ id: string }>();
   const [job, setJob] = useState<Job | null>(null);
@@ -49,9 +50,9 @@ export default function JobPage() {
         {error ? (
           <>
             <div className="alert error" role="alert">{error}</div>
-            <Link href="/jobs">กลับไปหน้างานทั้งหมด</Link>
+            <Link href="/jobs">{tx("กลับไปหน้างานทั้งหมด")}</Link>
           </>
-        ) : <div className="empty">กำลังโหลด...</div>}
+        ) : <div className="empty">{tx("กำลังโหลด...")}</div>}
       </main>
     );
   }

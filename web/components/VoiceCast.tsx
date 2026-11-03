@@ -7,6 +7,7 @@ import { GENDER_LABEL, speakerColor, speakerLabel } from "@/lib/format";
 import VoiceAvatar from "./VoiceAvatar";
 import VoicePicker from "./VoicePicker";
 
+import { tx } from "@/lib/i18n";
 /** เสียงในคลังที่พร้อมใช้ และเสียงที่แนะนำของแต่ละตัวละคร (ใช้ร่วมกันระหว่างรายการเสียงพากย์และเลเยอร์บนเส้นเวลา)
  *  picking: ตัวละครที่กำลังเปิดแถบเลือกเสียงอยู่ */
 export function useVoiceCast(jobId: string) {
@@ -26,7 +27,7 @@ export function useVoiceCast(jobId: string) {
 }
 export type VoiceCastState = ReturnType<typeof useVoiceCast>;
 
-const describe = (v: LibraryVoice) => [v.name, v.gender && GENDER_LABEL[v.gender], v.tone].filter(Boolean).join(" · ");
+const describe = (v: LibraryVoice) => [v.name, v.gender && tx(GENDER_LABEL[v.gender]), v.tone].filter(Boolean).join(" · ");
 const scoreOf = (c: SpeakerVoice | undefined, id: string) => c?.suggestions.find((s) => s.voice_id === id)?.score;
 const topOf = (c: SpeakerVoice | undefined, voices: Record<string, LibraryVoice>) =>
   c?.suggestions.find((s) => voices[s.voice_id])?.voice_id;
@@ -45,24 +46,24 @@ export function VoiceChoice({ vc, speaker, label, selected, compact }: {
   const score = selected ? scoreOf(c, selected) : undefined;
   return (
     <button type="button" className={`voice-choice${compact ? " compact" : ""}`} onClick={() => vc.open(speaker)}
-      aria-label={`เลือกเสียงพากย์ของ${label}`} title={v ? `เสียงพากย์: ${describe(v)}` : "เลือกเสียงพากย์จากคลัง"}>
+      aria-label={tx("เลือกเสียงพากย์ของ{0}", { 0: label })} title={v ? tx("เสียงพากย์: {0}", { 0: describe(v) }) : tx("เลือกเสียงพากย์จากคลัง")}>
       {v ? (
         <>
           <VoiceAvatar name={v.name} size={compact ? 22 : 32} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
           <span className="voice-choice-name">
             {selected === top ? "★ " : ""}{compact ? v.name : describe(v)}
-            {!compact && score != null && <span className="dim"> · ใกล้เคียง {Math.round(score * 100)}%</span>}
+            {!compact && score != null && <span className="dim">  {tx("· ใกล้เคียง")} {Math.round(score * 100)}%</span>}
           </span>
         </>
       ) : compact ? (
-        <span className="voice-choice-name">เสียงต้นฉบับ</span>
+        <span className="voice-choice-name">{tx("เสียงต้นฉบับ")}</span>
       ) : (
         <span className="voice-choice-name">
-          {selected ? "เสียงที่เลือกไว้ถูกลบแล้ว ใช้เสียงต้นฉบับ" : "เสียงต้นฉบับ (เลียนเสียงนักแสดง)"}
-          {top && <span className="dim"> · แนะนำ {vc.voices[top].name}</span>}
+          {selected ? tx("เสียงที่เลือกไว้ถูกลบแล้ว ใช้เสียงต้นฉบับ") : tx("เสียงต้นฉบับ (เลียนเสียงนักแสดง)")}
+          {top && <span className="dim">  {tx("· แนะนำ")} {vc.voices[top].name}</span>}
         </span>
       )}
-      <span className="dim" style={{ marginLeft: "auto", flex: "none" }}>{compact ? "›" : "เปลี่ยน ›"}</span>
+      <span className="dim" style={{ marginLeft: "auto", flex: "none" }}>{compact ? "›" : tx("เปลี่ยน ›")}</span>
     </button>
   );
 }
@@ -97,7 +98,7 @@ export function UseSuggested({ vc, value, onApply }: {
 }) {
   if (!vc.cast) return null;
   if (!Object.keys(vc.voices).length) {
-    return <Link href="/voices" className="btn small lane-voice-btn" title="ยังไม่มีเสียงในคลัง ทุกตัวละครเลียนเสียงนักแสดงต้นฉบับ">+ เพิ่มเสียงเข้าคลัง</Link>;
+    return <Link href="/voices" className="btn small lane-voice-btn" title={tx("ยังไม่มีเสียงในคลัง ทุกตัวละครเลียนเสียงนักแสดงต้นฉบับ")}>{tx("+ เพิ่มเสียงเข้าคลัง")}</Link>;
   }
   const choice: Record<string, string> = {};
   for (const c of vc.cast) {
@@ -107,8 +108,9 @@ export function UseSuggested({ vc, value, onApply }: {
   const n = Object.keys(choice).length;
   return (
     <button type="button" className="btn small lane-voice-btn" disabled={!n} onClick={() => onApply(choice)}
-      title={n ? `ใช้เสียงที่แนะนำ (★) กับ ${n} ตัวละครที่ยังไม่ได้ใช้` : "ทุกตัวละครใช้เสียงที่แนะนำอยู่แล้ว"}>
-      ★ ใช้เสียงแนะนำ
+      title={n ? tx("ใช้เสียงที่แนะนำ (★) กับ {0} ตัวละครที่ยังไม่ได้ใช้", { 0: n }) : tx("ทุกตัวละครใช้เสียงที่แนะนำอยู่แล้ว")}>
+      
+      {tx("★ ใช้เสียงแนะนำ")}
     </button>
   );
 }

@@ -10,13 +10,14 @@ import { UploadIcon } from "@/components/Icons";
 import VoiceAvatar from "@/components/VoiceAvatar";
 import { useAuth } from "@/lib/useAuth";
 
+import { tx } from "@/lib/i18n";
 const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 
 const OTHER_VOICES_WARN = 0.2; // ท่อนเสียงคนอื่นเกินสัดส่วนนี้ เตือนว่าไฟล์มีหลายคนพูด
 
-const fmtMin = (sec: number) => (sec >= 90 ? `${(sec / 60).toFixed(1)} นาที` : `${Math.round(sec)} วินาที`);
+const fmtMin = (sec: number) => (sec >= 90 ? tx("{0} นาที", { 0: (sec / 60).toFixed(1) }) : tx("{0} วินาที", { 0: Math.round(sec) }));
 
 /** ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์: ประเมินกี่ท่อน และมีเสียงคนอื่นปนแค่ไหน */
 function AnalysisNote({ a }: { a: VoiceAnalysis }) {
@@ -24,14 +25,15 @@ function AnalysisNote({ a }: { a: VoiceAnalysis }) {
   return (
     <>
       <span className="dim">
-        ประเมินทั้งไฟล์{a.source_sec ? ` ${fmtMin(a.source_sec)}` : ""}
-        {a.speech_sec ? ` · เสียงพูด ${fmtMin(a.speech_sec)}` : ""}
-        {a.windows ? ` · ${a.windows} ท่อน เลือกท่อนที่ชัดที่สุด` : ""}
+        
+        {tx("ประเมินทั้งไฟล์")}{a.source_sec ? ` ${fmtMin(a.source_sec)}` : ""}
+        {a.speech_sec ? tx(" · เสียงพูด {0}", { 0: fmtMin(a.speech_sec) }) : ""}
+        {a.windows ? tx(" · {0} ท่อน เลือกท่อนที่ชัดที่สุด", { 0: a.windows }) : ""}
       </span>
       {other >= OTHER_VOICES_WARN && (
         <div className="alert warn">
-          พบเสียงคนอื่นปนราว {Math.round(other * 100)}% ของไฟล์ ระบบเลือกเฉพาะเสียงของคนที่พูดมากที่สุด
-          ถ้าเสียงตัวอย่างไม่ใช่คนที่ต้องการ ใช้ไฟล์ที่มีแค่เสียงคนนั้น
+          
+          {tx("พบเสียงคนอื่นปนราว")} {Math.round(other * 100)}{tx("% ของไฟล์ ระบบเลือกเฉพาะเสียงของคนที่พูดมากที่สุด ถ้าเสียงตัวอย่างไม่ใช่คนที่ต้องการ ใช้ไฟล์ที่มีแค่เสียงคนนั้น")}
         </div>
       )}
     </>
@@ -54,7 +56,7 @@ function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g:
     <div className="seg" role="group" aria-label={label} style={{ alignSelf: "flex-start" }}>
       {GENDERS.map((g) => (
         <button key={g || "auto"} type="button" aria-pressed={value === g} onClick={() => onChange(g)}>
-          {g ? GENDER_LABEL[g] : "ให้ระบบเดา"}
+          {g ? tx(GENDER_LABEL[g]) : tx("ให้ระบบเดา")}
         </button>
       ))}
     </div>
@@ -93,7 +95,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
     if (!f) return;
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPT.split(",").includes(ext)) {
-      setError("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG, OGA หรือวิดีโอ MP4, MOV, MKV, WEBM");
+      setError(tx("รองรับไฟล์เสียง WAV, MP3, M4A, FLAC, OGG, OGA หรือวิดีโอ MP4, MOV, MKV, WEBM"));
       return;
     }
     setFile(f);
@@ -138,7 +140,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
     }
     let imageError = "";
     if (image) {
-      await uploadVoiceImage(v.id, image).catch((e) => { imageError = `เพิ่มเสียงแล้ว แต่ตั้งรูปไม่สำเร็จ: ${(e as Error).message}`; });
+      await uploadVoiceImage(v.id, image).catch((e) => { imageError = tx("เพิ่มเสียงแล้ว แต่ตั้งรูปไม่สำเร็จ: {0}", { 0: (e as Error).message }); });
     }
     setFile(null);
     setUrl("");
@@ -169,10 +171,10 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
   return (
     <section className="card" aria-labelledby="add-voice">
       <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <h2 id="add-voice" style={{ margin: 0 }}>เพิ่มเสียงเข้าคลัง</h2>
-        <div className="seg" role="group" aria-label="ชนิดคลิป">
-          <button type="button" aria-pressed={!multi} onClick={() => setMode("single")} disabled={busy}>เสียงคนเดียว</button>
-          <button type="button" aria-pressed={multi} onClick={() => setMode("multi")} disabled={busy}>คลิปหลายคนพูด</button>
+        <h2 id="add-voice" style={{ margin: 0 }}>{tx("เพิ่มเสียงเข้าคลัง")}</h2>
+        <div className="seg" role="group" aria-label={tx("ชนิดคลิป")}>
+          <button type="button" aria-pressed={!multi} onClick={() => setMode("single")} disabled={busy}>{tx("เสียงคนเดียว")}</button>
+          <button type="button" aria-pressed={multi} onClick={() => setMode("multi")} disabled={busy}>{tx("คลิปหลายคนพูด")}</button>
         </div>
       </div>
       <div className="grid-2">
@@ -185,62 +187,62 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
             {file ? (
               <>
                 <span style={{ fontSize: 16, fontWeight: 500, wordBreak: "break-all" }}>{file.name}</span>
-                <span className="muted">{(file.size / 1024 / 1024).toFixed(1)} MB · คลิกเพื่อเปลี่ยนไฟล์</span>
+                <span className="muted">{(file.size / 1024 / 1024).toFixed(1)}  {tx("MB · คลิกเพื่อเปลี่ยนไฟล์")}</span>
               </>
             ) : (
               <>
-                <span style={{ fontSize: 17, fontWeight: 500 }}>ลากคลิปเสียงภาษาไทยมาวาง</span>
-                <span className="muted">หรือ <span style={{ color: "var(--accent)", textDecoration: "underline" }}>เลือกไฟล์</span></span>
+                <span style={{ fontSize: 17, fontWeight: 500 }}>{tx("ลากคลิปเสียงภาษาไทยมาวาง")}</span>
+                <span className="muted">{tx("หรือ")} <span style={{ color: "var(--accent)", textDecoration: "underline" }}>{tx("เลือกไฟล์")}</span></span>
                 <span className="dim">
                   {multi
-                    ? "คลิปที่มีหลายคนพูด เช่น ละคร รายการ · ระบบแยกเสียงของแต่ละคนให้"
-                    : "เสียงคนเดียวพูด 10 วินาทีขึ้นไป · ระบบประเมินทั้งไฟล์ (ไม่เกิน 60 นาที) ยิ่งยาวยิ่งได้ท่อนที่ดี"}
+                    ? tx("คลิปที่มีหลายคนพูด เช่น ละคร รายการ · ระบบแยกเสียงของแต่ละคนให้")
+                    : tx("เสียงคนเดียวพูด 10 วินาทีขึ้นไป · ระบบประเมินทั้งไฟล์ (ไม่เกิน 60 นาที) ยิ่งยาวยิ่งได้ท่อนที่ดี")}
                 </span>
               </>
             )}
-            <input type="file" accept={ACCEPT} aria-label="เลือกไฟล์เสียง" disabled={busy}
+            <input type="file" accept={ACCEPT} aria-label={tx("เลือกไฟล์เสียง")} disabled={busy}
               onChange={(e) => { pickFile(e.target.files?.[0]); e.target.value = ""; }} />
           </label>
-          <input className="input" type="url" placeholder="หรือวางลิงก์ YouTube, TikTok, Facebook ฯลฯ" aria-label="ลิงก์คลิป"
+          <input className="input" type="url" placeholder={tx("หรือวางลิงก์ YouTube, TikTok, Facebook ฯลฯ")} aria-label={tx("ลิงก์คลิป")}
             value={url} disabled={busy} onChange={(e) => { setUrl(e.target.value); if (e.target.value) setFile(null); }} />
         </div>
 
         {multi ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <p className="muted" style={{ margin: 0 }}>
-              ระบบแยกเพลงออก แยกเสียงของแต่ละคน และถอดเสียงให้ (ไม่แปล ไม่พากย์) แล้วพาไปหน้าที่ให้ฟังเสียงแต่ละคน
-              ตั้งชื่อว่าเป็นเสียงของใคร และเลือกบันทึกลงคลังทีละคน
+              
+              {tx("ระบบแยกเพลงออก แยกเสียงของแต่ละคน และถอดเสียงให้ (ไม่แปล ไม่พากย์) แล้วพาไปหน้าที่ให้ฟังเสียงแต่ละคน ตั้งชื่อว่าเป็นเสียงของใคร และเลือกบันทึกลงคลังทีละคน")}
             </p>
             <div className="field">
-              <label htmlFor="v-count">จำนวนคนในคลิป (ถ้ารู้ ช่วยให้แยกแม่นขึ้น)</label>
-              <input id="v-count" className="input" type="number" min={2} max={20} placeholder="ไม่ระบุ = ให้ระบบนับเอง"
+              <label htmlFor="v-count">{tx("จำนวนคนในคลิป (ถ้ารู้ ช่วยให้แยกแม่นขึ้น)")}</label>
+              <input id="v-count" className="input" type="number" min={2} max={20} placeholder={tx("ไม่ระบุ = ให้ระบบนับเอง")}
                 value={count} onChange={(e) => setCount(e.target.value)} disabled={busy} />
             </div>
-            <span className="dim">ใช้เครดิตตามความยาวคลิปเหมือนงานพากย์</span>
+            <span className="dim">{tx("ใช้เครดิตตามความยาวคลิปเหมือนงานพากย์")}</span>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div className="field">
-              <label htmlFor="v-name">ชื่อเสียง</label>
-              <input id="v-name" className="input" maxLength={80} placeholder="เช่น พี่ต้น ผู้ชายวัยทำงาน"
+              <label htmlFor="v-name">{tx("ชื่อเสียง")}</label>
+              <input id="v-name" className="input" maxLength={80} placeholder={tx("เช่น พี่ต้น ผู้ชายวัยทำงาน")}
                 value={name} onChange={(e) => setName(e.target.value)} />
             </div>
             <div className="field">
-              <span className="label">เพศ</span>
-              <GenderPicker value={gender} onChange={setGender} label="เพศของเสียง" />
+              <span className="label">{tx("เพศ")}</span>
+              <GenderPicker value={gender} onChange={setGender} label={tx("เพศของเสียง")} />
             </div>
             <div className="field">
-              <label htmlFor="v-tone">โทนเสียง</label>
-              <input id="v-tone" className="input" list="tones" maxLength={80} placeholder="เช่น ทุ้มลึก นุ่มนวล สดใส"
+              <label htmlFor="v-tone">{tx("โทนเสียง")}</label>
+              <input id="v-tone" className="input" list="tones" maxLength={80} placeholder={tx("เช่น ทุ้มลึก นุ่มนวล สดใส")}
                 value={tone} onChange={(e) => setTone(e.target.value)} />
-              <datalist id="tones">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
+              <datalist id="tones">{TONES.map((t) => <option key={t} value={tx(t)} />)}</datalist>
             </div>
             <div className="field">
-              <span className="label">รูป (ไม่ใส่ก็ได้)</span>
+              <span className="label">{tx("รูป (ไม่ใส่ก็ได้)")}</span>
               <div className="row" style={{ gap: 10 }}>
                 <VoiceAvatar name={name} url={imagePreview} />
-                <ImagePickButton label={image ? "เปลี่ยนรูป" : "เลือกรูป"} onPick={setImage} disabled={busy} />
-                {image && <button type="button" className="btn small" onClick={() => setImage(null)} disabled={busy}>เอารูปออก</button>}
+                <ImagePickButton label={image ? tx("เปลี่ยนรูป") : tx("เลือกรูป")} onPick={setImage} disabled={busy} />
+                {image && <button type="button" className="btn small" onClick={() => setImage(null)} disabled={busy}>{tx("เอารูปออก")}</button>}
               </div>
             </div>
           </div>
@@ -250,18 +252,18 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
       {!multi && (
         <>
           <div className="field">
-            <span className="label" id="v-cat">หมวดหมู่ (เลือกได้หลายหมวด)</span>
+            <span className="label" id="v-cat">{tx("หมวดหมู่ (เลือกได้หลายหมวด)")}</span>
             <CategoryPicker id="v-cat" value={categories} onChange={setCategories} known={known} />
           </div>
           <div className="field">
-            <label htmlFor="v-desc">รายละเอียด (ไม่ใส่ก็ได้)</label>
+            <label htmlFor="v-desc">{tx("รายละเอียด (ไม่ใส่ก็ได้)")}</label>
             <textarea id="v-desc" className="textarea" rows={3} maxLength={1000}
-              placeholder="เช่น คนพากย์ บทที่เหมาะ อายุตัวละคร สไตล์การพูด"
+              placeholder={tx("เช่น คนพากย์ บทที่เหมาะ อายุตัวละคร สไตล์การพูด")}
               value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <label className="check" style={{ justifyContent: "flex-start" }}>
             <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />
-            <span>ลดเสียงรบกวนเพิ่ม (ช่วยกับเสียงซ่าหรือลมจากการอัดเอง ระบบแยกเพลงออกให้อยู่แล้ว)</span>
+            <span>{tx("ลดเสียงรบกวนเพิ่ม (ช่วยกับเสียงซ่าหรือลมจากการอัดเอง ระบบแยกเพลงออกให้อยู่แล้ว)")}</span>
           </label>
         </>
       )}
@@ -269,8 +271,8 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
       <label className="check" style={{ justifyContent: "flex-start" }}>
         <input type="checkbox" checked={rights} onChange={(e) => setRights(e.target.checked)} />
         <span>
-          {multi ? "ฉันเป็นเจ้าของเสียงในคลิปนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว"
-            : "ฉันเป็นเจ้าของเสียงนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว"}
+          {multi ? tx("ฉันเป็นเจ้าของเสียงในคลิปนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว")
+            : tx("ฉันเป็นเจ้าของเสียงนี้ หรือได้รับอนุญาตจากเจ้าของเสียงให้นำไปใช้พากย์แล้ว")}
         </span>
       </label>
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -279,16 +281,16 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
           <div style={{ flex: "1 1 260px", display: "flex", alignItems: "center", gap: 12 }}>
             <div className="progress" style={{ flex: 1 }}><div style={{ width: `${(progress ?? 0) * 100}%` }} /></div>
             <span className="mono">{Math.round((progress ?? 0) * 100)}%</span>
-            <button type="button" className="btn small" onClick={() => abortRef.current?.()}>ยกเลิก</button>
+            <button type="button" className="btn small" onClick={() => abortRef.current?.()}>{tx("ยกเลิก")}</button>
           </div>
         ) : (
           <span className="dim">
-            {multi ? "แยกเสียงเสร็จแล้วจะพาไปหน้าเลือกบันทึกเสียงของแต่ละคน"
-              : "ระบบจะแยกเสียงรบกวนออก ตัดท่อนที่ชัดที่สุด 3–10 วินาที และถอดข้อความให้อัตโนมัติ"}
+            {multi ? tx("แยกเสียงเสร็จแล้วจะพาไปหน้าเลือกบันทึกเสียงของแต่ละคน")
+              : tx("ระบบจะแยกเสียงรบกวนออก ตัดท่อนที่ชัดที่สุด 3–10 วินาที และถอดข้อความให้อัตโนมัติ")}
           </span>
         )}
         <button type="button" className="btn primary" onClick={submit} disabled={!ready}>
-          {busy ? (file ? "กำลังอัปโหลด..." : "กำลังส่ง...") : multi ? "แยกเสียง" : "เพิ่มเสียง"}
+          {busy ? (file ? tx("กำลังอัปโหลด...") : tx("กำลังส่ง...")) : multi ? tx("แยกเสียง") : tx("เพิ่มเสียง")}
         </button>
       </div>
     </section>
@@ -312,18 +314,18 @@ function MoodRow({ v, m, preview, run, canEdit }: {
   return (
     <div className="mood-row">
       <div className="row" style={{ gap: 8 }}>
-        <span className="badge awaiting_review">{MOOD_LABEL[m.mood]}</span>
+        <span className="badge awaiting_review">{tx(MOOD_LABEL[m.mood])}</span>
         {m.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[m.stage] ?? m.stage}...</span>}
-        {m.status === "failed" && <span className="badge failed">เตรียมเสียงไม่สำเร็จ</span>}
-        {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">มีเสียงรบกวน</span>}
-        {m.status === "ready" && (m.analysis?.other_voices ?? 0) >= OTHER_VOICES_WARN && <span className="badge warn">มีเสียงคนอื่นปน</span>}
+        {m.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
+        {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}
+        {m.status === "ready" && (m.analysis?.other_voices ?? 0) >= OTHER_VOICES_WARN && <span className="badge warn">{tx("มีเสียงคนอื่นปน")}</span>}
         <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
-          {canEdit && m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>แก้ข้อความ</button>}
-          {canEdit && m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>ลองใหม่</button>}
+          {canEdit && m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>{tx("แก้ข้อความ")}</button>}
+          {canEdit && m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>{tx("ลองใหม่")}</button>}
           {canEdit && !(m.status === "processing" && m.stage !== "queued") && (
-            <button type="button" className="icon-btn" aria-label={`ลบอารมณ์${MOOD_LABEL[m.mood]}`}
-              onClick={() => window.confirm(`ลบเสียงอารมณ์${MOOD_LABEL[m.mood]}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ`)
-                && run(() => api.deleteVoiceMood(v.id, m.mood))}>ลบ</button>
+            <button type="button" className="icon-btn" aria-label={tx("ลบอารมณ์{0}", { 0: MOOD_LABEL[m.mood] })}
+              onClick={() => window.confirm(tx("ลบเสียงอารมณ์{0}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ", { 0: MOOD_LABEL[m.mood] }))
+                && run(() => api.deleteVoiceMood(v.id, m.mood))}>{tx("ลบ")}</button>
           )}
           {m.status === "ready" && (
             <PreviewButton url={fileUrl.voiceMood(v.id, m.mood, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} />
@@ -333,15 +335,15 @@ function MoodRow({ v, m, preview, run, canEdit }: {
       {m.status === "failed" && m.error && <div className="alert error">{m.error}</div>}
       {editing ? (
         <div className="field">
-          <label className="sr-only" htmlFor={`mx-${v.id}-${m.mood}`}>ข้อความที่พูดในเสียงอารมณ์นี้</label>
+          <label className="sr-only" htmlFor={`mx-${v.id}-${m.mood}`}>{tx("ข้อความที่พูดในเสียงอารมณ์นี้")}</label>
           <textarea id={`mx-${v.id}-${m.mood}`} className="textarea" rows={2} value={text} onChange={(e) => setText(e.target.value)} />
           <div className="row" style={{ gap: 6 }}>
-            <button type="button" className="btn small primary" onClick={save}>บันทึก</button>
-            <button type="button" className="btn small" onClick={() => setEditing(false)}>ยกเลิก</button>
+            <button type="button" className="btn small primary" onClick={save}>{tx("บันทึก")}</button>
+            <button type="button" className="btn small" onClick={() => setEditing(false)}>{tx("ยกเลิก")}</button>
           </div>
         </div>
       ) : m.status === "ready" && (
-        <span className="dim">“{m.text}” · {m.duration?.toFixed(1)} วินาที</span>
+        <span className="dim">“{m.text}” · {m.duration?.toFixed(1)}  {tx("วินาที")}</span>
       )}
     </div>
   );
@@ -365,27 +367,28 @@ function MoodSection({ v, preview, run, canEdit }: {
   };
   return (
     <div className="moods">
-      <span className="label">เสียงอารมณ์อื่น</span>
+      <span className="label">{tx("เสียงอารมณ์อื่น")}</span>
       {v.moods.map((m) => <MoodRow key={m.mood} v={v} m={m} preview={preview} run={run} canEdit={canEdit} />)}
       {canEdit && missing.length > 0 && (
         <div className="row" style={{ gap: 8 }}>
-          <label className="sr-only" htmlFor={`am-${v.id}`}>อารมณ์ที่จะเพิ่ม</label>
+          <label className="sr-only" htmlFor={`am-${v.id}`}>{tx("อารมณ์ที่จะเพิ่ม")}</label>
           <select id={`am-${v.id}`} className="spk-select" value={pick} onChange={(e) => setMood(e.target.value as Mood)}
             disabled={progress !== null}>
-            {missing.map((m) => <option key={m} value={m}>{MOOD_LABEL[m]}</option>)}
+            {missing.map((m) => <option key={m} value={m}>{tx(MOOD_LABEL[m])}</option>)}
           </select>
           {progress !== null ? (
-            <span className="mono">กำลังอัปโหลด {Math.round(progress * 100)}%</span>
+            <span className="mono">{tx("กำลังอัปโหลด")} {Math.round(progress * 100)}%</span>
           ) : (
             <label className="btn small" style={{ cursor: "pointer" }}>
-              เพิ่มคลิปอารมณ์นี้
+              
+              {tx("เพิ่มคลิปอารมณ์นี้")}
               <input type="file" accept={ACCEPT} className="sr-only"
                 onChange={(e) => { add(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
           )}
         </div>
       )}
-      <span className="dim">{canEdit ? "ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้ว" : ""}เลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท</span>
+      <span className="dim">{canEdit ? tx("ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้ว") : ""}{tx("เลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท")}</span>
     </div>
   );
 }
@@ -429,7 +432,7 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
   const save = async () => {
     // ข้อความในเสียงตัวอย่างมีเฉพาะเสียงที่เตรียมเสร็จ เสียงที่ยังไม่เสร็จแก้ได้แค่ข้อมูลอื่น
     const ready = v.status === "ready";
-    if (!name.trim() || (ready && !text.trim())) return setError("ชื่อและข้อความในเสียงต้องไม่ว่าง");
+    if (!name.trim() || (ready && !text.trim())) return setError(tx("ชื่อและข้อความในเสียงต้องไม่ว่าง"));
     const ok = await run(() => api.updateVoice(v.id, {
       name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories,
       ...(ready ? { text: text.trim() } : {}),
@@ -438,7 +441,7 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
   };
 
   const remove = () => {
-    if (window.confirm(`ลบเสียง "${v.name}" ออกจากคลัง? ตัวละครที่ใช้เสียงนี้จะกลับไปใช้เสียงต้นฉบับ`)) run(() => api.deleteVoice(v.id));
+    if (window.confirm(tx("ลบเสียง \"{0}\" ออกจากคลัง? ตัวละครที่ใช้เสียงนี้จะกลับไปใช้เสียงต้นฉบับ", { 0: v.name }))) run(() => api.deleteVoice(v.id));
   };
 
   const audioUrl = fileUrl.voice(v.id, v.updated_at);
@@ -448,16 +451,16 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
         <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
         <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, flex: 1 }}>
           <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-word" }}>{v.name}</span>
-          {v.actor && <span className="dim" style={{ fontSize: 13 }}>พากย์โดย {v.actor}</span>}
+          {v.actor && <span className="dim" style={{ fontSize: 13 }}>{tx("พากย์โดย")} {v.actor}</span>}
           <div className="row" style={{ gap: 6 }}>
-            {v.review === "pending" && <span className="badge awaiting_review">รอผู้ดูแลตรวจ</span>}
-            {v.review === "rejected" && <span className="badge failed">ไม่ผ่านการตรวจ</span>}
+            {v.review === "pending" && <span className="badge awaiting_review">{tx("รอผู้ดูแลตรวจ")}</span>}
+            {v.review === "rejected" && <span className="badge failed">{tx("ไม่ผ่านการตรวจ")}</span>}
             {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
-            {v.gender && <span className="badge queued">{GENDER_LABEL[v.gender]}</span>}
+            {v.gender && <span className="badge queued">{tx(GENDER_LABEL[v.gender])}</span>}
             {v.tone && <span className="badge awaiting_review">{v.tone}</span>}
             {v.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>}
-            {v.status === "failed" && <span className="badge failed">เตรียมเสียงไม่สำเร็จ</span>}
-            {v.status === "ready" && v.quality != null && v.quality < 2.3 && <span className="badge warn">มีเสียงรบกวน</span>}
+            {v.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
+            {v.status === "ready" && v.quality != null && v.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}
           </div>
         </div>
         {v.status === "ready" && <PreviewButton url={audioUrl} playing={preview.playing} onToggle={preview.toggle} />}
@@ -471,47 +474,47 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
       {editing ? (
         <>
           <div className="field">
-            <span className="label">รูป</span>
+            <span className="label">{tx("รูป")}</span>
             <div className="row" style={{ gap: 10 }}>
-              <ImagePickButton label={v.image ? "เปลี่ยนรูป" : "เพิ่มรูป"} disabled={busy}
+              <ImagePickButton label={v.image ? tx("เปลี่ยนรูป") : tx("เพิ่มรูป")} disabled={busy}
                 onPick={(f) => run(() => uploadVoiceImage(v.id, f))} />
               {v.image && (
                 <button type="button" className="btn small" disabled={busy}
-                  onClick={() => run(() => api.deleteVoiceImage(v.id))}>ลบรูป</button>
+                  onClick={() => run(() => api.deleteVoiceImage(v.id))}>{tx("ลบรูป")}</button>
               )}
             </div>
           </div>
           <div className="field">
-            <label htmlFor={`n-${v.id}`}>ชื่อเสียง</label>
+            <label htmlFor={`n-${v.id}`}>{tx("ชื่อเสียง")}</label>
             <input id={`n-${v.id}`} className="input" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="field">
-            <span className="label">เพศ</span>
-            <div className="seg" role="group" aria-label="เพศของเสียง" style={{ alignSelf: "flex-start" }}>
+            <span className="label">{tx("เพศ")}</span>
+            <div className="seg" role="group" aria-label={tx("เพศของเสียง")} style={{ alignSelf: "flex-start" }}>
               {(["male", "female", ""] as Gender[]).map((g) => (
-                <button key={g || "none"} type="button" aria-pressed={gender === g} onClick={() => setGender(g)}>{GENDER_LABEL[g]}</button>
+                <button key={g || "none"} type="button" aria-pressed={gender === g} onClick={() => setGender(g)}>{tx(GENDER_LABEL[g])}</button>
               ))}
             </div>
           </div>
           <div className="field">
-            <label htmlFor={`t-${v.id}`}>โทนเสียง</label>
+            <label htmlFor={`t-${v.id}`}>{tx("โทนเสียง")}</label>
             <input id={`t-${v.id}`} className="input" list="tones-edit" maxLength={80} value={tone} onChange={(e) => setTone(e.target.value)} />
-            <datalist id="tones-edit">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
+            <datalist id="tones-edit">{TONES.map((t) => <option key={t} value={tx(t)} />)}</datalist>
           </div>
           <div className="field">
-            <span className="label" id={`c-${v.id}`}>หมวดหมู่</span>
+            <span className="label" id={`c-${v.id}`}>{tx("หมวดหมู่")}</span>
             <CategoryPicker id={`c-${v.id}`} value={categories} onChange={setCategories} known={known} />
           </div>
           <div className="field">
-            <label htmlFor={`d-${v.id}`}>รายละเอียด</label>
+            <label htmlFor={`d-${v.id}`}>{tx("รายละเอียด")}</label>
             <textarea id={`d-${v.id}`} className="textarea" rows={3} maxLength={1000} value={description}
               onChange={(e) => setDescription(e.target.value)} />
           </div>
           {v.status === "ready" && (
             <div className="field">
-              <label htmlFor={`x-${v.id}`}>ข้อความที่พูดในเสียงตัวอย่าง</label>
+              <label htmlFor={`x-${v.id}`}>{tx("ข้อความที่พูดในเสียงตัวอย่าง")}</label>
               <textarea id={`x-${v.id}`} className="textarea" rows={3} value={text} onChange={(e) => setText(e.target.value)} />
-              <span className="dim">ฟังตัวอย่างแล้วแก้ให้ตรงทุกคำ ระบบพากย์จะเลียนเสียงได้แม่นขึ้น</span>
+              <span className="dim">{tx("ฟังตัวอย่างแล้วแก้ให้ตรงทุกคำ ระบบพากย์จะเลียนเสียงได้แม่นขึ้น")}</span>
             </div>
           )}
         </>
@@ -521,8 +524,8 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
 
       {v.status === "ready" && (
         <span className="dim">
-          {v.duration?.toFixed(1)} วินาที{v.pitch_hz ? ` · ระดับเสียง ${Math.round(v.pitch_hz)} Hz` : ""}
-          {v.quality != null ? ` · ความชัด ${v.quality.toFixed(1)}/4.5` : ""} · เพิ่มเมื่อ {fmtWhen(v.created_at)}
+          {v.duration?.toFixed(1)}  {tx("วินาที")}{v.pitch_hz ? tx(" · ระดับเสียง {0} Hz", { 0: Math.round(v.pitch_hz) }) : ""}
+          {v.quality != null ? tx(" · ความชัด {0}/4.5", { 0: v.quality.toFixed(1) }) : ""}  {tx("· เพิ่มเมื่อ")} {fmtWhen(v.created_at)}
         </span>
       )}
       {v.status === "ready" && v.analysis && <AnalysisNote a={v.analysis} />}
@@ -532,15 +535,15 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
       {canEdit && <div className="row" style={{ gap: 8 }}>
         {editing ? (
           <>
-            <button type="button" className="btn small primary" onClick={save} disabled={busy}>{busy ? "กำลังบันทึก..." : "บันทึก"}</button>
-            <button type="button" className="btn small" onClick={() => setEditing(false)} disabled={busy}>ยกเลิก</button>
+            <button type="button" className="btn small primary" onClick={save} disabled={busy}>{busy ? tx("กำลังบันทึก...") : tx("บันทึก")}</button>
+            <button type="button" className="btn small" onClick={() => setEditing(false)} disabled={busy}>{tx("ยกเลิก")}</button>
           </>
         ) : (
           <>
-            {v.status !== "processing" && <button type="button" className="btn small" onClick={() => setEditing(true)}>แก้ไข</button>}
-            {v.status === "failed" && <button type="button" className="btn small" onClick={() => run(() => api.retryVoice(v.id))} disabled={busy}>ลองใหม่</button>}
+            {v.status !== "processing" && <button type="button" className="btn small" onClick={() => setEditing(true)}>{tx("แก้ไข")}</button>}
+            {v.status === "failed" && <button type="button" className="btn small" onClick={() => run(() => api.retryVoice(v.id))} disabled={busy}>{tx("ลองใหม่")}</button>}
             {!(v.status === "processing" && v.stage !== "queued") && (
-              <button type="button" className="btn small danger" style={{ marginLeft: "auto" }} onClick={remove} disabled={busy}>ลบ</button>
+              <button type="button" className="btn small danger" style={{ marginLeft: "auto" }} onClick={remove} disabled={busy}>{tx("ลบ")}</button>
             )}
           </>
         )}
@@ -583,29 +586,31 @@ export default function VoicesPage() {
   return (
     <main className="page" style={{ maxWidth: 1100 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>คลังเสียง</h1>
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>{tx("คลังเสียง")}</h1>
         <p className="muted" style={{ margin: 0 }}>
-          เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ
+          
+          {tx("เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ")}
         </p>
       </div>
 
       {canEdit && <UploadCard onUploaded={refresh} known={known} />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
-      <section aria-label="เสียงในคลัง" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <section aria-label={tx("เสียงในคลัง")} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>
-          เสียงในคลัง {shown?.length ? `(${shown.length}${filter ? ` จาก ${voices?.length}` : ""})` : ""}
+          
+          {tx("เสียงในคลัง")} {shown?.length ? `(${shown.length}${filter ? tx(" จาก {0}", { 0: voices?.length }) : ""})` : ""}
         </h2>
         {known.length > 0 && (
-          <div className="chips" role="group" aria-label="กรองตามหมวดหมู่">
-            <button type="button" className="chip" aria-pressed={!filter} onClick={() => setFilter("")}>ทั้งหมด</button>
+          <div className="chips" role="group" aria-label={tx("กรองตามหมวดหมู่")}>
+            <button type="button" className="chip" aria-pressed={!filter} onClick={() => setFilter("")}>{tx("ทั้งหมด")}</button>
             {known.map((c) => (
               <button key={c} type="button" className="chip" aria-pressed={filter === c} onClick={() => setFilter(c)}>{c}</button>
             ))}
           </div>
         )}
-        {shown === null ? <div className="empty">กำลังโหลด...</div>
-          : voices?.length === 0 ? <div className="empty">ยังไม่มีเสียงในคลัง</div>
+        {shown === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
+          : voices?.length === 0 ? <div className="empty">{tx("ยังไม่มีเสียงในคลัง")}</div>
           : (
             <div className="grid-2">
               {shown.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} known={known} canEdit={canEdit} />)}

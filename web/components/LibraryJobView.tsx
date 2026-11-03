@@ -10,6 +10,7 @@ import CategoryPicker from "./CategoryPicker";
 import SpeakerLanes from "./SpeakerLanes";
 import { ArrowLeft, XIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 const GENDERS: Gender[] = ["", "male", "female"];
 const MIN_SOLO_SEC = 3; // ตรงกับเกณฑ์ของ API (main.speaker_to_library)
 
@@ -83,7 +84,7 @@ export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged
     try {
       const n = dirty.length;
       await tr.saveLines();
-      setMessage({ kind: "info", text: n ? `บันทึกการแก้ ${n} ประโยคแล้ว` : "ไม่มีอะไรเปลี่ยน" });
+      setMessage({ kind: "info", text: n ? tx("บันทึกการแก้ {0} ประโยคแล้ว", { 0: n }) : tx("ไม่มีอะไรเปลี่ยน") });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally { setBusy(""); }
@@ -92,14 +93,14 @@ export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged
   const slot = (s: string) => {
     const saved = job.saved_voices?.[s];
     const sec = solo[s] ?? 0;
-    const why = !canSave ? "บันทึกลงคลังเสียงได้เฉพาะผู้ดูแลระบบ"
-      : notThai ? "เสียงในคลังต้องเป็นภาษาไทย"
-      : sec < MIN_SOLO_SEC ? `พูดคนเดียวแค่ ${sec.toFixed(1)} วินาที ต้องมีอย่างน้อย ${MIN_SOLO_SEC} วินาที` : "";
+    const why = !canSave ? tx("บันทึกลงคลังเสียงได้เฉพาะผู้ดูแลระบบ")
+      : notThai ? tx("เสียงในคลังต้องเป็นภาษาไทย")
+      : sec < MIN_SOLO_SEC ? tx("พูดคนเดียวแค่ {0} วินาที ต้องมีอย่างน้อย {1} วินาที", { 0: sec.toFixed(1), 1: MIN_SOLO_SEC }) : "";
     return (
       <button type="button" className="btn small lane-voice-btn" disabled={!!why || !!busy} onClick={() => setSaving(s)}
-        title={why || (saved ? "บันทึกลงคลังแล้ว กดเพื่อแทนที่เสียงหรือเพิ่มเป็นอารมณ์"
-          : `บันทึกเสียงของ${tr.label(s)}ลงคลัง (พูดคนเดียว ${Math.round(sec)} วินาที)`)}>
-        {saved ? "✓ ในคลัง" : "บันทึกลงคลัง"}
+        title={why || (saved ? tx("บันทึกลงคลังแล้ว กดเพื่อแทนที่เสียงหรือเพิ่มเป็นอารมณ์")
+          : tx("บันทึกเสียงของ{0}ลงคลัง (พูดคนเดียว {1} วินาที)", { 0: tr.label(s), 1: Math.round(sec) }))}>
+        {saved ? tx("✓ ในคลัง") : tx("บันทึกลงคลัง")}
       </button>
     );
   };
@@ -108,32 +109,33 @@ export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged
     <main className="page wide">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div className="row" style={{ gap: 14 }}>
-          <Link href="/voices" className="btn small" aria-label="กลับหน้าคลังเสียง"><ArrowLeft /></Link>
+          <Link href="/voices" className="btn small" aria-label={tx("กลับหน้าคลังเสียง")}><ArrowLeft /></Link>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-            <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>แยกเสียงเข้าคลัง · {job.filename}</span>
+            <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>{tx("แยกเสียงเข้าคลัง ·")} {job.filename}</span>
             <span className="dim">
-              {langName(lang)} · {speakers.length} คน · {sorted.length} ประโยค · {fmtDuration(job.duration)}
+              {langName(lang)} · {speakers.length}  {tx("คน ·")} {sorted.length}  {tx("ประโยค ·")} {fmtDuration(job.duration)}
             </span>
           </div>
         </div>
         <button type="button" className="btn" onClick={onSave} disabled={!!busy || !dirty.length}>
-          {busy === "save" ? "กำลังบันทึก..." : `บันทึกการแก้${dirty.length ? ` (${dirty.length})` : ""}`}
+          {busy === "save" ? tx("กำลังบันทึก...") : tx("บันทึกการแก้{0}", { 0: dirty.length ? ` (${dirty.length})` : "" })}
         </button>
       </div>
 
       <div className="alert info">
-        ฟังแล้วแก้ให้แต่ละเลเยอร์เป็นเสียงของคนเดียว (ลากบล็อกไปเลเยอร์อื่น ตัด หรือรวมตัวละคร) ตั้งชื่อจากชื่อเลเยอร์
-        แล้วกด &ldquo;บันทึกลงคลัง&rdquo; ท้ายเลเยอร์ของคนที่ต้องการ ระบบใช้เฉพาะช่วงที่คนนั้นพูดคนเดียว
+        
+        {tx("ฟังแล้วแก้ให้แต่ละเลเยอร์เป็นเสียงของคนเดียว (ลากบล็อกไปเลเยอร์อื่น ตัด หรือรวมตัวละคร) ตั้งชื่อจากชื่อเลเยอร์ แล้วกด “บันทึกลงคลัง” ท้ายเลเยอร์ของคนที่ต้องการ ระบบใช้เฉพาะช่วงที่คนนั้นพูดคนเดียว")}
       </div>
       {notThai && (
         <div className="alert error" role="alert">
-          คลิปนี้เป็นภาษา{langName(lang)} เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ต้องรู้ว่าเสียงตัวอย่างพูดอะไร) ใช้คลิปภาษาไทยแทน
+          
+          {tx("คลิปนี้เป็นภาษา")}{langName(lang)}  {tx("เสียงในคลังต้องเป็นภาษาไทย (ระบบพากย์ต้องรู้ว่าเสียงตัวอย่างพูดอะไร) ใช้คลิปภาษาไทยแทน")}
         </div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
       <div className="split">
-        <section className="main" aria-label="คลิป">
+        <section className="main" aria-label={tx("คลิป")}>
           <div className="video-box">
             <video ref={videoRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
               onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
@@ -145,46 +147,47 @@ export default function LibraryJobView({ job, onChanged }: { job: Job; onChanged
             )}
           </div>
           <div className="row dim" style={{ justifyContent: "space-between" }}>
-            <span>ซับบนภาพคือคำที่ถอดได้ และคนที่พูดตามเลเยอร์ปัจจุบัน</span>
+            <span>{tx("ซับบนภาพคือคำที่ถอดได้ และคนที่พูดตามเลเยอร์ปัจจุบัน")}</span>
             <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
           </div>
 
           <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
             onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
-            voiceSlot={slot} voiceHead={<span className="dim lane-voice-btn">เสียงในคลัง</span>} />
+            voiceSlot={slot} voiceHead={<span className="dim lane-voice-btn">{tx("เสียงในคลัง")}</span>} />
         </section>
 
-        <aside className="side card" aria-label="ประโยคที่ถอดได้" style={{ padding: 0, gap: 0, overflow: "hidden" }}>
+        <aside className="side card" aria-label={tx("ประโยคที่ถอดได้")} style={{ padding: 0, gap: 0, overflow: "hidden" }}>
           <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-            <h2 style={{ fontSize: 16 }}>ประโยคที่ถอดได้</h2>
+            <h2 style={{ fontSize: 16 }}>{tx("ประโยคที่ถอดได้")}</h2>
             <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
               <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
                 style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
-              เลื่อนตามคลิป
+              
+              {tx("เลื่อนตามคลิป")}
             </label>
           </div>
           <div className="lines" ref={listRef}>
-            {lines === null ? <div className="empty">กำลังโหลด...</div>
-              : sorted.length === 0 ? <div className="empty">ไม่พบเสียงพูดในคลิปนี้</div>
+            {lines === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
+              : sorted.length === 0 ? <div className="empty">{tx("ไม่พบเสียงพูดในคลิปนี้")}</div>
               : sorted.map((u) => {
                 const d = tr.draftOf(u);
                 return (
                   <div key={u.id} ref={(el) => { lineRefs.current[u.id] = el; }}
                     className={`line${active?.id === u.id ? " active" : ""}${speaking?.id === u.id ? " speaking" : ""}`}>
                     <div className="row" style={{ gap: 8 }}>
-                      <button type="button" className="time-btn" onClick={() => seek(u.start)} aria-label={`ไปที่ ${fmtTime(u.start)}`}>
+                      <button type="button" className="time-btn" onClick={() => seek(u.start)} aria-label={tx("ไปที่ {0}", { 0: fmtTime(u.start) })}>
                         {fmtTime(u.start)}
                       </button>
                       <span className="swatch" style={{ background: speakerColor(d.speaker, speakers) }} />
-                      <label className="sr-only" htmlFor={`lspk-${u.id}`}>คนพูดประโยคที่ {u.id}</label>
+                      <label className="sr-only" htmlFor={`lspk-${u.id}`}>{tx("คนพูดประโยคที่")} {u.id}</label>
                       <select id={`lspk-${u.id}`} className="spk-select" value={d.speaker} disabled={busy === "edit"}
                         onChange={(e) => tr.changeSpeaker(u, e.target.value)}>
                         {speakers.map((s) => <option key={s} value={s}>{tr.label(s)}</option>)}
-                        <option value={NEW_SPEAKER}>+ คนใหม่</option>
+                        <option value={NEW_SPEAKER}>{tx("+ คนใหม่")}</option>
                       </select>
-                      <span className="dim" style={{ marginLeft: "auto" }}>{(d.end - d.start).toFixed(1)} วิ</span>
+                      <span className="dim" style={{ marginLeft: "auto" }}>{(d.end - d.start).toFixed(1)}  {tx("วิ")}</span>
                     </div>
-                    <span>{u.source || <span className="dim">(ไม่มีคำที่ถอดได้)</span>}</span>
+                    <span>{u.source || <span className="dim">{tx("(ไม่มีคำที่ถอดได้)")}</span>}</span>
                   </div>
                 );
               })}
@@ -298,10 +301,10 @@ function SaveDialog({ job, tr, speaker, onClose, onDone }: {
         lines: chosen.map((r) => r.u.id), denoise,
         name: n, gender, tone: tone.trim(), description: description.trim(), categories,
       });
-      const what = target === "new" ? `เพิ่ม "${n}" เข้าคลังแล้ว`
-        : target === "replace" ? `แทนที่เสียงของ "${voice?.name}" แล้ว`
-        : `เพิ่มอารมณ์${MOOD_LABEL[mood]}ให้ "${voice?.name}" แล้ว`;
-      tr.setMessage({ kind: "info", text: `${what} กำลังเตรียมเสียง ดูสถานะได้ที่หน้าคลังเสียง` });
+      const what = target === "new" ? tx("เพิ่ม \"{0}\" เข้าคลังแล้ว", { 0: n })
+        : target === "replace" ? tx("แทนที่เสียงของ \"{0}\" แล้ว", { 0: voice?.name })
+        : tx("เพิ่มอารมณ์{0}ให้ \"{1}\" แล้ว", { 0: MOOD_LABEL[mood], 1: voice?.name });
+      tr.setMessage({ kind: "info", text: tx("{0} กำลังเตรียมเสียง ดูสถานะได้ที่หน้าคลังเสียง", { 0: what }) });
       onDone();
     } catch (e) {
       setError((e as Error).message);
@@ -314,48 +317,48 @@ function SaveDialog({ job, tr, speaker, onClose, onDone }: {
       <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="save-title" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <h2 id="save-title" className="row" style={{ gap: 8, fontSize: 17 }}>
-            <span className="swatch" style={{ background: speakerColor(speaker, tr.speakers) }} />บันทึกเสียงของ{label}ลงคลัง
+            <span className="swatch" style={{ background: speakerColor(speaker, tr.speakers) }} />{tx("บันทึกเสียงของ")}{label}{tx("ลงคลัง")}
           </h2>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="ปิด"><XIcon /></button>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={tx("ปิด")}><XIcon /></button>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "0 20px 20px", overflowY: "auto" }}>
-          <div className="seg" role="group" aria-label="บันทึกเป็น" style={{ alignSelf: "flex-start" }}>
+          <div className="seg" role="group" aria-label={tx("บันทึกเป็น")} style={{ alignSelf: "flex-start" }}>
             {TARGETS.map((x) => (
-              <button key={x.value} type="button" aria-pressed={target === x.value} onClick={() => setTarget(x.value)}>{x.label}</button>
+              <button key={x.value} type="button" aria-pressed={target === x.value} onClick={() => setTarget(x.value)}>{tx(x.label)}</button>
             ))}
           </div>
 
           {target === "new" ? (
             <>
               <div className="field">
-                <label htmlFor="save-name">ชื่อเสียง</label>
-                <input id="save-name" className="input" maxLength={80} placeholder="เช่น โดราเอมอน"
+                <label htmlFor="save-name">{tx("ชื่อเสียง")}</label>
+                <input id="save-name" className="input" maxLength={80} placeholder={tx("เช่น โดราเอมอน")}
                   value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="field">
-                <span className="label">เพศ</span>
-                <div className="seg" role="group" aria-label="เพศของเสียง" style={{ alignSelf: "flex-start" }}>
+                <span className="label">{tx("เพศ")}</span>
+                <div className="seg" role="group" aria-label={tx("เพศของเสียง")} style={{ alignSelf: "flex-start" }}>
                   {GENDERS.map((g) => (
                     <button key={g || "auto"} type="button" aria-pressed={gender === g} onClick={() => setGender(g)}>
-                      {g ? GENDER_LABEL[g] : "ให้ระบบเดา"}
+                      {g ? tx(GENDER_LABEL[g]) : tx("ให้ระบบเดา")}
                     </button>
                   ))}
                 </div>
               </div>
               <div className="field">
-                <label htmlFor="save-tone">โทนเสียง</label>
-                <input id="save-tone" className="input" list="save-tones" maxLength={80} placeholder="เช่น สดใส เสียงเด็ก"
+                <label htmlFor="save-tone">{tx("โทนเสียง")}</label>
+                <input id="save-tone" className="input" list="save-tones" maxLength={80} placeholder={tx("เช่น สดใส เสียงเด็ก")}
                   value={tone} onChange={(e) => setTone(e.target.value)} />
-                <datalist id="save-tones">{TONES.map((t) => <option key={t} value={t} />)}</datalist>
+                <datalist id="save-tones">{TONES.map((t) => <option key={t} value={tx(t)} />)}</datalist>
               </div>
               <div className="field">
-                <span className="label" id="save-cat">หมวดหมู่</span>
+                <span className="label" id="save-cat">{tx("หมวดหมู่")}</span>
                 <CategoryPicker id="save-cat" value={categories} onChange={setCategories}
                   known={[...new Set(voices.flatMap((v) => v.categories ?? []))]} />
               </div>
               <div className="field">
-                <label htmlFor="save-desc">รายละเอียด (ไม่ใส่ก็ได้)</label>
+                <label htmlFor="save-desc">{tx("รายละเอียด (ไม่ใส่ก็ได้)")}</label>
                 <textarea id="save-desc" className="textarea" rows={2} maxLength={1000}
                   value={description} onChange={(e) => setDescription(e.target.value)} />
               </div>
@@ -363,47 +366,47 @@ function SaveDialog({ job, tr, speaker, onClose, onDone }: {
           ) : (
             <>
               <div className="field">
-                <label htmlFor="save-voice">เสียงในคลัง</label>
+                <label htmlFor="save-voice">{tx("เสียงในคลัง")}</label>
                 <select id="save-voice" className="input" value={voiceId} onChange={(e) => setVoiceId(e.target.value)}>
-                  <option value="">เลือกเสียง…</option>
-                  {voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.id === saved ? " (บันทึกจากเลเยอร์นี้)" : ""}</option>)}
+                  <option value="">{tx("เลือกเสียง…")}</option>
+                  {voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.id === saved ? tx(" (บันทึกจากเลเยอร์นี้)") : ""}</option>)}
                 </select>
               </div>
               {target === "mood" ? (
                 <div className="field">
-                  <label htmlFor="save-mood">อารมณ์</label>
+                  <label htmlFor="save-mood">{tx("อารมณ์")}</label>
                   <select id="save-mood" className="input" value={mood} onChange={(e) => setMood(e.target.value as Mood)}>
                     {MOODS.map((m) => (
                       <option key={m} value={m}>
-                        {MOOD_LABEL[m]}{voice?.moods?.some((x) => x.mood === m) ? " (มีอยู่แล้ว จะแทนที่)" : ""}
+                        {tx(MOOD_LABEL[m])}{voice?.moods?.some((x) => x.mood === m) ? tx(" (มีอยู่แล้ว จะแทนที่)") : ""}
                       </option>
                     ))}
                   </select>
-                  <span className="dim">เลือกเฉพาะประโยคที่พูดด้วยอารมณ์นี้</span>
+                  <span className="dim">{tx("เลือกเฉพาะประโยคที่พูดด้วยอารมณ์นี้")}</span>
                 </div>
               ) : (
-                <span className="dim">เตรียมเสียงตัวอย่างใหม่จากประโยคที่เลือก ชื่อ รูป และรายละเอียดเดิมไม่เปลี่ยน งานที่ใช้เสียงนี้ไม่ต้องเลือกใหม่</span>
+                <span className="dim">{tx("เตรียมเสียงตัวอย่างใหม่จากประโยคที่เลือก ชื่อ รูป และรายละเอียดเดิมไม่เปลี่ยน งานที่ใช้เสียงนี้ไม่ต้องเลือกใหม่")}</span>
               )}
             </>
           )}
 
           <div className="field">
-            <span className="label">ประโยคที่ใช้ ({chosen.length}/{rows.length} · {seconds.toFixed(1)} วินาที)</span>
-            <span className="dim">เอาติ๊กออกจากประโยคที่ไม่ใช่เสียงคนนี้ หรือมีเพลงดังทับ · ความสะอาดเต็ม 4.5 ต่ำกว่า {LOW_QUALITY} = มีเพลงทับมาก</span>
+            <span className="label">{tx("ประโยคที่ใช้ (")}{chosen.length}/{rows.length} · {seconds.toFixed(1)}  {tx("วินาที)")}</span>
+            <span className="dim">{tx("เอาติ๊กออกจากประโยคที่ไม่ใช่เสียงคนนี้ หรือมีเพลงดังทับ · ความสะอาดเต็ม 4.5 ต่ำกว่า")} {LOW_QUALITY}  {tx("= มีเพลงทับมาก")}</span>
             <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 280, overflowY: "auto" }}>
               {rows.map(({ u, d, overlapped }) => {
                 const q = quality[String(u.id)];
                 return (
                   <div key={u.id} className="row" style={{ gap: 8, alignItems: "flex-start", opacity: overlapped ? 0.5 : 1 }}>
                     <input type="checkbox" style={{ marginTop: 6 }} checked={!overlapped && picked.has(u.id)} disabled={overlapped}
-                      onChange={() => toggle(u.id)} aria-label={`ใช้ประโยค ${fmtTime(d.start)}`} />
+                      onChange={() => toggle(u.id)} aria-label={tx("ใช้ประโยค {0}", { 0: fmtTime(d.start) })} />
                     <button type="button" className="btn small" onClick={() => play(u.id, d.start, d.end)}
-                      aria-label={playing === u.id ? "หยุด" : `ฟังประโยค ${fmtTime(d.start)}`}>{playing === u.id ? "■" : "▶"}</button>
+                      aria-label={playing === u.id ? tx("หยุด") : tx("ฟังประโยค {0}", { 0: fmtTime(d.start) })}>{playing === u.id ? "■" : "▶"}</button>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span className="mono dim">{fmtTime(d.start)} · {(d.end - d.start).toFixed(1)} วิ </span>
-                      {q != null && <span className={`badge ${q < LOW_QUALITY ? "warn" : "done"}`}>สะอาด {q.toFixed(1)}</span>}
-                      {overlapped && <span className="badge queued">มีคนพูดทับ</span>}
-                      <span style={{ display: "block" }}>{u.source || <span className="dim">(ไม่มีคำที่ถอดได้)</span>}</span>
+                      <span className="mono dim">{fmtTime(d.start)} · {(d.end - d.start).toFixed(1)}  {tx("วิ")} </span>
+                      {q != null && <span className={`badge ${q < LOW_QUALITY ? "warn" : "done"}`}>{tx("สะอาด")} {q.toFixed(1)}</span>}
+                      {overlapped && <span className="badge queued">{tx("มีคนพูดทับ")}</span>}
+                      <span style={{ display: "block" }}>{u.source || <span className="dim">{tx("(ไม่มีคำที่ถอดได้)")}</span>}</span>
                     </span>
                   </div>
                 );
@@ -412,26 +415,26 @@ function SaveDialog({ job, tr, speaker, onClose, onDone }: {
           </div>
 
           {seconds < MIN_SOLO_SEC ? (
-            <div className="alert error">ประโยคที่เลือกยาวรวม {seconds.toFixed(1)} วินาที ต้องมีอย่างน้อย {MIN_SOLO_SEC} วินาที</div>
+            <div className="alert error">{tx("ประโยคที่เลือกยาวรวม")} {seconds.toFixed(1)}  {tx("วินาที ต้องมีอย่างน้อย")} {MIN_SOLO_SEC}  {tx("วินาที")}</div>
           ) : seconds < GOOD_SEC && (
-            <div className="alert warn">เสียงรวมแค่ {seconds.toFixed(1)} วินาที ระบบมีท่อนให้เลือกน้อย เสียงตัวอย่างอาจไม่ดี ถ้ามีคลิปที่คนนี้พูดยาวกว่านี้จะดีกว่า</div>
+            <div className="alert warn">{tx("เสียงรวมแค่")} {seconds.toFixed(1)}  {tx("วินาที ระบบมีท่อนให้เลือกน้อย เสียงตัวอย่างอาจไม่ดี ถ้ามีคลิปที่คนนี้พูดยาวกว่านี้จะดีกว่า")}</div>
           )}
           {avgQ != null && avgQ < LOW_QUALITY && (
             <div className="alert warn">
-              ประโยคที่เลือกมีเสียงอื่นทับมาก (ความสะอาดเฉลี่ย {avgQ.toFixed(1)}) เสียงพากย์จะติดมาด้วย
-              เอาติ๊กออกจากประโยคที่คะแนนต่ำ ให้เหลือเฉพาะประโยคที่สะอาด (3 ขึ้นไป) ได้ผลกว่าการลดเสียงรบกวน
+              
+              {tx("ประโยคที่เลือกมีเสียงอื่นทับมาก (ความสะอาดเฉลี่ย")} {avgQ.toFixed(1)}{tx(") เสียงพากย์จะติดมาด้วย เอาติ๊กออกจากประโยคที่คะแนนต่ำ ให้เหลือเฉพาะประโยคที่สะอาด (3 ขึ้นไป) ได้ผลกว่าการลดเสียงรบกวน")}
             </div>
           )}
 
           <label className="check" style={{ justifyContent: "flex-start" }}>
             <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />
-            <span>ลดเสียงรบกวนเพิ่ม (ช่วยกับเสียงซ่าหรือลม ไม่ช่วยเพลง เอฟเฟกต์ หรือเสียงคนอื่นที่ทับอยู่)</span>
+            <span>{tx("ลดเสียงรบกวนเพิ่ม (ช่วยกับเสียงซ่าหรือลม ไม่ช่วยเพลง เอฟเฟกต์ หรือเสียงคนอื่นที่ทับอยู่)")}</span>
           </label>
 
-          {tr.dirty.length > 0 && <span className="dim">มีการแก้ {tr.dirty.length} ประโยคที่ยังไม่บันทึก ระบบจะบันทึกให้ก่อน</span>}
+          {tr.dirty.length > 0 && <span className="dim">{tx("มีการแก้")} {tr.dirty.length}  {tx("ประโยคที่ยังไม่บันทึก ระบบจะบันทึกให้ก่อน")}</span>}
           {error && <div className="alert error" role="alert">{error}</div>}
           <button type="button" className="btn primary" onClick={confirm} disabled={!ready}>
-            {working ? "กำลังบันทึก..." : target === "new" ? "บันทึกเป็นเสียงใหม่" : target === "replace" ? "แทนที่เสียง" : "เพิ่มอารมณ์"}
+            {working ? tx("กำลังบันทึก...") : target === "new" ? tx("บันทึกเป็นเสียงใหม่") : target === "replace" ? tx("แทนที่เสียง") : tx("เพิ่มอารมณ์")}
           </button>
         </div>
       </aside>

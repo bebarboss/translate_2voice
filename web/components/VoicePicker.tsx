@@ -7,6 +7,7 @@ import { XIcon } from "./Icons";
 import VoiceAvatar from "./VoiceAvatar";
 import { PreviewButton, usePreview } from "./VoicePreview";
 
+import { tx } from "@/lib/i18n";
 /** แถบเลือกเสียงจากคลังที่สไลด์ออกมาจากขวา เรียงตามความใกล้เคียงกับเสียงตัวละคร ค้นหาและกรองหมวดได้
  *  voiceId null = เลียนเสียงนักแสดงต้นฉบับ */
 export default function VoicePicker({ cast, label, color, stemUrl, voices, selected, onPick, onClose }: {
@@ -42,7 +43,7 @@ export default function VoicePicker({ cast, label, color, stemUrl, voices, selec
 
   const q = query.trim().toLowerCase();
   const shown = ranked.filter((v) => (!category || (v.categories ?? []).includes(category)) && (!q || [
-    v.name, v.tone, v.description, v.gender && GENDER_LABEL[v.gender], ...(v.categories ?? []),
+    v.name, v.tone, v.description, v.gender && tx(GENDER_LABEL[v.gender]), ...(v.categories ?? []),
   ].some((x) => x && x.toLowerCase().includes(q))));
 
   const pick = (id: string | null) => {
@@ -56,23 +57,23 @@ export default function VoicePicker({ cast, label, color, stemUrl, voices, selec
         <div className="drawer-head">
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <h2 id="picker-title" className="row" style={{ gap: 8, fontSize: 17 }}>
-              <span className="swatch" style={{ background: color }} />เลือกเสียงให้{label}
+              <span className="swatch" style={{ background: color }} />{tx("เลือกเสียงให้")}{label}
             </h2>
             <span className="dim">
-              {cast.gender ? `น่าจะ${GENDER_LABEL[cast.gender]}` : "วัดเสียงไม่ได้"}{cast.pitch_hz ? ` · ${Math.round(cast.pitch_hz)} Hz` : ""}
-              {" "}· เรียงตามความใกล้เคียงกับเสียงตัวละคร
+              {cast.gender ? tx("น่าจะ{0}", { 0: GENDER_LABEL[cast.gender] }) : tx("วัดเสียงไม่ได้")}{cast.pitch_hz ? ` · ${Math.round(cast.pitch_hz)} Hz` : ""}
+              {" "}{tx("· เรียงตามความใกล้เคียงกับเสียงตัวละคร")}
             </span>
           </div>
-          <button type="button" className="icon-btn" onClick={onClose} aria-label="ปิด"><XIcon /></button>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label={tx("ปิด")}><XIcon /></button>
         </div>
 
         <div className="drawer-tools">
-          <PreviewButton url={stemUrl} playing={preview.playing} onToggle={preview.toggle} label="ฟังเสียงตัวละคร" />
-          <input ref={searchRef} className="input" type="search" placeholder="ค้นหาชื่อ โทน หมวด รายละเอียด"
-            aria-label="ค้นหาเสียง" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <PreviewButton url={stemUrl} playing={preview.playing} onToggle={preview.toggle} label={tx("ฟังเสียงตัวละคร")} />
+          <input ref={searchRef} className="input" type="search" placeholder={tx("ค้นหาชื่อ โทน หมวด รายละเอียด")}
+            aria-label={tx("ค้นหาเสียง")} value={query} onChange={(e) => setQuery(e.target.value)} />
           {categories.length > 0 && (
-            <div className="chips" role="group" aria-label="กรองตามหมวดหมู่">
-              <button type="button" className="chip" aria-pressed={!category} onClick={() => setCategory("")}>ทั้งหมด</button>
+            <div className="chips" role="group" aria-label={tx("กรองตามหมวดหมู่")}>
+              <button type="button" className="chip" aria-pressed={!category} onClick={() => setCategory("")}>{tx("ทั้งหมด")}</button>
               {categories.map((c) => (
                 <button key={c} type="button" className="chip" aria-pressed={category === c} onClick={() => setCategory(c)}>{c}</button>
               ))}
@@ -80,16 +81,16 @@ export default function VoicePicker({ cast, label, color, stemUrl, voices, selec
           )}
         </div>
 
-        <ul className="pick-list" aria-label="เสียงในคลัง">
+        <ul className="pick-list" aria-label={tx("เสียงในคลัง")}>
           {!q && !category && (
             <li className="pick-row">
               <button type="button" className="pick" aria-pressed={selected === null} onClick={() => pick(null)}>
                 <span className="avatar" style={{ width: 44, height: 44, fontSize: 18 }} aria-hidden="true">🎭</span>
                 <span className="pick-main">
-                  <span className="pick-name">เสียงต้นฉบับ</span>
-                  <span className="dim">เลียนเสียงนักแสดงในคลิป ไม่ใช้เสียงในคลัง</span>
+                  <span className="pick-name">{tx("เสียงต้นฉบับ")}</span>
+                  <span className="dim">{tx("เลียนเสียงนักแสดงในคลิป ไม่ใช้เสียงในคลัง")}</span>
                 </span>
-                {selected === null && <span className="badge done">ใช้อยู่</span>}
+                {selected === null && <span className="badge done">{tx("ใช้อยู่")}</span>}
               </button>
             </li>
           )}
@@ -102,28 +103,28 @@ export default function VoicePicker({ cast, label, color, stemUrl, voices, selec
                   <span className="pick-main">
                     <span className="pick-name">{v.name}</span>
                     <span className="row" style={{ gap: 4 }}>
-                      {v.id === topId && <span className="badge awaiting_review">★ แนะนำ</span>}
-                      {v.gender && <span className="badge queued">{GENDER_LABEL[v.gender]}</span>}
+                      {v.id === topId && <span className="badge awaiting_review">{tx("★ แนะนำ")}</span>}
+                      {v.gender && <span className="badge queued">{tx(GENDER_LABEL[v.gender])}</span>}
                       {v.tone && <span className="badge queued">{v.tone}</span>}
                       {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
                     </span>
                     {v.description && <span className="dim pick-desc">{v.description}</span>}
                   </span>
-                  <span className="pick-score" title="ความใกล้เคียงกับเสียงตัวละคร (ระดับเสียงและเนื้อเสียง)">
+                  <span className="pick-score" title={tx("ความใกล้เคียงกับเสียงตัวละคร (ระดับเสียงและเนื้อเสียง)")}>
                     {s != null ? (
                       <>
                         <span className="mono">{Math.round(s * 100)}%</span>
                         <span className="meter"><span style={{ width: `${Math.round(s * 100)}%` }} /></span>
                       </>
-                    ) : <span className="dim">วัดไม่ได้</span>}
-                    {selected === v.id && <span className="badge done">ใช้อยู่</span>}
+                    ) : <span className="dim">{tx("วัดไม่ได้")}</span>}
+                    {selected === v.id && <span className="badge done">{tx("ใช้อยู่")}</span>}
                   </span>
                 </button>
-                <PreviewButton url={fileUrl.voice(v.id, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} label="ฟัง" />
+                <PreviewButton url={fileUrl.voice(v.id, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} label={tx("ฟัง")} />
               </li>
             );
           })}
-          {shown.length === 0 && <li className="empty">ไม่พบเสียงที่ตรงกับคำค้น</li>}
+          {shown.length === 0 && <li className="empty">{tx("ไม่พบเสียงที่ตรงกับคำค้น")}</li>}
         </ul>
       </aside>
     </div>

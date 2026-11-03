@@ -7,6 +7,7 @@ import { TARGET_LABEL, fmtDuration, fmtWhen, isActive, langName } from "@/lib/fo
 import StatusBadge from "@/components/StatusBadge";
 import { PlusIcon, SearchIcon } from "@/components/Icons";
 
+import { tx } from "@/lib/i18n";
 type Filter = "all" | "active" | "awaiting_review" | "done" | "failed";
 
 const FILTERS: { key: Filter; label: string; match: (s: JobStatus) => boolean }[] = [
@@ -18,10 +19,10 @@ const FILTERS: { key: Filter; label: string; match: (s: JobStatus) => boolean }[
 ];
 
 function actionFor(job: Job): { href: string; label: string } {
-  if (job.status === "awaiting_review") return { href: `/jobs/${job.id}`, label: "ตรวจบท" };
-  if (job.status === "done") return { href: `/jobs/${job.id}`, label: "เปิดผลลัพธ์" };
-  if (isActive(job)) return { href: `/jobs/${job.id}`, label: "ดูความคืบหน้า" };
-  return { href: `/jobs/${job.id}`, label: "ดูรายละเอียด" };
+  if (job.status === "awaiting_review") return { href: `/jobs/${job.id}`, label: tx("ตรวจบท") };
+  if (job.status === "done") return { href: `/jobs/${job.id}`, label: tx("เปิดผลลัพธ์") };
+  if (isActive(job)) return { href: `/jobs/${job.id}`, label: tx("ดูความคืบหน้า") };
+  return { href: `/jobs/${job.id}`, label: tx("ดูรายละเอียด") };
 }
 
 export default function JobsPage() {
@@ -61,26 +62,26 @@ export default function JobsPage() {
   return (
     <main className="page" style={{ maxWidth: 1200 }}>
       <div className="page-head">
-        <h1>งานทั้งหมด</h1>
-        <Link href="/" className="btn primary"><PlusIcon />ส่งคลิปใหม่</Link>
+        <h1>{tx("งานทั้งหมด")}</h1>
+        <Link href="/" className="btn primary"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
       </div>
 
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="row" role="group" aria-label="กรองตามสถานะ" style={{ gap: 6 }}>
+        <div className="row" role="group" aria-label={tx("กรองตามสถานะ")} style={{ gap: 6 }}>
           {FILTERS.map((f) => (
             <button key={f.key} type="button" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}
               className="btn small"
               style={filter === f.key
                 ? { borderRadius: 999, borderColor: "var(--accent)", background: "var(--accent-soft)", color: "#FFB27F" }
                 : { borderRadius: 999, background: "transparent" }}>
-              {f.label} {counts[f.key]}
+              {tx(f.label)} {counts[f.key]}
             </button>
           ))}
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 12px", borderRadius: 10, border: "1px solid var(--border-2)", background: "var(--surface-2)", minWidth: 240 }}>
           <SearchIcon color="#9AA1AD" />
-          <span className="sr-only">ค้นหางาน</span>
-          <input type="search" placeholder="ค้นหาชื่อไฟล์" value={query} onChange={(e) => setQuery(e.target.value)}
+          <span className="sr-only">{tx("ค้นหางาน")}</span>
+          <input type="search" placeholder={tx("ค้นหาชื่อไฟล์")} value={query} onChange={(e) => setQuery(e.target.value)}
             style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none" }} />
         </label>
       </div>
@@ -89,20 +90,20 @@ export default function JobsPage() {
 
       <div className="table-wrap">
         {jobs === null ? (
-          <div className="empty">กำลังโหลด...</div>
+          <div className="empty">{tx("กำลังโหลด...")}</div>
         ) : shown.length === 0 ? (
-          <div className="empty">ไม่มีงานในหมวดนี้</div>
+          <div className="empty">{tx("ไม่มีงานในหมวดนี้")}</div>
         ) : (
           <table>
             <thead>
               <tr>
-                <th scope="col">คลิป</th>
-                <th scope="col">ภาษา</th>
-                <th scope="col">ความยาว</th>
-                <th scope="col">ตัวละคร</th>
-                <th scope="col">สถานะ</th>
-                <th scope="col">ส่งเมื่อ</th>
-                <th scope="col">จัดการ</th>
+                <th scope="col">{tx("คลิป")}</th>
+                <th scope="col">{tx("ภาษา")}</th>
+                <th scope="col">{tx("ความยาว")}</th>
+                <th scope="col">{tx("ตัวละคร")}</th>
+                <th scope="col">{tx("สถานะ")}</th>
+                <th scope="col">{tx("ส่งเมื่อ")}</th>
+                <th scope="col">{tx("จัดการ")}</th>
               </tr>
             </thead>
             <tbody>
@@ -114,7 +115,7 @@ export default function JobsPage() {
                       <Link href={`/jobs/${j.id}`} style={{ color: "var(--text)", textDecoration: "none", fontSize: 15 }}>{j.filename}</Link>
                       {j.source_url && <div className="dim" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.source_url}</div>}
                     </td>
-                    <td>{langName(j.detected_lang ?? j.source_lang)} → {TARGET_LABEL[j.target_lang]}</td>
+                    <td>{langName(j.detected_lang ?? j.source_lang)} → {tx(TARGET_LABEL[j.target_lang])}</td>
                     <td className="mono">{fmtDuration(j.duration)}</td>
                     <td>{j.speakers.length || "—"}</td>
                     <td>
@@ -134,16 +135,16 @@ export default function JobsPage() {
                         <Link href={a.href}>{a.label}</Link>
                         {(j.status === "failed" || j.status === "cancelled") && (
                           <button type="button" className="btn small" disabled={busyId === j.id}
-                            onClick={() => act(j.id, () => api.retry(j.id))}>ลองใหม่</button>
+                            onClick={() => act(j.id, () => api.retry(j.id))}>{tx("ลองใหม่")}</button>
                         )}
                         {isActive(j) ? (
                           <button type="button" className="btn small danger" disabled={busyId === j.id}
-                            onClick={() => act(j.id, () => api.cancel(j.id))}>ยกเลิก</button>
+                            onClick={() => act(j.id, () => api.cancel(j.id))}>{tx("ยกเลิก")}</button>
                         ) : (
                           <button type="button" className="btn small danger" disabled={busyId === j.id}
                             onClick={() => {
-                              if (window.confirm(`ลบงาน ${j.filename} และไฟล์ทั้งหมด?`)) act(j.id, () => api.deleteJob(j.id));
-                            }}>ลบ</button>
+                              if (window.confirm(tx("ลบงาน {0} และไฟล์ทั้งหมด?", { 0: j.filename }))) act(j.id, () => api.deleteJob(j.id));
+                            }}>{tx("ลบ")}</button>
                         )}
                       </div>
                     </td>

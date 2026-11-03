@@ -8,6 +8,7 @@ import { GENRES, LANGS, TARGET_LABEL, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { ArrowRight, LinkIcon, UploadIcon } from "@/components/Icons";
 
+import { tx } from "@/lib/i18n";
 const ACCEPT = ".mp4,.mov,.mkv,.webm,.avi,.m4v";
 
 export default function UploadPage() {
@@ -43,7 +44,7 @@ export default function UploadPage() {
     if (!f) return;
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPT.split(",").includes(ext)) {
-      setError("รองรับเฉพาะไฟล์ MP4, MOV, MKV, WEBM, AVI, M4V");
+      setError(tx("รองรับเฉพาะไฟล์ MP4, MOV, MKV, WEBM, AVI, M4V"));
       return;
     }
     setFile(f);
@@ -82,18 +83,20 @@ export default function UploadPage() {
   return (
     <main className="page">
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 32, fontWeight: 600, lineHeight: 1.25 }}>พากย์คลิปด้วยเสียงนักแสดงต้นฉบับ</h1>
+        <h1 style={{ margin: 0, fontSize: 32, fontWeight: 600, lineHeight: 1.25 }}>{tx("พากย์คลิปด้วยเสียงนักแสดงต้นฉบับ")}</h1>
         <p className="muted" style={{ margin: 0, fontSize: 16 }}>
-          ส่งคลิปละครภาษาใดก็ได้ ระบบจะแยกเสียงตัวละคร แปล แล้วให้คุณตรวจบทก่อนพากย์
+          
+          {tx("ส่งคลิปละครภาษาใดก็ได้ ระบบจะแยกเสียงตัวละคร แปล แล้วให้คุณตรวจบทก่อนพากย์")}
         </p>
       </div>
 
-      <div className="seg" role="group" aria-label="วิธีส่งคลิป" style={{ alignSelf: "flex-start" }}>
-        <button type="button" aria-pressed={mode === "file"} onClick={() => setMode("file")}>อัปโหลดไฟล์</button>
-        <button type="button" aria-pressed={mode === "url"} onClick={() => setMode("url")}>วางลิงก์</button>
+      <div className="seg" role="group" aria-label={tx("วิธีส่งคลิป")} style={{ alignSelf: "flex-start" }}>
+        <button type="button" aria-pressed={mode === "file"} onClick={() => setMode("file")}>{tx("อัปโหลดไฟล์")}</button>
+        <button type="button" aria-pressed={mode === "url"} onClick={() => setMode("url")}>{tx("วางลิงก์")}</button>
       </div>
       <span className="dim" style={{ marginTop: -8 }}>
-        ตัดต่อใน Premiere Pro หรือ DaVinci Resolve แยกเสียงคนละแทร็กไว้แล้ว? <Link href="/timeline">นำเข้าไทม์ไลน์</Link> ได้แทร็กพากย์ไทยกลับไปวางในโปรเจกต์เลย
+        
+        {tx("ตัดต่อใน Premiere Pro หรือ DaVinci Resolve แยกเสียงคนละแทร็กไว้แล้ว?")} <Link href="/timeline">{tx("นำเข้าไทม์ไลน์")}</Link>  {tx("ได้แทร็กพากย์ไทยกลับไปวางในโปรเจกต์เลย")}
       </span>
 
       {mode === "file" ? (
@@ -107,75 +110,75 @@ export default function UploadPage() {
           {file ? (
             <>
               <span style={{ fontSize: 18, fontWeight: 500 }}>{file.name}</span>
-              <span className="muted">{(file.size / 1024 / 1024).toFixed(1)} MB · คลิกเพื่อเปลี่ยนไฟล์</span>
+              <span className="muted">{(file.size / 1024 / 1024).toFixed(1)}  {tx("MB · คลิกเพื่อเปลี่ยนไฟล์")}</span>
             </>
           ) : (
             <>
-              <span style={{ fontSize: 20, fontWeight: 500 }}>ลากคลิปมาวางที่นี่</span>
-              <span className="muted">หรือ <span style={{ color: "var(--accent)", textDecoration: "underline" }}>เลือกไฟล์จากเครื่อง</span></span>
-              <span className="dim">MP4, MOV, MKV, WEBM · ไม่เกิน 500 MB</span>
+              <span style={{ fontSize: 20, fontWeight: 500 }}>{tx("ลากคลิปมาวางที่นี่")}</span>
+              <span className="muted">{tx("หรือ")} <span style={{ color: "var(--accent)", textDecoration: "underline" }}>{tx("เลือกไฟล์จากเครื่อง")}</span></span>
+              <span className="dim">{tx("MP4, MOV, MKV, WEBM · ไม่เกิน 500 MB")}</span>
             </>
           )}
-          <input type="file" accept={ACCEPT} aria-label="เลือกไฟล์วิดีโอ" onChange={(e) => pickFile(e.target.files?.[0])} disabled={busy} />
+          <input type="file" accept={ACCEPT} aria-label={tx("เลือกไฟล์วิดีโอ")} onChange={(e) => pickFile(e.target.files?.[0])} disabled={busy} />
         </label>
       ) : (
         <div className="card">
           <div className="field">
-            <label htmlFor="url">ลิงก์คลิป</label>
+            <label htmlFor="url">{tx("ลิงก์คลิป")}</label>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <LinkIcon color="#9AA1AD" />
               <input id="url" className="input" type="url" placeholder="https://www.youtube.com/watch?v=..."
                 value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
             </div>
           </div>
-          <span className="dim">รองรับ YouTube, TikTok, Facebook, Bilibili และเว็บอื่นที่ yt-dlp รองรับ · คลิปยาวไม่เกิน 60 นาที</span>
+          <span className="dim">{tx("รองรับ YouTube, TikTok, Facebook, Bilibili และเว็บอื่นที่ yt-dlp รองรับ · คลิปยาวไม่เกิน 60 นาที")}</span>
         </div>
       )}
 
-      <section className="grid-3" aria-label="ตั้งค่างาน">
+      <section className="grid-3" aria-label={tx("ตั้งค่างาน")}>
         <div className="card tight field">
-          <label htmlFor="src">ภาษาต้นฉบับ</label>
+          <label htmlFor="src">{tx("ภาษาต้นฉบับ")}</label>
           <select id="src" className="select" value={sourceLang} onChange={(e) => setSourceLang(e.target.value)}>
-            <option value="">ตรวจอัตโนมัติ</option>
-            {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+            <option value="">{tx("ตรวจอัตโนมัติ")}</option>
+            {LANGS.map((l) => <option key={l.code} value={l.code}>{tx(l.label)}</option>)}
           </select>
         </div>
         <div className="card tight field">
-          <span className="label">พากย์เป็นภาษา</span>
-          <div className="seg" role="group" aria-label="ภาษาพากย์">
+          <span className="label">{tx("พากย์เป็นภาษา")}</span>
+          <div className="seg" role="group" aria-label={tx("ภาษาพากย์")}>
             {(["th", "en"] as TargetLang[]).map((t) => (
               <button key={t} type="button" aria-pressed={targetLang === t} onClick={() => setTargetLang(t)}>
-                {TARGET_LABEL[t]}
+                {tx(TARGET_LABEL[t])}
               </button>
             ))}
           </div>
         </div>
         <div className="card tight field">
-          <label htmlFor="spk">จำนวนตัวละคร (ถ้ารู้)</label>
-          <input id="spk" className="input" type="number" min={1} max={20} placeholder="ไม่ระบุ"
+          <label htmlFor="spk">{tx("จำนวนตัวละคร (ถ้ารู้)")}</label>
+          <input id="spk" className="input" type="number" min={1} max={20} placeholder={tx("ไม่ระบุ")}
             value={speakers} onChange={(e) => setSpeakers(e.target.value)} />
         </div>
         <label className="card tight check">
-          <span className="t"><span>ตรวจบทก่อนพากย์</span><small>หยุดรอให้แก้บทหลังแปลเสร็จ</small></span>
+          <span className="t"><span>{tx("ตรวจบทก่อนพากย์")}</span><small>{tx("หยุดรอให้แก้บทหลังแปลเสร็จ")}</small></span>
           <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
         </label>
         <label className="card tight check">
-          <span className="t"><span>ฝังซับในวิดีโอ</span><small>ได้ไฟล์ SRT แยกมาเสมอ</small></span>
+          <span className="t"><span>{tx("ฝังซับในวิดีโอ")}</span><small>{tx("ได้ไฟล์ SRT แยกมาเสมอ")}</small></span>
           <input type="checkbox" checked={burnSubs} onChange={(e) => setBurnSubs(e.target.checked)} />
         </label>
         <div className="card tight field">
-          <label htmlFor="genre">แนวเรื่อง (ถ้ารู้)</label>
-          <input id="genre" className="input" list="genres" maxLength={80} placeholder="ให้ AI เดาจากชื่อคลิป"
+          <label htmlFor="genre">{tx("แนวเรื่อง (ถ้ารู้)")}</label>
+          <input id="genre" className="input" list="genres" maxLength={80} placeholder={tx("ให้ AI เดาจากชื่อคลิป")}
             value={genre} onChange={(e) => setGenre(e.target.value)} />
-          <datalist id="genres">{GENRES.map((g) => <option key={g} value={g} />)}</datalist>
+          <datalist id="genres">{GENRES.map((g) => <option key={g} value={tx(g)} />)}</datalist>
         </div>
       </section>
 
       <details className="card tight retranslate">
-        <summary>ชื่อเฉพาะ <span className="dim">ไม่ใส่ก็ได้ ช่วยให้ชื่อตัวละครและสถานที่สะกดตรงกับฉบับไทย</span></summary>
-        <label className="sr-only" htmlFor="glossary">ชื่อเฉพาะ บรรทัดละคำ</label>
+        <summary>{tx("ชื่อเฉพาะ")} <span className="dim">{tx("ไม่ใส่ก็ได้ ช่วยให้ชื่อตัวละครและสถานที่สะกดตรงกับฉบับไทย")}</span></summary>
+        <label className="sr-only" htmlFor="glossary">{tx("ชื่อเฉพาะ บรรทัดละคำ")}</label>
         <textarea id="glossary" className="textarea" rows={4} maxLength={2000}
-          placeholder={"บรรทัดละคำ เช่น\nドラえもん = โดราเอมอน\nのび太 = โนบิตะ"} value={glossary} onChange={(e) => setGlossary(e.target.value)} />
+          placeholder={tx("บรรทัดละคำ เช่น\nドラえもん = โดราเอมอน\nのび太 = โนบิตะ")} value={glossary} onChange={(e) => setGlossary(e.target.value)} />
       </details>
 
       {error && <div className="alert error" role="alert">{error}</div>}
@@ -185,33 +188,33 @@ export default function UploadPage() {
           <div style={{ flex: "1 1 260px", display: "flex", alignItems: "center", gap: 12 }}>
             <div className="progress" style={{ flex: 1 }}><div style={{ width: `${progress * 100}%` }} /></div>
             <span className="mono">{Math.round(progress * 100)}%</span>
-            <button type="button" className="btn small" onClick={() => abortRef.current?.()}>ยกเลิก</button>
+            <button type="button" className="btn small" onClick={() => abortRef.current?.()}>{tx("ยกเลิก")}</button>
           </div>
         ) : (
           <span />
         )}
         <button type="button" className="btn primary lg" onClick={submit} disabled={!ready || busy}>
-          {busy ? (mode === "file" ? "กำลังอัปโหลด..." : "กำลังส่งงาน...") : "เริ่มประมวลผล"}
+          {busy ? (mode === "file" ? tx("กำลังอัปโหลด...") : tx("กำลังส่งงาน...")) : tx("เริ่มประมวลผล")}
           {!busy && <ArrowRight />}
         </button>
       </div>
 
       <section aria-labelledby="recent" style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2 id="recent" style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>งานล่าสุด</h2>
-          <Link href="/jobs" style={{ fontSize: 14 }}>ดูทั้งหมด</Link>
+          <h2 id="recent" style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>{tx("งานล่าสุด")}</h2>
+          <Link href="/jobs" style={{ fontSize: 14 }}>{tx("ดูทั้งหมด")}</Link>
         </div>
         <div className="table-wrap">
           {recent === null ? (
-            <div className="empty">กำลังโหลด...</div>
+            <div className="empty">{tx("กำลังโหลด...")}</div>
           ) : recent.length === 0 ? (
-            <div className="empty">ยังไม่มีงาน</div>
+            <div className="empty">{tx("ยังไม่มีงาน")}</div>
           ) : (
             recent.map((j) => (
               <Link key={j.id} href={`/jobs/${j.id}`} className="row"
                 style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)", color: "var(--text)", textDecoration: "none", justifyContent: "space-between" }}>
                 <span style={{ flex: "1 1 220px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{j.filename}</span>
-                <span className="dim">{langName(j.detected_lang ?? j.source_lang)} → {TARGET_LABEL[j.target_lang]}</span>
+                <span className="dim">{langName(j.detected_lang ?? j.source_lang)} → {tx(TARGET_LABEL[j.target_lang])}</span>
                 <StatusBadge job={j} detail />
               </Link>
             ))

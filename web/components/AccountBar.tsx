@@ -7,8 +7,9 @@ import { api, type Plan, type Wallet } from "@/lib/api";
 import { fmtNum } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
+import { locale, tx } from "@/lib/i18n";
 const fmtDate = (unix: number) =>
-  new Date(unix * 1000).toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+  new Date(unix * 1000).toLocaleDateString(locale(), { day: "numeric", month: "short" });
 
 /** แถบบนของเนื้อหา: แพ็กเกจปัจจุบันและเครดิตคงเหลือ (เฉพาะตอนเปิดระบบเครดิตและล็อกอินแล้ว)
  * โหลดใหม่เมื่อเปลี่ยนหน้า ทุก 20 วินาที และตอนกลับมาที่แท็บ ยอดจะตามทันหลังส่งงานหรือซื้อเครดิต */
@@ -37,16 +38,16 @@ export default function AccountBar() {
   const plan = plans.find((p) => p.id === sub?.plan_id);
   const total = (wallet?.credits ?? 0) + (sub?.minutes_left ?? 0);
   return (
-    <div className="account-bar" role="region" aria-label="แพ็กเกจและเครดิต">
+    <div className="account-bar" role="region" aria-label={tx("แพ็กเกจและเครดิต")}>
       <Link href="/account" className="account-chip account-plan">
-        <span className="dim">แพ็กเกจ</span>
-        <span className="account-plan-name">{user.admin ? "ผู้ดูแลระบบ" : sub && plan ? `${plan.name} · ถึง ${fmtDate(sub.expires_at)}` : "ยังไม่มี"}</span>
+        <span className="dim">{tx("แพ็กเกจ")}</span>
+        <span className="account-plan-name">{user.admin ? tx("ผู้ดูแลระบบ") : sub && plan ? tx("{0} · ถึง {1}", { 0: plan.name, 1: fmtDate(sub.expires_at) }) : tx("ยังไม่มี")}</span>
       </Link>
       <Link href="/account" className="account-chip">
-        <span className="account-credits">{user.admin ? "ไม่จำกัด" : wallet ? fmtNum(total) : "..."}</span>
-        <span className="dim">เครดิต</span>
+        <span className="account-credits">{user.admin ? tx("ไม่จำกัด") : wallet ? fmtNum(total) : "..."}</span>
+        <span className="dim">{tx("เครดิต")}</span>
       </Link>
-      {!user.admin && <Link href="/account" className="btn primary small">เติมเครดิต</Link>}
+      {!user.admin && <Link href="/account" className="btn primary small">{tx("เติมเครดิต")}</Link>}
     </div>
   );
 }

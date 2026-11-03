@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/useAuth";
 import { GearIcon, ListIcon, MenuIcon, MicIcon, ScissorsIcon, UploadIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
+import Prefs from "@/components/Prefs";
+import { tx } from "@/lib/i18n";
 const LINKS = [
   { href: "/", label: "อัปโหลด", icon: <UploadIcon size={18} /> },
   { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <ScissorsIcon size={18} /> },
@@ -41,30 +43,31 @@ export default function Sidebar() {
     <>
       <div className="topbar">
         {brand}
-        <button type="button" className="icon-only" aria-label="เปิดเมนู" aria-expanded={open} aria-controls="sidebar"
+        <button type="button" className="icon-only" aria-label={tx("เปิดเมนู")} aria-expanded={open} aria-controls="sidebar"
           onClick={() => setOpen(true)}><MenuIcon /></button>
       </div>
       {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
       <aside id="sidebar" className={`sidebar${open ? " open" : ""}`}>
         <div className="sidebar-head">
           {brand}
-          <button type="button" className="icon-only sidebar-close" aria-label="ปิดเมนู" onClick={() => setOpen(false)}>
+          <button type="button" className="icon-only sidebar-close" aria-label={tx("ปิดเมนู")} onClick={() => setOpen(false)}>
             <XIcon size={18} />
           </button>
         </div>
-        <nav className="side-nav" aria-label="เมนูหลัก">
+        <nav className="side-nav" aria-label={tx("เมนูหลัก")}>
           {LINKS.map((l) => (
             <Link key={l.href} href={l.href} aria-current={isActive(l.href) ? "page" : undefined}>
-              {l.icon}{l.label}
+              {l.icon}{tx(l.label)}
             </Link>
           ))}
           {config?.auth && user && (
-            <Link href="/actor" aria-current={path === "/actor" ? "page" : undefined}><MicIcon />นักพากย์</Link>
+            <Link href="/actor" aria-current={path === "/actor" ? "page" : undefined}><MicIcon />{tx("นักพากย์")}</Link>
           )}
           {config?.auth && user?.admin && (
-            <Link href="/actors" aria-current={isActive("/actors") ? "page" : undefined}><UserIcon />ตรวจนักพากย์</Link>
+            <Link href="/actors" aria-current={isActive("/actors") ? "page" : undefined}><UserIcon />{tx("ตรวจนักพากย์")}</Link>
           )}
         </nav>
+        <Prefs />
         {config?.auth && (
           <div className="side-foot">
             {user ? (
@@ -72,12 +75,12 @@ export default function Sidebar() {
                 <span className="side-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
                 <span className="side-user-text">
                   <span>{user.name}</span>
-                  <span className="dim">{user.admin ? "ผู้ดูแลระบบ" : user.email}</span>
+                  <span className="dim">{user.admin ? tx("ผู้ดูแลระบบ") : user.email}</span>
                 </span>
               </Link>
             ) : (
-              <nav className="side-nav" aria-label="บัญชี">
-                <Link href="/login" aria-current={isActive("/login") ? "page" : undefined}><UserIcon />เข้าสู่ระบบ</Link>
+              <nav className="side-nav" aria-label={tx("บัญชี")}>
+                <Link href="/login" aria-current={isActive("/login") ? "page" : undefined}><UserIcon />{tx("เข้าสู่ระบบ")}</Link>
               </nav>
             )}
           </div>

@@ -1,4 +1,5 @@
 import type { Gender, Job, JobStatus, Mood, TargetLang } from "./api";
+import { locale, tx } from "./i18n";
 
 export const LANGS: { code: string; label: string }[] = [
   { code: "zh", label: "จีน" },
@@ -18,7 +19,8 @@ export const TARGET_LABEL: Record<TargetLang, string> = { th: "ไทย", en: "
 
 export function langName(code: string | null | undefined): string {
   if (!code) return "—";
-  return LANGS.find((l) => l.code === code)?.label ?? code;
+  const l = LANGS.find((x) => x.code === code);
+  return l ? tx(l.label) : code;
 }
 
 export const STATUS_LABEL: Record<JobStatus, string> = {
@@ -92,19 +94,19 @@ export function fmtDuration(sec: number | null | undefined): string {
 export function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  const time = d.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === now.toDateString()) return `วันนี้ ${time}`;
+  const time = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return tx("วันนี้ {0}", { 0: time });
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return `เมื่อวาน ${time}`;
-  return `${d.toLocaleDateString("th-TH", { day: "numeric", month: "short" })} ${time}`;
+  if (d.toDateString() === y.toDateString()) return tx("เมื่อวาน {0}", { 0: time });
+  return `${d.toLocaleDateString(locale(), { day: "numeric", month: "short" })} ${time}`;
 }
 
 /** ชื่อตัวละคร: ชื่อที่ผู้ใช้ตั้ง ไม่มีใช้ "ตัวละคร N" */
 export function speakerLabel(speaker: string, names?: Record<string, string>): string {
   if (names?.[speaker]) return names[speaker];
   const n = Number(speaker.replace(/\D/g, ""));
-  return n ? `ตัวละคร ${n}` : speaker;
+  return n ? tx("ตัวละคร {0}", { 0: n }) : speaker;
 }
 
 const SPEAKER_COLORS = ["#6AB0FF", "#4FD1B5", "#C99BFF", "#F5C27A", "#FF8FA3", "#9BE06A", "#7FD3F5", "#E0A0FF"];
@@ -136,7 +138,7 @@ export const MOODS = Object.keys(MOOD_LABEL) as Mood[];
 
 /** สตางค์ → "1,234 บาท" (มีเศษสตางค์แสดงทศนิยม) */
 export const fmtBaht = (satang: number) =>
-  `${(satang / 100).toLocaleString("th-TH", { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 })} บาท`;
+  tx("{0} บาท", { 0: (satang / 100).toLocaleString(locale(), { minimumFractionDigits: satang % 100 ? 2 : 0, maximumFractionDigits: 2 }) });
 
 /** แนวเรื่องที่เลือกได้ทันที ใช้ช่วย AI เลือกสรรพนามตอนแปล (พิมพ์เองได้) */
 export const GENRES = ["การ์ตูนเด็ก", "อนิเมะ", "ละครจีนโบราณ", "ละครจีนสมัยใหม่", "ซีรีส์เกาหลี", "หนังแอ็กชัน", "หนังตลก", "สารคดี"];
@@ -162,5 +164,5 @@ export function isActive(job: Job): boolean {
 
 /** จำนวนเครดิต ทศนิยม 2 ตำแหน่งเสมอ (1.25, 3.00, 1,200.50) */
 export function fmtNum(n: number): string {
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return n.toLocaleString(locale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

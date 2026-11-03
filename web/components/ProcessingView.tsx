@@ -8,6 +8,7 @@ import { TARGET_LABEL, isActive, langName, speakerColor, speakerLabel, stageLabe
 import StatusBadge from "./StatusBadge";
 import { CheckIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 const TITLE: Record<string, string> = {
   analyze: "กำลังเตรียมบทพากย์",
   synthesize: "กำลังพากย์เสียง",
@@ -29,10 +30,10 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
     try { await fn(); onChanged(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
-  const title = job.status === "failed" ? "งานล้มเหลว"
-    : job.status === "cancelled" ? "ยกเลิกงานแล้ว"
-    : job.status === "queued" ? (job.queue_position ? `รอคิวประมวลผล ลำดับที่ ${job.queue_position}` : "รอคิวประมวลผล")
-    : TITLE[job.phase] ?? "กำลังประมวลผล";
+  const title = job.status === "failed" ? tx("งานล้มเหลว")
+    : job.status === "cancelled" ? tx("ยกเลิกงานแล้ว")
+    : job.status === "queued" ? (job.queue_position ? tx("รอคิวประมวลผล ลำดับที่ {0}", { 0: job.queue_position }) : tx("รอคิวประมวลผล"))
+    : TITLE[job.phase] ? tx(TITLE[job.phase]) : tx("กำลังประมวลผล");
 
   return (
     <main className="page">
@@ -42,7 +43,7 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
             <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
               <h1 id="ptitle" style={{ margin: 0, fontSize: 26, fontWeight: 600 }}>{title}</h1>
               <span className="muted" style={{ wordBreak: "break-all" }}>
-                {job.filename} · {job.detected_lang ?? job.source_lang ? langName(job.detected_lang ?? job.source_lang) : "ตรวจภาษาอัตโนมัติ"} → {TARGET_LABEL[job.target_lang]}
+                {job.filename} · {job.detected_lang ?? job.source_lang ? langName(job.detected_lang ?? job.source_lang) : tx("ตรวจภาษาอัตโนมัติ")} → {tx(TARGET_LABEL[job.target_lang])}
               </span>
             </div>
             <StatusBadge job={job} />
@@ -53,14 +54,14 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
               <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
                 <span className="mono" style={{ fontSize: 34 }}>{Math.round(job.progress * 100)}%</span>
                 <span className="muted">
-                  {job.stage === "cancelling" ? "กำลังยกเลิก รอให้ขั้นปัจจุบันจบก่อน"
+                  {job.stage === "cancelling" ? tx("กำลังยกเลิก รอให้ขั้นปัจจุบันจบก่อน")
                     : job.status === "queued" && job.queue_position
-                      ? job.queue_position === 1 ? "ได้คิวถัดไป เริ่มทันทีที่มีช่องว่าง" : `มีงานรอก่อนหน้า ${job.queue_position - 1} งาน`
+                      ? job.queue_position === 1 ? tx("ได้คิวถัดไป เริ่มทันทีที่มีช่องว่าง") : tx("มีงานรอก่อนหน้า {0} งาน", { 0: job.queue_position - 1 })
                       : stageLabel(job.stage)}
                 </span>
               </div>
               <div className="progress" role="progressbar" aria-valuenow={Math.round(job.progress * 100)}
-                aria-valuemin={0} aria-valuemax={100} aria-label="ความคืบหน้ารวม">
+                aria-valuemin={0} aria-valuemax={100} aria-label={tx("ความคืบหน้ารวม")}>
                 <div style={{ width: `${job.progress * 100}%` }} />
               </div>
             </div>
@@ -80,8 +81,8 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
                   <span className="dot">{state === "done" && <CheckIcon />}</span>
                   <span className="name">{stageLabel(s)}</span>
                   <span className="dim">
-                    {state === "done" ? (s === "diarize" && job.speakers.length ? `พบ ${job.speakers.length} ตัวละคร` : "เสร็จ")
-                      : state === "now" ? "กำลังทำ" : "รอ"}
+                    {state === "done" ? (s === "diarize" && job.speakers.length ? tx("พบ {0} ตัวละคร", { 0: job.speakers.length }) : tx("เสร็จ"))
+                      : state === "now" ? tx("กำลังทำ") : tx("รอ")}
                   </span>
                 </li>
               );
@@ -92,23 +93,23 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
 
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="dim">
-              {active ? "ปิดหน้านี้ได้ ระบบจะทำงานต่อ กลับมาดูได้ที่หน้างานทั้งหมด" : ""}
+              {active ? tx("ปิดหน้านี้ได้ ระบบจะทำงานต่อ กลับมาดูได้ที่หน้างานทั้งหมด") : ""}
             </span>
             <div className="row">
               {active && (
                 <button type="button" className="btn danger" disabled={busy || job.stage === "cancelling"}
-                  onClick={() => run(() => api.cancel(job.id))}>ยกเลิกงาน</button>
+                  onClick={() => run(() => api.cancel(job.id))}>{tx("ยกเลิกงาน")}</button>
               )}
               {!active && (
                 <>
                   <button type="button" className="btn danger" disabled={busy}
                     onClick={() => {
-                      if (window.confirm("ลบงานนี้และไฟล์ทั้งหมด?")) {
+                      if (window.confirm(tx("ลบงานนี้และไฟล์ทั้งหมด?"))) {
                         run(async () => { await api.deleteJob(job.id); router.push("/jobs"); });
                       }
-                    }}>ลบงาน</button>
+                    }}>{tx("ลบงาน")}</button>
                   <button type="button" className="btn primary" disabled={busy}
-                    onClick={() => run(() => api.retry(job.id))}>ลองใหม่</button>
+                    onClick={() => run(() => api.retry(job.id))}>{tx("ลองใหม่")}</button>
                 </>
               )}
             </div>
@@ -116,12 +117,12 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
         </section>
 
         <aside className="side card" aria-labelledby="stitle">
-          <h2 id="stitle">ตัวละครที่พบ</h2>
+          <h2 id="stitle">{tx("ตัวละครที่พบ")}</h2>
           {job.speakers.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>จะแสดงหลังขั้นแยกผู้พูดเสร็จ ฟังเสียงแยกของแต่ละคนได้จากตรงนี้</p>
+            <p className="muted" style={{ margin: 0 }}>{tx("จะแสดงหลังขั้นแยกผู้พูดเสร็จ ฟังเสียงแยกของแต่ละคนได้จากตรงนี้")}</p>
           ) : (
             <>
-              <p className="muted" style={{ margin: 0, fontSize: 14 }}>ฟังเสียงแยกของแต่ละคน เพื่อเช็กว่าระบบแยกตัวละครถูกไหม</p>
+              <p className="muted" style={{ margin: 0, fontSize: 14 }}>{tx("ฟังเสียงแยกของแต่ละคน เพื่อเช็กว่าระบบแยกตัวละครถูกไหม")}</p>
               {job.speakers.map((s) => (
                 <div key={s} style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12, borderRadius: 12, background: "var(--surface-3)" }}>
                   <div className="row" style={{ gap: 8 }}>
@@ -130,12 +131,12 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
                     <span className="dim">{s}</span>
                   </div>
                   <audio controls preload="none" src={fileUrl.stem(job.id, s)} style={{ width: "100%", height: 36 }}
-                    aria-label={`เสียงแยกของ${speakerLabel(s, job.speaker_names)}`} />
+                    aria-label={tx("เสียงแยกของ{0}", { 0: speakerLabel(s, job.speaker_names) })} />
                 </div>
               ))}
             </>
           )}
-          <Link href="/jobs" className="btn" style={{ marginTop: 4 }}>กลับหน้างานทั้งหมด</Link>
+          <Link href="/jobs" className="btn" style={{ marginTop: 4 }}>{tx("กลับหน้างานทั้งหมด")}</Link>
         </aside>
       </div>
     </main>

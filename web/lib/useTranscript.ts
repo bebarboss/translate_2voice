@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Job, type LibraryVoice, type LineMood, type Mood, type Utterance, type UtteranceEdit } from "./api";
 import { speakerLabel } from "./format";
 
+import { tx } from "@/lib/i18n";
 export type Draft = { target: string; speaker: string; start: number; end: number; take: number; mood: LineMood };
 export type Message = { kind: "error" | "info"; text: string } | null;
 
@@ -125,25 +126,25 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
     if (pos > 0 && pos < draft.trim().length) at.pos = pos;
     else if (t > u.start + 0.2 && t < u.end - 0.2) at.at = t;
     else {
-      setMessage({ kind: "error", text: "วางเคอร์เซอร์ในบทตรงที่จะแยก หรือเล่นวิดีโอไปหยุดตรงที่คนที่สองเริ่มพูด แล้วกดแยกอีกครั้ง" });
+      setMessage({ kind: "error", text: tx("วางเคอร์เซอร์ในบทตรงที่จะแยก หรือเล่นวิดีโอไปหยุดตรงที่คนที่สองเริ่มพูด แล้วกดแยกอีกครั้ง") });
       return;
     }
     delete cursors.current[u.id];
-    restructure(() => api.splitLine(job.id, u.id, at), "แยกประโยคแล้ว เปลี่ยนตัวละครของท่อนหลังได้เลย");
+    restructure(() => api.splitLine(job.id, u.id, at), tx("แยกประโยคแล้ว เปลี่ยนตัวละครของท่อนหลังได้เลย"));
   };
 
   /** ตัดประโยคที่เวลา sec (เครื่องมือตัดบนเส้นเวลา) แต่ละท่อนต้องยาวอย่างน้อย 0.2 วินาที */
   const splitAt = (u: Utterance, sec: number) => {
     const d = draftOf(u);
     if (sec <= d.start + 0.2 || sec >= d.end - 0.2) {
-      setMessage({ kind: "error", text: "ตัดใกล้หัวหรือท้ายประโยคเกินไป แต่ละท่อนต้องยาวอย่างน้อย 0.2 วินาที" });
+      setMessage({ kind: "error", text: tx("ตัดใกล้หัวหรือท้ายประโยคเกินไป แต่ละท่อนต้องยาวอย่างน้อย 0.2 วินาที") });
       return;
     }
     restructure(() => api.splitLine(job.id, u.id, { at: Math.round(sec * 100) / 100 }),
-      "ตัดประโยคแล้ว ลากท่อนไปเลเยอร์ตัวละครอื่นได้เลย");
+      tx("ตัดประโยคแล้ว ลากท่อนไปเลเยอร์ตัวละครอื่นได้เลย"));
   };
 
-  const merge = (u: Utterance) => restructure(() => api.mergeLine(job.id, u.id), "รวมกับประโยคถัดไปแล้ว");
+  const merge = (u: Utterance) => restructure(() => api.mergeLine(job.id, u.id), tx("รวมกับประโยคถัดไปแล้ว"));
 
   /** วางสำเนาประโยคให้ตัวละคร speaker ที่เวลา start (ไม่ระบุ = เวลาเดิม พูดซ้อนกัน) คืนประโยคใหม่ หรือ null ถ้าไม่สำเร็จ */
   const duplicate = async (u: Utterance, speaker: string, start?: number): Promise<Utterance | null> => {
@@ -152,11 +153,11 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
       const before = new Set((lines ?? []).map((x) => x.id));
       const res = await api.duplicateLine(job.id, u.id, { speaker, start });
       created = res.find((x) => !before.has(x.id)) ?? null;
-    }, `วางสำเนาให้${label(speaker)}แล้ว แก้บทของประโยคใหม่ได้เลย`);
+    }, tx("วางสำเนาให้{0}แล้ว แก้บทของประโยคใหม่ได้เลย", { 0: label(speaker) }));
     return created;
   };
 
-  const removeLine = (u: Utterance) => restructure(() => api.deleteLine(job.id, u.id), "ลบประโยคแล้ว");
+  const removeLine = (u: Utterance) => restructure(() => api.deleteLine(job.id, u.id), tx("ลบประโยคแล้ว"));
 
   const changeSpeaker = async (u: Utterance, value: string) => {
     if (value !== NEW_SPEAKER) { setDraft(u.id, { speaker: value }); return; }
@@ -173,7 +174,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const removeSpeaker = (speaker: string, into: string) =>
     restructure(async () => setSpeakers((await api.removeSpeaker(job.id, speaker, into || undefined)).speakers),
-      into ? `ลบ${label(speaker)} ย้ายประโยคไปให้${label(into)}แล้ว` : `ลบ${label(speaker)}แล้ว`);
+      into ? tx("ลบ{0} ย้ายประโยคไปให้{1}แล้ว", { 0: label(speaker), 1: label(into) }) : tx("ลบ{0}แล้ว", { 0: label(speaker) }));
 
   /** ตั้งชื่อตัวละคร (ว่าง = กลับไปใช้ "ตัวละคร N") มีผลทันที ไม่ต้องพากย์ใหม่ */
   const renameSpeaker = async (speaker: string, name: string) => {

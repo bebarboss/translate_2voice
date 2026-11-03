@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 /** เล่นเสียงตัวอย่างได้ทีละเสียง กดอีกเสียงจะหยุดเสียงเดิม */
 export function usePreview() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -32,7 +33,7 @@ export function usePreview() {
   return { playing, toggle };
 }
 
-export function PreviewButton({ url, playing, onToggle, label = "ฟังตัวอย่าง", disabled }: {
+export function PreviewButton({ url, playing, onToggle, label = tx("ฟังตัวอย่าง"), disabled }: {
   url: string;
   playing: string | null;
   onToggle: (url: string) => void;
@@ -42,8 +43,8 @@ export function PreviewButton({ url, playing, onToggle, label = "ฟังตั
   const on = playing === url;
   return (
     <button type="button" className="btn small" onClick={() => onToggle(url)} disabled={disabled}
-      aria-pressed={on} aria-label={on ? "หยุดเล่น" : label}>
-      {on ? <PauseIcon /> : <PlayIcon />}{on ? "หยุด" : label}
+      aria-pressed={on} aria-label={on ? tx("หยุดเล่น") : label}>
+      {on ? <PauseIcon /> : <PlayIcon />}{on ? tx("หยุด") : label}
     </button>
   );
 }

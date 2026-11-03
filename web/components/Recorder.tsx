@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fmtTime } from "@/lib/format";
 
+import { tx } from "@/lib/i18n";
 const MAX_SEC = 120;
 
 /** ชนิดไฟล์ที่เบราว์เซอร์อัดได้ (Chrome/Firefox = webm, Safari = mp4) */
@@ -37,7 +38,7 @@ export default function Recorder({ onDone, disabled }: {
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       });
     } catch {
-      setError("เปิดไมค์ไม่ได้ ตรวจว่าอนุญาตให้เว็บนี้ใช้ไมโครโฟนแล้ว");
+      setError(tx("เปิดไมค์ไม่ได้ ตรวจว่าอนุญาตให้เว็บนี้ใช้ไมโครโฟนแล้ว"));
       return;
     }
     const { mime, ext } = pickType();
@@ -88,20 +89,20 @@ export default function Recorder({ onDone, disabled }: {
     <div className="recorder">
       <div className="row" style={{ gap: 10 }}>
         {state === "recording" ? (
-          <button type="button" className="btn primary" onClick={stop}>■ หยุดอัด</button>
+          <button type="button" className="btn primary" onClick={stop}>{tx("■ หยุดอัด")}</button>
         ) : (
           <button type="button" className="btn primary" disabled={disabled} onClick={state === "done" ? reset : start}>
-            {state === "done" ? "อัดใหม่" : "● เริ่มอัด"}
+            {state === "done" ? tx("อัดใหม่") : tx("● เริ่มอัด")}
           </button>
         )}
         <span className="mono" aria-live="off">{fmtTime(secs)} / {fmtTime(MAX_SEC)}</span>
       </div>
       {state === "recording" && (
-        <div className="level" aria-label="ระดับเสียง">
+        <div className="level" aria-label={tx("ระดับเสียง")}>
           <div className={`level-bar${loud ? " clip" : ""}`} style={{ width: `${Math.min(100, level * 100)}%` }} />
         </div>
       )}
-      {state === "recording" && loud && <span className="dim" style={{ color: "var(--danger)" }}>เสียงดังจนแตก ถอยห่างไมค์อีกนิด</span>}
+      {state === "recording" && loud && <span className="dim" style={{ color: "var(--danger)" }}>{tx("เสียงดังจนแตก ถอยห่างไมค์อีกนิด")}</span>}
       {state === "done" && url && <audio controls src={url} style={{ width: "100%" }} />}
       {error && <div className="alert error" role="alert">{error}</div>}
     </div>

@@ -12,6 +12,7 @@ import StatusBadge from "./StatusBadge";
 import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import { ArrowLeft, MicIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 export default function ReviewView({ job, onChanged, onCancelEdit }: {
   job: Job;
   onChanged: () => void;
@@ -89,8 +90,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       const n = dirty.length;
       const nv = voiceDirty.length;
       await save();
-      const parts = [n && `บท ${n} ประโยค`, nv && `เสียงพากย์ ${nv} ตัวละคร`].filter(Boolean);
-      setMessage({ kind: "info", text: parts.length ? `บันทึกแล้ว: ${parts.join(" และ ")}` : "ไม่มีอะไรเปลี่ยน" });
+      const parts = [n && tx("บท {0} ประโยค", { 0: n }), nv && tx("เสียงพากย์ {0} ตัวละคร", { 0: nv })].filter(Boolean);
+      setMessage({ kind: "info", text: parts.length ? tx("บันทึกแล้ว: {0}", { 0: parts.join(" และ ") }) : tx("ไม่มีอะไรเปลี่ยน") });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally { setBusy(""); }
@@ -98,7 +99,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
   const onDub = async () => {
     const empty = sorted.filter((u) => !tr.draftOf(u).target.trim()).length;
-    if (empty && !window.confirm(`มี ${empty} ประโยคที่บทว่าง ประโยคเหล่านั้นจะไม่ถูกพากย์ พากย์ต่อเลยไหม?`)) return;
+    if (empty && !window.confirm(tx("มี {0} ประโยคที่บทว่าง ประโยคเหล่านั้นจะไม่ถูกพากย์ พากย์ต่อเลยไหม?", { 0: empty }))) return;
     setBusy("dub");
     setMessage(null);
     try {
@@ -123,37 +124,37 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div className="row" style={{ gap: 14 }}>
           {onCancelEdit ? (
-            <button type="button" className="btn small" onClick={onCancelEdit} aria-label="กลับหน้าผลลัพธ์"><ArrowLeft /></button>
+            <button type="button" className="btn small" onClick={onCancelEdit} aria-label={tx("กลับหน้าผลลัพธ์")}><ArrowLeft /></button>
           ) : (
-            <Link href="/jobs" className="btn small" aria-label="กลับหน้างานทั้งหมด"><ArrowLeft /></Link>
+            <Link href="/jobs" className="btn small" aria-label={tx("กลับหน้างานทั้งหมด")}><ArrowLeft /></Link>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>{job.filename}</span>
             <span className="dim">
-              {langName(job.detected_lang ?? job.source_lang)} → {TARGET_LABEL[job.target_lang]} · {speakers.length} ตัวละคร · {sorted.length} ประโยค · {fmtDuration(job.duration)}
+              {langName(job.detected_lang ?? job.source_lang)} → {tx(TARGET_LABEL[job.target_lang])} · {speakers.length}  {tx("ตัวละคร ·")} {sorted.length}  {tx("ประโยค ·")} {fmtDuration(job.duration)}
             </span>
           </div>
-          {onCancelEdit ? <span className="badge awaiting_review">แก้บทเพื่อพากย์ใหม่</span> : <StatusBadge job={job} />}
+          {onCancelEdit ? <span className="badge awaiting_review">{tx("แก้บทเพื่อพากย์ใหม่")}</span> : <StatusBadge job={job} />}
         </div>
         <div className="row">
           <button type="button" className="btn" onClick={onSave} disabled={!!busy || !pending}>
-            {busy === "save" ? "กำลังบันทึก..." : `บันทึก${pending ? ` (${pending})` : ""}`}
+            {busy === "save" ? tx("กำลังบันทึก...") : tx("บันทึก{0}", { 0: pending ? ` (${pending})` : "" })}
           </button>
           <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length}>
-            <MicIcon size={17} />{busy === "dub" ? "กำลังส่ง..." : onCancelEdit ? "พากย์ใหม่" : "เริ่มพากย์"}
+            <MicIcon size={17} />{busy === "dub" ? tx("กำลังส่ง...") : onCancelEdit ? tx("พากย์ใหม่") : tx("เริ่มพากย์")}
           </button>
         </div>
       </div>
 
       {onCancelEdit && (
-        <div className="alert info">แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม</div>
+        <div className="alert info">{tx("แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม")}</div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
       <RetranslatePanel job={job} names={tr.names} onStarted={onChanged} />
 
       <div className="split">
-        <section className="main" aria-label="วิดีโอ">
+        <section className="main" aria-label={tx("วิดีโอ")}>
           <div className="video-box">
             <video ref={videoRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
               onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
@@ -165,7 +166,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
             )}
           </div>
           <div className="row dim" style={{ justifyContent: "space-between" }}>
-            <span>วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์{TARGET_LABEL[job.target_lang]}ที่กำลังแก้</span>
+            <span>{tx("วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("ที่กำลังแก้")}</span>
             <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
           </div>
 
@@ -177,18 +178,19 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <VoiceCastPicker vc={vc} job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft} onChange={pickVoice} />
         </section>
 
-        <aside className="side card" aria-label="บทพากย์" style={{ padding: 0, gap: 0, overflow: "hidden" }}>
+        <aside className="side card" aria-label={tx("บทพากย์")} style={{ padding: 0, gap: 0, overflow: "hidden" }}>
           <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-            <h2 style={{ fontSize: 16 }}>บทพากย์ {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>ยาวเกินเวลา {longCount}</span>}</h2>
+            <h2 style={{ fontSize: 16 }}>{tx("บทพากย์")} {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>{tx("ยาวเกินเวลา")} {longCount}</span>}</h2>
             <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
               <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
                 style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
-              เลื่อนตามคลิป
+              
+              {tx("เลื่อนตามคลิป")}
             </label>
           </div>
           <div className="lines" ref={listRef}>
-            {lines === null ? <div className="empty">กำลังโหลดบท...</div>
-              : sorted.length === 0 ? <div className="empty">ไม่พบบทพูดในคลิปนี้</div>
+            {lines === null ? <div className="empty">{tx("กำลังโหลดบท...")}</div>
+              : sorted.length === 0 ? <div className="empty">{tx("ไม่พบบทพูดในคลิปนี้")}</div>
               : sorted.map((u, idx) => (
                 <LineCard key={u.id} u={u} tr={tr} isLast={idx === sorted.length - 1} retake={!!onCancelEdit}
                   active={active?.id === u.id} speaking={speaking?.id === u.id} tooLong={tooLong(u)}

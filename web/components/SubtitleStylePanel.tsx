@@ -2,6 +2,7 @@
 
 import type { Fonts, SubtitleStyle, TargetLang } from "@/lib/api";
 
+import { tx } from "@/lib/i18n";
 export const SAMPLE_TEXT: Record<TargetLang, string> = {
   th: "ข้าสัญญาไว้แล้ว ยังไงก็ต้องมา",
   en: "I promised you, so I came.",
@@ -12,10 +13,10 @@ export function fontOptions(fonts: Fonts | null, lang: TargetLang, current: stri
   const thai = fonts?.thai ?? [];
   const english = fonts?.english ?? [];
   const groups = lang === "th"
-    ? [{ group: "ฟอนต์ไทย", names: thai }]
-    : [{ group: "ฟอนต์อังกฤษ", names: english }, { group: "ฟอนต์ไทย", names: thai }];
+    ? [{ group: tx("ฟอนต์ไทย"), names: thai }]
+    : [{ group: tx("ฟอนต์อังกฤษ"), names: english }, { group: tx("ฟอนต์ไทย"), names: thai }];
   if (current && !groups.some((g) => g.names.includes(current))) {
-    groups.unshift({ group: "ที่ตั้งไว้ (ไม่พบในเครื่องเซิร์ฟเวอร์)", names: [current] });
+    groups.unshift({ group: tx("ที่ตั้งไว้ (ไม่พบในเครื่องเซิร์ฟเวอร์)"), names: [current] });
   }
   return groups;
 }
@@ -45,7 +46,7 @@ export default function SubtitleStylePanel({ style, lang, fonts, onChange, idPre
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <SubtitlePreview style={style} lang={lang} />
       <div className="field">
-        <label htmlFor={`${idPrefix}-font`}>ฟอนต์</label>
+        <label htmlFor={`${idPrefix}-font`}>{tx("ฟอนต์")}</label>
         <select id={`${idPrefix}-font`} className="select" value={style.font} onChange={(e) => onChange({ font: e.target.value })}>
           {groups.map((g) => (
             <optgroup key={g.group} label={g.group}>
@@ -57,27 +58,27 @@ export default function SubtitleStylePanel({ style, lang, fonts, onChange, idPre
       <div className="row" style={{ gap: 18 }}>
         <label className="row" style={{ gap: 8 }}>
           <input type="color" value={style.color} onChange={(e) => onChange({ color: e.target.value.toUpperCase() })} />
-          <span className="label">สีตัวอักษร</span>
+          <span className="label">{tx("สีตัวอักษร")}</span>
         </label>
         <label className="row" style={{ gap: 8 }}>
           <input type="color" value={style.outline_color} onChange={(e) => onChange({ outline_color: e.target.value.toUpperCase() })} />
-          <span className="label">สีขอบ</span>
+          <span className="label">{tx("สีขอบ")}</span>
         </label>
       </div>
       <div className="field">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <label htmlFor={`${idPrefix}-size`}>ขนาด</label>
+          <label htmlFor={`${idPrefix}-size`}>{tx("ขนาด")}</label>
           <span className="mono">{style.size}</span>
         </div>
         <input id={`${idPrefix}-size`} type="range" min={16} max={120} step={2} value={style.size}
           onChange={(e) => onChange({ size: Number(e.target.value) })} />
-        <span className="dim">อ้างอิงวิดีโอสูง 1080 px</span>
+        <span className="dim">{tx("อ้างอิงวิดีโอสูง 1080 px")}</span>
       </div>
       <div className="field">
-        <span className="label">ตำแหน่ง</span>
-        <div className="seg" role="group" aria-label="ตำแหน่งซับ" style={{ alignSelf: "flex-start" }}>
-          <button type="button" aria-pressed={style.position === "bottom"} onClick={() => onChange({ position: "bottom" })}>ด้านล่าง</button>
-          <button type="button" aria-pressed={style.position === "top"} onClick={() => onChange({ position: "top" })}>ด้านบน</button>
+        <span className="label">{tx("ตำแหน่ง")}</span>
+        <div className="seg" role="group" aria-label={tx("ตำแหน่งซับ")} style={{ alignSelf: "flex-start" }}>
+          <button type="button" aria-pressed={style.position === "bottom"} onClick={() => onChange({ position: "bottom" })}>{tx("ด้านล่าง")}</button>
+          <button type="button" aria-pressed={style.position === "top"} onClick={() => onChange({ position: "top" })}>{tx("ด้านบน")}</button>
         </div>
       </div>
     </div>

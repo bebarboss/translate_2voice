@@ -6,6 +6,8 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { MicIcon, XIcon } from "@/components/Icons";
 
+import Prefs from "@/components/Prefs";
+import { tx } from "@/lib/i18n";
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
 type CredentialResponse = { credential: string };
 type GoogleId = {
@@ -42,7 +44,7 @@ const WAVE = Array.from({ length: 44 }, (_, i) => 0.18 + 0.82 * Math.abs(Math.si
 
 /** ฝั่งซ้าย: การ์ดซ้อนที่เปลี่ยนตามข้อที่ไฮไลต์ และรายการสิ่งที่ได้ */
 function Showcase({ bonus }: { bonus: number }) {
-  const offers = bonus ? [...OFFERS, { title: `ผูกบัตรรับฟรี ${bonus} เครดิต`, text: "ผูกบัตรครั้งแรก รับเครดิตไว้ลองพากย์ได้ทันที" }] : OFFERS;
+  const offers = bonus ? [...OFFERS, { title: tx("ผูกบัตรรับฟรี {0} เครดิต", { 0: bonus }), text: tx("ผูกบัตรครั้งแรก รับเครดิตไว้ลองพากย์ได้ทันที") }] : OFFERS;
   const [i, setI] = useState(0);
   const [paused, setPaused] = useState(false);
   useEffect(() => {
@@ -52,14 +54,14 @@ function Showcase({ bonus }: { bonus: number }) {
   }, [paused, offers.length]);
   const cur = offers[i % offers.length];
   return (
-    <section className="auth-show" aria-label="สิ่งที่ได้จาก Dubbing Studio">
+    <section className="auth-show" aria-label={tx("สิ่งที่ได้จาก Dubbing Studio")}>
       <div className="auth-stack" aria-hidden="true">
         <div className="auth-sheet back" />
         <div className="auth-sheet mid" />
         <div className="auth-sheet front">
           <div key={i} className="auth-sheet-body">
-            <b>{cur.title}</b>
-            <span>{cur.text}</span>
+            <b>{tx(cur.title)}</b>
+            <span>{tx(cur.text)}</span>
             <div className="auth-wave">
               {WAVE.map((h, n) => <i key={n} style={{ height: `${Math.round(h * 100)}%`, animationDelay: `${n * 40}ms` }} />)}
             </div>
@@ -68,12 +70,12 @@ function Showcase({ bonus }: { bonus: number }) {
         <span className="auth-badge"><MicIcon size={20} color="#1A0E06" /></span>
       </div>
       <div className="auth-offers" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
-        <h2>สมัครแล้วใช้ได้เลย</h2>
+        <h2>{tx("สมัครแล้วใช้ได้เลย")}</h2>
         <ul>
           {offers.map((o, n) => (
             <li key={o.title}>
               <button type="button" aria-current={n === i % offers.length} onClick={() => setI(n)}
-                onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>{o.title}</button>
+                onFocus={() => setPaused(true)} onBlur={() => setPaused(false)}>{tx(o.title)}</button>
             </li>
           ))}
         </ul>
@@ -129,29 +131,29 @@ export default function LoginPage() {
         theme: "outline", size: "large", shape: "pill", locale: "th",
         text: signup ? "signup_with" : "signin_with", width: 320,
       });
-    }).catch(() => setError("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า"));
+    }).catch(() => setError(tx("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า")));
   }, [clientId, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
 
   let body: React.ReactNode;
-  if (!loaded) body = <div className="empty">กำลังโหลด...</div>;
+  if (!loaded) body = <div className="empty">{tx("กำลังโหลด...")}</div>;
   else if (!config?.auth) {
     body = (
       <>
-        <h1 id="auth-title" className="auth-title">ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน</h1>
-        <p className="auth-note">ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ</p>
-        <Link href="/" className="btn primary">ไปหน้าอัปโหลด</Link>
+        <h1 id="auth-title" className="auth-title">{tx("ระบบบัญชีผู้ใช้ยังไม่เปิดใช้งาน")}</h1>
+        <p className="auth-note">{tx("ตอนนี้ใช้งานทุกหน้าได้เลยโดยไม่ต้องเข้าสู่ระบบ")}</p>
+        <Link href="/" className="btn primary">{tx("ไปหน้าอัปโหลด")}</Link>
       </>
     );
   } else {
     body = (
       <>
-        <h1 id="auth-title" className="auth-title">{signup ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}</h1>
+        <h1 id="auth-title" className="auth-title">{signup ? tx("สมัครสมาชิก") : tx("เข้าสู่ระบบ")}</h1>
         {clientId
           ? <div ref={button} className="auth-google" aria-busy={busy} style={{ opacity: busy ? 0.5 : 1 }} />
-          : <div className="alert error" role="alert">ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ</div>}
-        {busy && <span className="dim" role="status">กำลังเข้าสู่ระบบ...</span>}
+          : <div className="alert error" role="alert">{tx("ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ")}</div>}
+        {busy && <span className="dim" role="status">{tx("กำลังเข้าสู่ระบบ...")}</span>}
         {error && <div className="alert error" role="alert">{error}</div>}
-        <p className="auth-note">ใช้บัญชี Google (Gmail) เท่านั้น ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน</p>
+        <p className="auth-note">{tx("ใช้บัญชี Google (Gmail) เท่านั้น ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน")}</p>
       </>
     );
   }
@@ -160,11 +162,12 @@ export default function LoginPage() {
     <main className="auth-page">
       <Showcase bonus={config?.billing ? bonus : 0} />
       <section className="auth-panel" aria-labelledby="auth-title">
-        <Link href="/welcome" className="icon-only auth-close" aria-label="กลับหน้าแรก"><XIcon size={18} /></Link>
+        <Link href="/welcome" className="icon-only auth-close" aria-label={tx("กลับหน้าแรก")}><XIcon size={18} /></Link>
+        <div className="auth-prefs"><Prefs compact /></div>
         <div className="auth-box">
           <Link href="/welcome" className="brand auth-brand">
             <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
-            <span className="auth-brand-text">Dubbing Studio<small>พากย์ไทยด้วย AI</small></span>
+            <span className="auth-brand-text">Dubbing Studio<small>{tx("พากย์ไทยด้วย AI")}</small></span>
           </Link>
           {body}
         </div>

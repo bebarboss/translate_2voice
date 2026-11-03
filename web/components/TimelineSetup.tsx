@@ -6,6 +6,7 @@ import { api, uploadTimelineMedia, type Job, type LibraryVoice, type TimelineInf
 import { GENDER_LABEL, speakerColor } from "@/lib/format";
 import { ArrowLeft, ArrowRight } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 const FORMAT_LABEL: Record<string, string> = {
   fcp_xml: "Final Cut Pro XML (Premiere / Resolve)", fcpx_xml: "FCPXML", edl: "EDL (CMX 3600)", otio: "OpenTimelineIO",
 };
@@ -33,7 +34,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
   }, [job.id]);
 
   if (!info) {
-    return <main className="page">{message ? <div className="alert error" role="alert">{message.text}</div> : <div className="empty">กำลังโหลด...</div>}</main>;
+    return <main className="page">{message ? <div className="alert error" role="alert">{message.text}</div> : <div className="empty">{tx("กำลังโหลด...")}</div>}</main>;
   }
   const tracks = info.tracks.filter((t) => t.clips.length > 0);
   const set = (i: number, patch: Partial<Draft>) => setDrafts({ ...drafts, [i]: { ...drafts[i], ...patch } });
@@ -66,7 +67,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
     try {
       const s = await uploadTimelineMedia(job.id, files, setProgress).promise;
       setInfo(s.timeline);
-      setMessage({ kind: "info", text: s.timeline.missing.length ? `ยังขาดอีก ${s.timeline.missing.length} ไฟล์` : "ไฟล์สื่อครบแล้ว" });
+      setMessage({ kind: "info", text: s.timeline.missing.length ? tx("ยังขาดอีก {0} ไฟล์", { 0: s.timeline.missing.length }) : tx("ไฟล์สื่อครบแล้ว") });
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally {
@@ -84,18 +85,17 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
     <main className="page" style={{ maxWidth: 1080 }}>
       <div className="page-head">
         <div>
-          <Link href="/jobs" className="dim" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ArrowLeft />งานทั้งหมด</Link>
+          <Link href="/jobs" className="dim" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ArrowLeft />{tx("งานทั้งหมด")}</Link>
           <h1 style={{ margin: "6px 0 0" }}>{info.name || job.filename}</h1>
           <span className="muted">
-            {FORMAT_LABEL[info.format] ?? info.format} · {info.fps} fps{info.drop_frame ? " drop-frame" : ""} · {info.sample_rate / 1000} kHz
-            · เริ่ม {info.start_tc} · ยาว {info.duration_tc}
+            {FORMAT_LABEL[info.format] ?? info.format} · {info.fps} fps{info.drop_frame ? " drop-frame" : ""} · {info.sample_rate / 1000}  {tx("kHz · เริ่ม")} {info.start_tc}  {tx("· ยาว")} {info.duration_tc}
           </span>
         </div>
         <div className="row" style={{ gap: 10 }}>
-          {changed.length > 0 && <button type="button" className="btn" disabled={!!busy} onClick={() => run("save", async () => { await save(); })}>บันทึก</button>}
+          {changed.length > 0 && <button type="button" className="btn" disabled={!!busy} onClick={() => run("save", async () => { await save(); })}>{tx("บันทึก")}</button>}
           <button type="button" className="btn primary" disabled={!!busy || info.missing.length > 0 || enabled.length === 0} onClick={start}
-            title={info.missing.length ? "อัปโหลดไฟล์สื่อให้ครบก่อน" : enabled.length === 0 ? "เปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด" : undefined}>
-            {busy === "start" ? "กำลังเริ่ม..." : "เริ่มถอดเสียงและแปล"}<ArrowRight />
+            title={info.missing.length ? tx("อัปโหลดไฟล์สื่อให้ครบก่อน") : enabled.length === 0 ? tx("เปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด") : undefined}>
+            {busy === "start" ? tx("กำลังเริ่ม...") : tx("เริ่มถอดเสียงและแปล")}<ArrowRight />
           </button>
         </div>
       </div>
@@ -105,11 +105,11 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
 
       {info.missing.length > 0 && (
         <section className="card" aria-labelledby="missing-title">
-          <h2 id="missing-title" style={{ margin: 0 }}>ขาดไฟล์สื่อ {info.missing.length} ไฟล์</h2>
-          <span className="muted">อัปโหลดไฟล์ชื่อตรงกับที่ไทม์ไลน์อ้างถึง (หรือ zip ที่รวมไว้) ระบบจับคู่จากชื่อไฟล์</span>
+          <h2 id="missing-title" style={{ margin: 0 }}>{tx("ขาดไฟล์สื่อ")} {info.missing.length}  {tx("ไฟล์")}</h2>
+          <span className="muted">{tx("อัปโหลดไฟล์ชื่อตรงกับที่ไทม์ไลน์อ้างถึง (หรือ zip ที่รวมไว้) ระบบจับคู่จากชื่อไฟล์")}</span>
           <ul className="mono" style={{ margin: 0, paddingLeft: 20, fontSize: 13 }}>{info.missing.map((m) => <li key={m}>{m}</li>)}</ul>
           <div className="row" style={{ gap: 12 }}>
-            <input ref={mediaRef} type="file" multiple aria-label="อัปโหลดไฟล์สื่อที่ขาด" disabled={!!busy}
+            <input ref={mediaRef} type="file" multiple aria-label={tx("อัปโหลดไฟล์สื่อที่ขาด")} disabled={!!busy}
               onChange={(e) => uploadMissing(Array.from(e.target.files ?? []))} />
             {progress !== null && (
               <div style={{ flex: "1 1 200px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -122,14 +122,14 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
       )}
 
       <section className="card" aria-labelledby="tracks-title">
-        <h2 id="tracks-title" style={{ margin: 0 }}>แทร็กเสียง</h2>
+        <h2 id="tracks-title" style={{ margin: 0 }}>{tx("แทร็กเสียง")}</h2>
         <span className="muted" style={{ fontSize: 14 }}>
-          เปิดเฉพาะแทร็กที่เป็นบทพูด (เพลงและเสียงประกอบปิดไว้ จะอยู่ในเสียงรวมตามเดิม) · ตั้งชื่อเดียวกันให้แทร็กที่เป็นคนเดียวกัน
-          · ไม่เลือกเสียง = โคลนเสียงต้นฉบับของแทร็กนั้น
+          
+          {tx("เปิดเฉพาะแทร็กที่เป็นบทพูด (เพลงและเสียงประกอบปิดไว้ จะอยู่ในเสียงรวมตามเดิม) · ตั้งชื่อเดียวกันให้แทร็กที่เป็นคนเดียวกัน · ไม่เลือกเสียง = โคลนเสียงต้นฉบับของแทร็กนั้น")}
         </span>
         <div className="table-wrap">
           <table className="ledger">
-            <thead><tr><th>แทร็ก</th><th>บทพูด</th><th>ผู้พูด</th><th>เสียงพากย์</th><th>คลิป</th></tr></thead>
+            <thead><tr><th>{tx("แทร็ก")}</th><th>{tx("บทพูด")}</th><th>{tx("ผู้พูด")}</th><th>{tx("เสียงพากย์")}</th><th>{tx("คลิป")}</th></tr></thead>
             <tbody>
               {tracks.map((t) => {
                 const d = drafts[t.index];
@@ -140,23 +140,23 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
                     <td>
                       <span className="mono" style={{ borderLeft: `4px solid ${color}`, paddingLeft: 8 }}>A{t.index}</span>
                       <div className="dim">{t.name}</div>
-                      {t.duplicate_of && <div className="dim">ซ้ำกับ A{t.duplicate_of} (สเตอริโอ)</div>}
+                      {t.duplicate_of && <div className="dim">{tx("ซ้ำกับ A")}{t.duplicate_of}  {tx("(สเตอริโอ)")}</div>}
                     </td>
-                    <td><input type="checkbox" aria-label={`A${t.index} เป็นบทพูด`} checked={d.enabled}
+                    <td><input type="checkbox" aria-label={tx("A{0} เป็นบทพูด", { 0: t.index })} checked={d.enabled}
                       onChange={(e) => set(t.index, { enabled: e.target.checked })} /></td>
-                    <td><input className="input" aria-label={`ชื่อผู้พูดของ A${t.index}`} value={d.speaker_name} disabled={!d.enabled}
+                    <td><input className="input" aria-label={tx("ชื่อผู้พูดของ A{0}", { 0: t.index })} value={d.speaker_name} disabled={!d.enabled}
                       maxLength={60} list="tl-speakers" onChange={(e) => set(t.index, { speaker_name: e.target.value })} /></td>
                     <td>
-                      <select className="select" aria-label={`เสียงพากย์ของ A${t.index}`} value={d.voice_id} disabled={!d.enabled}
+                      <select className="select" aria-label={tx("เสียงพากย์ของ A{0}", { 0: t.index })} value={d.voice_id} disabled={!d.enabled}
                         onChange={(e) => set(t.index, { voice_id: e.target.value })}>
-                        <option value="">โคลนเสียงต้นฉบับ</option>
-                        {voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.gender ? ` (${GENDER_LABEL[v.gender]})` : ""}{v.actor ? ` · ${v.actor}` : ""}</option>)}
+                        <option value="">{tx("โคลนเสียงต้นฉบับ")}</option>
+                        {voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.gender ? ` (${tx(GENDER_LABEL[v.gender])})` : ""}{v.actor ? ` · ${v.actor}` : ""}</option>)}
                       </select>
                     </td>
                     <td>
-                      {t.clips.length} คลิป
+                      {t.clips.length}  {tx("คลิป")}
                       <div className="dim">{t.clips[0].start_tc} – {t.clips[t.clips.length - 1].end_tc}</div>
-                      {missing > 0 && <div style={{ color: "var(--danger)" }}>ไฟล์หาย {missing} คลิป</div>}
+                      {missing > 0 && <div style={{ color: "var(--danger)" }}>{tx("ไฟล์หาย")} {missing}  {tx("คลิป")}</div>}
                     </td>
                   </tr>
                 );
@@ -165,7 +165,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
           </table>
         </div>
         <datalist id="tl-speakers">{names.map((n) => <option key={n} value={n} />)}</datalist>
-        <span className="dim">ผู้พูด {names.length} คน จาก {enabled.length} แทร็ก</span>
+        <span className="dim">{tx("ผู้พูด")} {names.length}  {tx("คน จาก")} {enabled.length}  {tx("แทร็ก")}</span>
       </section>
     </main>
   );

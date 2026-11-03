@@ -1,3 +1,4 @@
+import { tx } from "@/lib/i18n";
 // ชนิดข้อมูลและฟังก์ชันเรียก Dubbing API (ผ่าน proxy /api ของ Next.js)
 
 export type JobStatus = "queued" | "running" | "awaiting_review" | "done" | "failed" | "cancelled";
@@ -301,8 +302,8 @@ export class ApiError extends Error {
 function errorMessage(status: number, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string") return detail;
-  if (Array.isArray(detail) && detail[0]?.msg) return `ข้อมูลไม่ถูกต้อง: ${detail[0].msg}`;
-  return `คำขอล้มเหลว (รหัส ${status})`;
+  if (Array.isArray(detail) && detail[0]?.msg) return tx("ข้อมูลไม่ถูกต้อง: {0}", { 0: detail[0].msg });
+  return tx("คำขอล้มเหลว (รหัส {0})", { 0: status });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -310,7 +311,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     res = await fetch(BASE + path, { cache: "no-store", ...init });
   } catch {
-    throw new ApiError("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", 0);
+    throw new ApiError(tx("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้"), 0);
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -510,7 +511,7 @@ export async function checkFile(url: string): Promise<{ ok: boolean; status: num
     const body = await res.json().catch(() => null);
     return { ok: false, status: res.status, message: errorMessage(res.status, body) };
   } catch {
-    return { ok: false, status: 0, message: "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้" };
+    return { ok: false, status: 0, message: tx("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้") };
   }
 }
 
@@ -621,7 +622,7 @@ async function shrinkImage(file: File, max: number): Promise<Blob> {
   try {
     bitmap = await createImageBitmap(file);
   } catch {
-    throw new ApiError("เปิดรูปนี้ไม่ได้ ใช้ไฟล์ JPG, PNG หรือ WEBP", 400);
+    throw new ApiError(tx("เปิดรูปนี้ไม่ได้ ใช้ไฟล์ JPG, PNG หรือ WEBP"), 400);
   }
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
@@ -630,7 +631,7 @@ async function shrinkImage(file: File, max: number): Promise<Blob> {
   canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   return new Promise((resolve, reject) => canvas.toBlob(
-    (b) => (b ? resolve(b) : reject(new ApiError("ย่อรูปไม่สำเร็จ", 400))), "image/jpeg", 0.86));
+    (b) => (b ? resolve(b) : reject(new ApiError(tx("ย่อรูปไม่สำเร็จ"), 400))), "image/jpeg", 0.86));
 }
 
 /** อัปโหลดด้วย XHR เพราะ fetch ยังรายงานความคืบหน้าการอัปโหลดไม่ได้ */
@@ -650,10 +651,10 @@ function upload<T>(
       if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
       else reject(new ApiError(errorMessage(xhr.status, body), xhr.status));
     };
-    xhr.onerror = () => reject(new ApiError("อัปโหลดไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ต", 0));
-    xhr.onabort = () => reject(new ApiError("ยกเลิกการอัปโหลดแล้ว", 0));
+    xhr.onerror = () => reject(new ApiError(tx("อัปโหลดไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ต"), 0));
+    xhr.onabort = () => reject(new ApiError(tx("ยกเลิกการอัปโหลดแล้ว"), 0));
     uploadTarget(path).then(({ url, token }) => {
-      if (aborted) return reject(new ApiError("ยกเลิกการอัปโหลดแล้ว", 0));
+      if (aborted) return reject(new ApiError(tx("ยกเลิกการอัปโหลดแล้ว"), 0));
       xhr.open("POST", url);
       if (token) xhr.setRequestHeader("X-Upload-Token", token);
       if (url !== `${BASE}/${path}`) xhr.setRequestHeader("ngrok-skip-browser-warning", "1");

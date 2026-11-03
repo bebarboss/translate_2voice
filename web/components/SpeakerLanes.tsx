@@ -6,13 +6,14 @@ import { fmtTime, speakerColor } from "@/lib/format";
 import type { Transcript } from "@/lib/useTranscript";
 import { CopyIcon, PasteIcon, ScissorsIcon, XIcon } from "./Icons";
 
+import { tx } from "@/lib/i18n";
 /** เลเยอร์เสียงของแต่ละตัวละครบนเส้นเวลา คลิกบล็อกเพื่อเลือกประโยค ลากบล็อกเพื่อเลื่อนเวลาหรือย้ายไปตัวละครอื่น
  *  เครื่องมือตัดแบ่งประโยคตรงที่คลิก ประโยคของต่างตัวละครวางซ้อนเวลากันได้ (เสียงพากย์จะเล่นทับกัน)
  *  ซูมเข้าออกและเลื่อนช่วงเวลาที่แสดงได้ (ปุ่ม แถบเลื่อน Ctrl+ล้อเมาส์ Shift+ล้อเมาส์ หรือลากที่ว่างบนแถบ)
  *  ลบตัวละครที่ระบบแยกเกินได้ */
 const ZOOMS = [1, 2, 4, 8, 16, 32];
 const TICKS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200];
-export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, onSeek, voiceSlot, voiceHead, stemLabel = "ฟังเสียงแยก" }: {
+export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onRetimed, onSeek, voiceSlot, voiceHead, stemLabel = tx("ฟังเสียงแยก") }: {
   job: Job;
   tr: Transcript;
   total: number;
@@ -203,7 +204,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   const copy = () => {
     if (highlight == null) return;
     setClip(highlight);
-    tr.setMessage({ kind: "info", text: "คัดลอกประโยคแล้ว ชี้เมาส์ที่เลเยอร์ตัวละครปลายทางแล้วกด Ctrl+V หรือปุ่มวาง" });
+    tr.setMessage({ kind: "info", text: tx("คัดลอกประโยคแล้ว ชี้เมาส์ที่เลเยอร์ตัวละครปลายทางแล้วกด Ctrl+V หรือปุ่มวาง") });
   };
   const paste = async () => {
     const src = sorted.find((u) => u.id === clip);
@@ -281,34 +282,36 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   return (
     <div ref={cardRef} className="card tight">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h2 style={{ fontSize: 15 }}>เลเยอร์เสียงตัวละคร</h2>
+        <h2 style={{ fontSize: 15 }}>{tx("เลเยอร์เสียงตัวละคร")}</h2>
         <div className="row" style={{ gap: 8 }}>
-          <div className="zoom" role="group" aria-label="ซูมเส้นเวลา">
-            <button type="button" className="icon-btn" onClick={() => step(-1)} disabled={zoom <= 1} aria-label="ซูมออก" title="ซูมออก">−</button>
-            <button type="button" className="zoom-level" onClick={() => zoomTo(1)} title="แสดงทั้งคลิป">
-              {zoom <= 1 ? "ทั้งคลิป" : `${Math.round(zoom * 10) / 10}×`}
+          <div className="zoom" role="group" aria-label={tx("ซูมเส้นเวลา")}>
+            <button type="button" className="icon-btn" onClick={() => step(-1)} disabled={zoom <= 1} aria-label={tx("ซูมออก")} title={tx("ซูมออก")}>−</button>
+            <button type="button" className="zoom-level" onClick={() => zoomTo(1)} title={tx("แสดงทั้งคลิป")}>
+              {zoom <= 1 ? tx("ทั้งคลิป") : `${Math.round(zoom * 10) / 10}×`}
             </button>
-            <button type="button" className="icon-btn" onClick={() => step(1)} disabled={zoom >= ZOOMS[ZOOMS.length - 1]} aria-label="ซูมเข้า" title="ซูมเข้า (Ctrl + ล้อเมาส์)">+</button>
+            <button type="button" className="icon-btn" onClick={() => step(1)} disabled={zoom >= ZOOMS[ZOOMS.length - 1]} aria-label={tx("ซูมเข้า")} title={tx("ซูมเข้า (Ctrl + ล้อเมาส์)")}>+</button>
           </div>
-          <div className="seg small" role="group" aria-label="เครื่องมือบนเส้นเวลา">
-            <button type="button" aria-pressed={tool === "move"} onClick={() => setTool("move")} title="คลิกเพื่อเลือก ลากเพื่อเลื่อนเวลาหรือย้ายตัวละคร">
-              เลือก/ลาก
+          <div className="seg small" role="group" aria-label={tx("เครื่องมือบนเส้นเวลา")}>
+            <button type="button" aria-pressed={tool === "move"} onClick={() => setTool("move")} title={tx("คลิกเพื่อเลือก ลากเพื่อเลื่อนเวลาหรือย้ายตัวละคร")}>
+              
+              {tx("เลือก/ลาก")}
             </button>
-            <button type="button" aria-pressed={tool === "cut"} onClick={() => setTool("cut")} title="คลิกบนบล็อกตรงที่จะตัดแบ่งประโยค">
-              <ScissorsIcon /> ตัด
+            <button type="button" aria-pressed={tool === "cut"} onClick={() => setTool("cut")} title={tx("คลิกบนบล็อกตรงที่จะตัดแบ่งประโยค")}>
+              <ScissorsIcon />  {tx("ตัด")}
             </button>
           </div>
           <button type="button" className="btn small" disabled={!!busy || !cutTarget}
-            onClick={() => cutTarget && tr.splitAt(cutTarget, t)} title="ตัดประโยคตรงตำแหน่งที่วิดีโอเล่นอยู่">
-            ตัดที่หัวอ่าน
+            onClick={() => cutTarget && tr.splitAt(cutTarget, t)} title={tx("ตัดประโยคตรงตำแหน่งที่วิดีโอเล่นอยู่")}>
+            
+            {tx("ตัดที่หัวอ่าน")}
           </button>
-          <div className="seg small" role="group" aria-label="คัดลอกและวางประโยค">
-            <button type="button" onClick={copy} disabled={highlight == null} title="คัดลอกประโยคที่เลือก (Ctrl+C)">
-              <CopyIcon /> คัดลอก
+          <div className="seg small" role="group" aria-label={tx("คัดลอกและวางประโยค")}>
+            <button type="button" onClick={copy} disabled={highlight == null} title={tx("คัดลอกประโยคที่เลือก (Ctrl+C)")}>
+              <CopyIcon />  {tx("คัดลอก")}
             </button>
             <button type="button" onClick={paste} disabled={clip == null || !!busy}
-              title="วางสำเนาให้ตัวละครอื่นที่เวลาเดิม (Ctrl+V ขณะชี้เลเยอร์ปลายทาง)">
-              <PasteIcon /> วาง
+              title={tx("วางสำเนาให้ตัวละครอื่นที่เวลาเดิม (Ctrl+V ขณะชี้เลเยอร์ปลายทาง)")}>
+              <PasteIcon />  {tx("วาง")}
             </button>
           </div>
         </div>
@@ -316,8 +319,8 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
       <div ref={lanesRef} className={`lanes${tool === "cut" ? " cutting" : ""}${zoom > 1 ? " zoomed" : ""}`}>
         <div className="lane ruler">
           <div className="who" />
-          <div className={`track${onSeek ? " scrub" : ""}`} onPointerDown={scrub} title={onSeek ? "คลิกหรือลากเพื่อเลื่อนวิดีโอ" : undefined}
-            role={onSeek ? "slider" : undefined} aria-label="ตำแหน่งวิดีโอ" aria-valuemin={0} aria-valuemax={Math.round(total)}
+          <div className={`track${onSeek ? " scrub" : ""}`} onPointerDown={scrub} title={onSeek ? tx("คลิกหรือลากเพื่อเลื่อนวิดีโอ") : undefined}
+            role={onSeek ? "slider" : undefined} aria-label={tx("ตำแหน่งวิดีโอ")} aria-valuemin={0} aria-valuemax={Math.round(total)}
             aria-valuenow={Math.round(t)} tabIndex={onSeek ? 0 : -1}
             onKeyDown={(e) => {
               if (!onSeek) return;
@@ -326,7 +329,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
             }}>
             {tr.overlaps.spans.filter((o) => o.end > view && o.start < view + span).map((o) => (
               <span key={o.start} className="overlap-band" style={{ left: pct(o.start), width: width(o.end - o.start) }}
-                title={`พูดซ้อน ${fmtTime(o.start)}–${fmtTime(o.end)} เสียงพากย์จะเล่นทับกัน`} />
+                title={tx("พูดซ้อน {0}–{1} เสียงพากย์จะเล่นทับกัน", { 0: fmtTime(o.start), 1: fmtTime(o.end) })} />
             ))}
             {ticks.map((x) => <span key={x} className="tick" style={{ left: pct(x) }}>{fmtTick(x)}</span>)}
             <div className="playhead" style={{ left: playheadPct }}><span className="playhead-knob" /></div>
@@ -344,7 +347,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                   <span className="swatch" style={{ background: color }} />
                   {naming?.speaker === s ? (
                     <input className="who-input" autoFocus maxLength={40} value={naming.name} placeholder={speakerLabel(s)}
-                      aria-label={`ชื่อของ${speakerLabel(s)}`}
+                      aria-label={tx("ชื่อของ{0}", { 0: speakerLabel(s) })}
                       onChange={(e) => setNaming({ speaker: s, name: e.target.value })}
                       onBlur={finishNaming}
                       onKeyDown={(e) => {
@@ -352,7 +355,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                         if (e.key === "Escape") setNaming(null);
                       }} />
                   ) : (
-                    <button type="button" className="who-name" title="คลิกเพื่อตั้งชื่อตัวละคร"
+                    <button type="button" className="who-name" title={tx("คลิกเพื่อตั้งชื่อตัวละคร")}
                       onClick={() => setNaming({ speaker: s, name: tr.names[s] ?? "" })}>{speakerLabel(s)}</button>
                   )}
                 </div>
@@ -378,9 +381,9 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                     const d = tr.draftOf(u);
                     return [
                       <div key="s" className="handle" style={{ left: pct(d.start) }} onPointerDown={drag(u, "start")}
-                        title="ลากเพื่อเลื่อนเวลาเริ่ม" aria-hidden="true" />,
+                        title={tx("ลากเพื่อเลื่อนเวลาเริ่ม")} aria-hidden="true" />,
                       <div key="e" className="handle" style={{ left: pct(d.end) }} onPointerDown={drag(u, "end")}
-                        title="ลากเพื่อเลื่อนเวลาจบ" aria-hidden="true" />,
+                        title={tx("ลากเพื่อเลื่อนเวลาจบ")} aria-hidden="true" />,
                     ];
                   })}
                   {tool === "cut" && guide?.speaker === s && <div className="cut-guide" style={{ left: pct(guide.sec) }} />}
@@ -391,7 +394,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                     <a href={fileUrl.stem(job.id, s)} target="_blank" rel="noreferrer" className="dim" style={{ color: "var(--accent)" }}>{stemLabel}</a>
                   )}
                 </div>
-                <button type="button" className="icon-btn" aria-label={`ลบ${speakerLabel(s)}`} title="ลบตัวละครนี้"
+                <button type="button" className="icon-btn" aria-label={tx("ลบ{0}", { 0: speakerLabel(s) })} title={tx("ลบตัวละครนี้")}
                   disabled={!!busy || speakers.length < 2}
                   onClick={() => own.length ? setRemoving({ speaker: s, into: speakers.find((x) => x !== s) ?? "" })
                     : tr.removeSpeaker(s, "")}>
@@ -400,15 +403,15 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
               </div>
               {removing?.speaker === s && (
                 <div className="lane-remove">
-                  <span>ลบ{speakerLabel(s)} ย้าย {own.length} ประโยคไปให้</span>
-                  <label className="sr-only" htmlFor={`into-${s}`}>ตัวละครที่รับประโยคไป</label>
+                  <span>{tx("ลบ")}{speakerLabel(s)}  {tx("ย้าย")} {own.length}  {tx("ประโยคไปให้")}</span>
+                  <label className="sr-only" htmlFor={`into-${s}`}>{tx("ตัวละครที่รับประโยคไป")}</label>
                   <select id={`into-${s}`} className="spk-select" value={removing.into}
                     onChange={(e) => setRemoving({ speaker: s, into: e.target.value })}>
                     {speakers.filter((x) => x !== s).map((x) => <option key={x} value={x}>{speakerLabel(x)}</option>)}
                   </select>
                   <button type="button" className="btn small danger"
-                    onClick={() => { setRemoving(null); tr.removeSpeaker(s, removing.into); }}>ลบ</button>
-                  <button type="button" className="btn small" onClick={() => setRemoving(null)}>ยกเลิก</button>
+                    onClick={() => { setRemoving(null); tr.removeSpeaker(s, removing.into); }}>{tx("ลบ")}</button>
+                  <button type="button" className="btn small" onClick={() => setRemoving(null)}>{tx("ยกเลิก")}</button>
                 </div>
               )}
             </div>
@@ -419,14 +422,12 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
         <div className="lane" style={{ marginTop: -2 }}>
           <div className="who dim">{fmtTick(view)}–{fmtTick(view + span)}</div>
           <input type="range" className="timeline-scroll" min={0} max={Math.max(0, total - span)} step={0.05} value={view}
-            onChange={(e) => setFrom(Number(e.target.value))} aria-label="เลื่อนช่วงเวลาที่แสดง" />
+            onChange={(e) => setFrom(Number(e.target.value))} aria-label={tx("เลื่อนช่วงเวลาที่แสดง")} />
           <span className="lane-voice lane-spacer" />
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
       )}
-      <span className="dim">ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ ·
-        ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค
-        · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ</span>
+      <span className="dim">{tx("ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ · ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ")}</span>
     </div>
   );
 }
