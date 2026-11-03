@@ -14,6 +14,7 @@ BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (
 """
 import hashlib
 import math
+import re
 import secrets
 import sqlite3
 import threading
@@ -134,6 +135,10 @@ def _migrate(db: sqlite3.Connection) -> None:
     if "credits" not in cols("topups"):
         db.execute("ALTER TABLE topups ADD COLUMN credits INTEGER NOT NULL DEFAULT 0")
         db.execute("ALTER TABLE topups ADD COLUMN plan_id TEXT")
+    if "profile_at" not in cols("users"):  # ข้อมูลเบื้องต้นที่ผู้ใช้กรอกหลังล็อกอินครั้งแรก (save_profile)
+        for col in ("full_name", "phone", "account_type", "company", "use_case"):
+            db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        db.execute("ALTER TABLE users ADD COLUMN profile_at REAL")
 
 
 class _tx:
@@ -188,9 +193,43 @@ def is_admin(user: sqlite3.Row) -> bool:
     return is_owner(user["email"]) or bool(user["admin"])
 
 
+def profile_complete(row: sqlite3.Row) -> bool:
+    return row["profile_at"] is not None
+
+
 def public_user(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "email": row["email"], "name": row["name"], "admin": is_admin(row),
-            "owner": is_owner(row["email"]), "credits": credits_out(row["credits"])}
+            "owner": is_owner(row["email"]), "credits": credits_out(row["credits"]),
+            "profile_complete": profile_complete(row),
+            "profile": {k: row[k] for k in ("full_name", "phone", "account_type", "company", "use_case")}}
+
+
+ACCOUNT_TYPES = ("personal", "creator", "business")
+_PHONE = re.compile(r"^(0\d{8,9}|\+\d{8,15})$")
+
+
+def save_profile(uid: str, name: str, full_name: str, phone: str, account_type: str, company: str,
+                 use_case: str) -> dict:
+    """ข้อมูลเบื้องต้นของผู้ใช้ (ต้องกรอกก่อนใช้งานครั้งแรก แก้ภายหลังได้) คืนข้อมูลผู้ใช้ล่าสุด"""
+    full_name, company, use_case = " ".join(full_name.split()), company.strip(), use_case.strip()
+    phone = re.sub(r"[\s\-().]", "", phone)
+    if len(full_name) < 2:
+        raise AccountError(400, "กรอกชื่อ-นามสกุล")
+    if not _PHONE.match(phone):
+        raise AccountError(400, "เบอร์โทรไม่ถูกต้อง เช่น 0812345678 หรือ +66812345678")
+    if account_type not in ACCOUNT_TYPES:
+        raise AccountError(400, "เลือกประเภทผู้ใช้")
+    if account_type == "business" and not company:
+        raise AccountError(400, "กรอกชื่อบริษัทหรือหน่วยงาน")
+    with _tx() as db:
+        db.execute("UPDATE users SET name = COALESCE(NULLIF(?, ''), name), full_name = ?, phone = ?, account_type = ?, "
+                   "company = ?, use_case = ?, profile_at = COALESCE(profile_at, ?) WHERE id = ?",
+                   (name.strip()[:80], full_name[:100], phone, account_type,
+                    company[:120] if account_type == "business" else "", use_case[:300], time.time(), uid))
+        row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    if row is None:
+        raise AccountError(404, "ไม่พบผู้ใช้นี้")
+    return public_user(row)
 
 
 def _verify_google(credential: str) -> dict:

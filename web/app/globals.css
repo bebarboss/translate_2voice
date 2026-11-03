@@ -433,3 +433,15 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .level-bar.clip { background: var(--danger); }
 .actor-voice { display: flex; flex-direction: column; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); }
 .actor-voice:first-of-type { border-top: none; }
+
+/* ข้อมูลเบื้องต้นหลังล็อกอิน (/onboarding) */
+.onboard { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 32px 16px; }
+.onboard-card { width: 100%; max-width: 480px; gap: 16px; }
+.onboard-types { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.onboard-type { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.onboard-type span { font-size: 12px; }
+.onboard-type[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 520px) { .onboard-types { grid-template-columns: 1fr; } }
+.profile-list { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 24px; }
+.profile-list dt { font-size: 13px; }
+.profile-list dd { margin: 0; }

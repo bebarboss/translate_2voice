@@ -46,6 +46,15 @@ class GoogleLogin(BaseModel):
     credential: str = Field(..., max_length=4096, description="ID token จากปุ่มเข้าสู่ระบบด้วย Google")
 
 
+class Profile(BaseModel):
+    name: str = Field("", max_length=80, description="ชื่อที่แสดงในระบบ ว่าง = ใช้ชื่อจากบัญชี Google")
+    full_name: str = Field(..., max_length=100, description="ชื่อ-นามสกุล")
+    phone: str = Field(..., max_length=30)
+    account_type: str = Field(..., description="personal = บุคคลทั่วไป, creator = ครีเอเตอร์, business = บริษัท/หน่วยงาน")
+    company: str = Field("", max_length=120, description="ชื่อบริษัทหรือหน่วยงาน (จำเป็นเมื่อ account_type = business)")
+    use_case: str = Field("", max_length=300, description="ใช้พากย์งานแบบไหน")
+
+
 class Subscribe(BaseModel):
     plan_id: str
 
@@ -98,6 +107,16 @@ def logout(x_user_token: Optional[str] = Header(default=None)):
 @router.get("/auth/me")
 def me(user=Depends(require_user)):
     return accounts.public_user(user)
+
+
+@router.put("/auth/profile")
+def save_profile(body: Profile, user=Depends(require_user)):
+    """ข้อมูลเบื้องต้น: ผู้ใช้ต้องกรอกก่อนใช้งานครั้งแรก (main.access_guard) แก้ภายหลังได้"""
+    try:
+        return accounts.save_profile(user["id"], body.name, body.full_name, body.phone, body.account_type,
+                                     body.company, body.use_case)
+    except AccountError as e:
+        raise _fail(e)
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ

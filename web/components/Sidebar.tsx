@@ -27,7 +27,7 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
   // หน้าแรกก่อนเข้าสู่ระบบมีเมนูของตัวเอง หน้าเข้าสู่ระบบเป็นหน้าเดี่ยว
-  if (path.startsWith("/welcome") || path.startsWith("/login")) return null;
+  if (path.startsWith("/welcome") || path.startsWith("/login") || path.startsWith("/onboarding")) return null;
 
   const brand = (
     <Link href="/" className="brand">

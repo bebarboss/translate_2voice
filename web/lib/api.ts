@@ -49,7 +49,13 @@ export type Gender = "male" | "female" | "";
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
 export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; google_client_id: string }
 /** owner = ผู้ดูแลหลักจาก ADMIN_EMAILS (ถอดสิทธิ์ไม่ได้) */
-export interface User { id: string; email: string; name: string; admin: boolean; owner: boolean; credits: number }
+export type AccountType = "personal" | "creator" | "business";
+/** ข้อมูลเบื้องต้นที่ผู้ใช้กรอกหลังล็อกอินครั้งแรก (account_type ว่าง = ยังไม่กรอก) */
+export interface Profile { full_name: string; phone: string; account_type: AccountType | ""; company: string; use_case: string }
+export interface User {
+  id: string; email: string; name: string; admin: boolean; owner: boolean; credits: number;
+  profile_complete: boolean; profile: Profile;
+}
 /** minutes = เครดิตแพ็กเกจต่อรอบ */
 export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
 /** minutes_left = เครดิตแพ็กเกจที่เหลือ หมดอายุพร้อมแพ็กเกจ */
@@ -266,6 +272,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // ยังไม่ได้เข้าสู่ระบบ → หน้าแรก (มีปุ่มสมัครและเข้าสู่ระบบ) แล้วกลับมาหน้านี้หลังเข้าสู่ระบบ
       window.location.href = `/welcome?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
+    // ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น → หน้ากรอกข้อมูล แล้วกลับมาหน้านี้
+    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome)/.test(window.location.pathname)) {
+      window.location.href = `/onboarding?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    }
     throw new ApiError(errorMessage(res.status, body), res.status);
   }
   if (res.status === 204) return undefined as T;
@@ -284,6 +294,7 @@ export const api = {
   /** สมัครหรือเข้าสู่ระบบด้วย ID token จากปุ่ม Google (บัญชีใหม่สร้างให้เลย) */
   googleLogin: (credential: string) => request<{ user: User }>("/auth/google", json("POST", { credential })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  saveProfile: (body: Profile & { name?: string }) => request<User>("/auth/profile", json("PUT", body)),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),

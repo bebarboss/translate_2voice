@@ -115,6 +115,8 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
         raise HTTPException(401, "กรุณาเข้าสู่ระบบ")
     if accounts.is_admin(user):
         return
+    if not accounts.profile_complete(user):  # ล็อกอินครั้งแรก: กรอกข้อมูลเบื้องต้นก่อน (PUT /auth/profile อยู่ใน OPEN_PATHS)
+        raise HTTPException(428, "กรุณากรอกข้อมูลเบื้องต้นก่อนใช้งาน")
     job_id = request.path_params.get("job_id")
     if job_id:
         job = store.get(job_id)

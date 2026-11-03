@@ -115,8 +115,10 @@ export default function LoginPage() {
           setBusy(true);
           setError("");
           try {
-            await api.googleLogin(credential);
-            window.location.href = nextPath(); // โหลดใหม่ทั้งหน้า เมนูด้านบนจะเห็นผู้ใช้ทันที
+            const { user } = await api.googleLogin(credential);
+            // โหลดใหม่ทั้งหน้า เมนูด้านบนจะเห็นผู้ใช้ทันที ครั้งแรกต้องกรอกข้อมูลเบื้องต้นก่อน
+            window.location.href = user.profile_complete || user.admin
+              ? nextPath() : `/onboarding?next=${encodeURIComponent(nextPath())}`;
           } catch (err) {
             setError((err as Error).message);
             setBusy(false);

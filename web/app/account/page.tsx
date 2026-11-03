@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type AdminUser, type Cards, type Plan, type Wallet } from "@/lib/api";
+import { api, type AccountType, type AdminUser, type Cards, type Plan, type User, type Wallet } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
 
@@ -15,6 +15,28 @@ const fmtCredits = (n: number) => `${fmtNum(n)} เครดิต`;
 const signed = (n: number) => (n > 0 ? `+${fmtNum(n)}` : `−${fmtNum(Math.abs(n))}`);
 
 type Message = { kind: "error" | "info"; text: string } | null;
+const TYPE_LABEL: Record<AccountType, string> = { personal: "บุคคลทั่วไป", creator: "ครีเอเตอร์", business: "บริษัท / หน่วยงาน" };
+
+function ProfileSection({ user }: { user: User }) {
+  const p = user.profile;
+  const rows: [string, string][] = [
+    ["ชื่อ-นามสกุล", p.full_name], ["เบอร์โทร", p.phone],
+    ["ประเภทผู้ใช้", p.account_type ? TYPE_LABEL[p.account_type] : ""],
+    ...(p.account_type === "business" ? [["บริษัท / หน่วยงาน", p.company] as [string, string]] : []),
+    ["ใช้พากย์งาน", p.use_case],
+  ];
+  return (
+    <section className="card" aria-labelledby="profile-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="profile-title" style={{ margin: 0 }}>ข้อมูลบัญชี</h2>
+        <a className="btn small" href="/onboarding?next=/account">{user.profile_complete ? "แก้ไข" : "กรอกข้อมูล"}</a>
+      </div>
+      <dl className="profile-list">
+        {rows.map(([k, v]) => <div key={k}><dt className="dim">{k}</dt><dd>{v || <span className="dim">-</span>}</dd></div>)}
+      </dl>
+    </section>
+  );
+}
 
 function useRunner(load: () => void) {
   const [busy, setBusy] = useState("");
@@ -209,12 +231,13 @@ function AdminSection({ me }: { me: string }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const q = query.trim().toLowerCase();
-  const shown = (users ?? []).filter((u) => !q || u.email.includes(q) || u.name.toLowerCase().includes(q));
+  const shown = (users ?? []).filter((u) => !q || u.email.includes(q) || u.name.toLowerCase().includes(q)
+    || u.profile.full_name.toLowerCase().includes(q) || u.profile.phone.includes(q) || u.profile.company.toLowerCase().includes(q));
   return (
     <section className="card" aria-labelledby="admin-title">
       <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
         <h2 id="admin-title" style={{ margin: 0 }}>ผู้ใช้ทั้งหมด</h2>
-        <input className="input" style={{ maxWidth: 260 }} type="search" placeholder="ค้นหาอีเมลหรือชื่อ"
+        <input className="input" style={{ maxWidth: 260 }} type="search" placeholder="ค้นหาอีเมล ชื่อ เบอร์ บริษัท"
           aria-label="ค้นหาผู้ใช้" value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
@@ -227,7 +250,12 @@ function AdminSection({ me }: { me: string }) {
               const n = Math.round(parseFloat(amounts[u.id] ?? "") * 100) / 100;
               return (
                 <tr key={u.id}>
-                  <td>{u.name}{u.admin ? " · ผู้ดูแล" : ""}<div className="dim">{u.email}</div></td>
+                  <td>{u.name}{u.admin ? " · ผู้ดูแล" : ""}<div className="dim">{u.email}</div>
+                    {u.profile_complete ? (
+                      <div className="dim">{u.profile.full_name} · {u.profile.phone}
+                        {u.profile.account_type && ` · ${TYPE_LABEL[u.profile.account_type]}`}{u.profile.company && ` (${u.profile.company})`}</div>
+                    ) : <div className="dim">ยังไม่กรอกข้อมูล</div>}
+                  </td>
                   <td className="mono">{fmtNum(u.credits)}</td>
                   <td>{u.subscription && plan
                     ? <>{plan.name} · {fmtNum(u.subscription.minutes_left)}<div className="dim">ถึง {fmtDate(u.subscription.expires_at)}</div></>
@@ -311,6 +339,7 @@ export default function AccountPage() {
         </div>
         <button type="button" className="btn small" onClick={logout}>ออกจากระบบ</button>
       </div>
+      <ProfileSection user={user} />
       {config.billing ? <WalletSection payments={config.payments} unlimited={user.admin} /> : (
         <div className="card"><span className="muted">เครดิตและแพ็กเกจยังไม่เปิดใช้งาน</span></div>
       )}

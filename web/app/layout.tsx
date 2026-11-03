@@ -5,6 +5,7 @@ import "@fontsource/ibm-plex-sans-thai/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "./globals.css";
 import AccountBar from "@/components/AccountBar";
+import ProfileGate from "@/components/ProfileGate";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="th">
       <body>
         <div className="shell">
+          <ProfileGate />
           <Sidebar />
           <div className="shell-main">
             <AccountBar />
