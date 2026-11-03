@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorConsentRecord, type ActorPayment, type ActorPayout, type AdminActor, type LibraryVoice,
+import { api, fileUrl, type ActorConsentRecord, type ActorPayment, type ActorPayout, type AdminActor, type LibraryVoice, type Mood,
   type UsageRow, type UsageSummary, type WhtRule } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
@@ -126,7 +126,15 @@ function VoiceReview() {
     if (note === null) return;
     run(`v-${v.id}`, () => api.adminReviewVoice(v.id, approve, note), approve ? tx("เสียง {0} ขึ้นคลังแล้ว", { 0: v.name }) : tx("ส่งกลับให้ {0} อัดใหม่", { 0: v.actor }));
   };
-  const shown = (list ?? []).filter((v) => all || v.review === "pending");
+  const reviewMood = (v: LibraryVoice, m: Mood, approve: boolean) => {
+    const note = approve ? "" : window.prompt(tx("บอก {0} ว่าต้องแก้อะไร (เช่น เสียงแอร์ดัง อ่านเร็วเกิน)", { 0: v.actor }), "");
+    if (note === null) return;
+    const label = tx(MOOD_LABEL[m]);
+    run(`m-${v.id}-${m}`, () => api.adminReviewMood(v.id, m, approve, note),
+      approve ? tx("อารมณ์{0}ของ {1} ใช้ได้แล้ว", { 0: label, 1: v.name }) : tx("ส่งอารมณ์{0}กลับให้ {1} อัดใหม่", { 0: label, 1: v.actor }));
+  };
+  const pendingMoods = (v: LibraryVoice) => v.moods.some((m) => m.review === "pending");
+  const shown = (list ?? []).filter((v) => all || v.review === "pending" || pendingMoods(v));
   return (
     <section className="card" aria-labelledby="vr">
       <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
@@ -154,13 +162,24 @@ function VoiceReview() {
           {v.text && <span className="muted" style={{ fontSize: 14 }}>{tx("ข้อความที่ถอดได้:")} {v.text}</span>}
           {v.error && <div className="alert error">{v.error}</div>}
           {v.moods.length > 0 && (
-            <div className="row" style={{ gap: 8 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <span className="dim">{tx("เสียงอารมณ์ (ตรวจแยกทีละอารมณ์ เสียงหลักไม่ต้องตรวจใหม่)")}</span>
               {v.moods.map((m) => (
-                <span key={m.mood} className="row" style={{ gap: 4 }}>
+                <div key={m.mood} className="mood-review">
                   {m.status === "ready"
                     ? <PreviewButton url={fileUrl.voiceMood(v.id, m.mood, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} label={tx(MOOD_LABEL[m.mood])} />
                     : <span className="badge queued">{tx(MOOD_LABEL[m.mood])} · {m.status === "failed" ? tx("ไม่สำเร็จ") : tx("กำลังเตรียม")}</span>}
-                </span>
+                  <span className={`badge ${STATUS_BADGE[m.review ?? "pending"]}`}>
+                    {m.review === "approved" ? tx("ใช้ได้") : m.review === "rejected" ? tx("ให้อัดใหม่") : tx("รอตรวจ")}
+                  </span>
+                  {m.text && <span className="muted" style={{ fontSize: 13, flex: "1 1 200px" }}>{m.text}</span>}
+                  <span style={{ marginLeft: "auto" }} className="row">
+                    <button type="button" className="btn primary small" disabled={!!busy || m.status !== "ready" || m.review === "approved"}
+                      onClick={() => reviewMood(v, m.mood, true)}>{tx("อนุมัติ")}</button>
+                    <button type="button" className="btn small" disabled={!!busy || m.review === "rejected"}
+                      onClick={() => reviewMood(v, m.mood, false)}>{tx("ให้อัดใหม่")}</button>
+                  </span>
+                </div>
               ))}
             </div>
           )}

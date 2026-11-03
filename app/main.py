@@ -146,11 +146,26 @@ def hidden_voices(request: Request) -> set[str]:
     return {v for v, a in actors.voice_actors().items() if a["review"] != "approved" and a["user_id"] != user["id"]}
 
 
-def with_actor(v: LibraryVoice, info: Optional[dict]) -> LibraryVoice:
-    """เติมชื่อนักพากย์และสถานะตรวจ (ไม่เก็บกับเสียง)"""
+def with_actor(v: LibraryVoice, info: Optional[dict], show_pending: bool = True,
+               moods_info: Optional[dict] = None) -> LibraryVoice:
+    """เติมชื่อนักพากย์และสถานะตรวจของเสียงหลักและเสียงอารมณ์ (ไม่เก็บกับเสียง)
+    show_pending=False: ซ่อนเสียงอารมณ์ที่ยังไม่ผ่านการตรวจ (ผู้ใช้ทั่วไปที่ไม่ใช่เจ้าของเสียง)"""
     if info is None:
         return v
-    return v.model_copy(update={"actor": info["stage_name"], "review": info["review"], "review_note": info["note"]})
+    reviews = (moods_info if moods_info is not None else actors.mood_reviews()).get(v.id, {})
+    moods = []
+    for m in v.moods:
+        r = reviews.get(m.mood, {"review": info["review"], "note": ""})
+        if show_pending or r["review"] == "approved":
+            moods.append(m.model_copy(update={"review": r["review"], "review_note": r["note"]}))
+    return v.model_copy(update={"actor": info["stage_name"], "review": info["review"], "review_note": info["note"],
+                                "moods": moods})
+
+
+def sees_pending(request: Request, info: Optional[dict]) -> bool:
+    """เห็นเสียงอารมณ์ที่ยังไม่ผ่านการตรวจได้ไหม: ปิดระบบบัญชี ผู้ดูแล หรือนักพากย์เจ้าของเสียง"""
+    user = getattr(request.state, "user", None)
+    return user is None or accounts.is_admin(user) or (info is not None and info["user_id"] == user["id"])
 
 
 def current_user_id(request: Request) -> Optional[str]:
@@ -774,6 +789,9 @@ def get_job_voices(job_id: str, request: Request):
     hidden = hidden_voices(request)
     ready = [v for v in voice_store.all() if v.status == VoiceStatus.ready and v.id not in hidden]
     embs = {v.id: voice_store.embedding(v.id) for v in ready}
+    blocked = actors.blocked_moods()
+    mood_bonus = {v.id: 0.01 * min(5, sum(m.status == VoiceStatus.ready and (v.id, m.mood) not in blocked for m in v.moods))
+                  for v in ready}
     out = []
     for speaker in job.speakers:
         p = profiles.get(speaker)
@@ -781,7 +799,7 @@ def get_job_voices(job_id: str, request: Request):
         suggestions = []
         if p is not None:
             suggestions = sorted((VoiceSuggestion(voice_id=v.id, score=library.closeness(p, v.pitch_hz, embs[v.id]))
-                                  for v in ready), key=lambda s: s.score, reverse=True)
+                                  for v in ready), key=lambda s: s.score + mood_bonus.get(s.voice_id, 0), reverse=True)
         out.append(SpeakerVoice(speaker=speaker, voice_id=job.voice_map.get(speaker), pitch_hz=hz,
                                 gender=library.guess_gender(hz), suggestions=suggestions))
     return out
@@ -829,8 +847,9 @@ def _clean_categories(values: list[str]) -> list[str]:
 
 @app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
 def list_voices(request: Request):
-    info, hidden = actors.voice_actors(), hidden_voices(request)
-    return [with_actor(v, info.get(v.id)) for v in voice_store.all() if v.id not in hidden]
+    info, hidden, moods = actors.voice_actors(), hidden_voices(request), actors.mood_reviews()
+    return [with_actor(v, info.get(v.id), sees_pending(request, info.get(v.id)), moods)
+            for v in voice_store.all() if v.id not in hidden]
 
 
 @app.post("/voices", response_model=LibraryVoice, status_code=202,
@@ -872,8 +891,9 @@ async def create_voice(
 
 
 @app.get("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
-def get_voice(voice_id: str):
-    return with_actor(get_voice_or_404(voice_id), actors.voice_actors().get(voice_id))
+def get_voice(voice_id: str, request: Request):
+    info = actors.voice_actors().get(voice_id)
+    return with_actor(get_voice_or_404(voice_id), info, sees_pending(request, info))
 
 
 @app.patch("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
@@ -1012,6 +1032,7 @@ def delete_voice_mood(voice_id: str, mood: Mood):
     if m.status == VoiceStatus.processing and m.stage != "queued":
         raise HTTPException(409, "กำลังเตรียมเสียงอารมณ์นี้อยู่ รอให้เสร็จก่อนแล้วค่อยลบ")
     voice_store.delete_mood(voice_id, mood)
+    actors.remove_mood(voice_id, mood)
     return voice_store.get(voice_id)
 
 
@@ -1029,8 +1050,11 @@ def retry_voice_mood(voice_id: str, mood: Mood):
 
 
 @app.get("/voices/{voice_id}/moods/{mood}/audio", dependencies=[Depends(require_key)])
-def get_voice_mood_audio(voice_id: str, mood: Mood):
+def get_voice_mood_audio(voice_id: str, mood: Mood, request: Request):
     v, _ = get_mood_or_404(voice_id, mood)
+    info = actors.voice_actors().get(voice_id)
+    if (voice_id, mood) in actors.blocked_moods() and not sees_pending(request, info):
+        raise HTTPException(404, "ไม่พบเสียงอารมณ์นี้")
     return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
 
 
@@ -1328,7 +1352,8 @@ def actor_me(user=Depends(require_user)):
             "rate": settings.actor_rate, "voices": [v.model_dump(mode="json") for v in voices],
             "payment": actors.payment_out(user["id"]), "banks": actors.BANKS,
             "wht": {"percent": settings.actor_wht_percent, "min": settings.actor_wht_min},
-            "usage": actors.summary(user["id"]), "payouts": actors.payouts(user["id"])}
+            "usage": actors.summary(user["id"]), "payouts": actors.payouts(user["id"]),
+            "mood_usage": actors.mood_usage(user["id"])}
 
 
 @app.post("/actor/apply", dependencies=[Depends(require_key)])
@@ -1390,10 +1415,13 @@ async def actor_record(
             await save_upload(file, d / f"original{ext}", d / "_none")  # เกินขนาดไม่ลบทั้งเสียง
             voice_store.update(voice_id, status=VoiceStatus.processing, stage="queued", error=None,
                                filename=label, source_url=None, denoise=denoise)
-        actors.resubmit_voice(voice_id)
+        if mood:
+            actors.add_mood(voice_id, mood)
+        else:
+            actors.resubmit_voice(voice_id)
         worker.submit_voice(voice_id, mood or "")
         out = _own_voice(user, voice_id)
-        notify.actor_voice_submitted(user["id"], out.name)
+        notify.actor_voice_submitted(user["id"], f"{out.name} ({mood})" if mood else out.name)
         return out
     if mood:
         raise HTTPException(400, "อัดเสียงหลักก่อน แล้วค่อยเพิ่มเสียงอารมณ์")
@@ -1533,9 +1561,10 @@ def admin_review_actor(user_id: str, body: Review, admin=Depends(require_admin))
 @app.get("/admin/actor-voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
 def admin_actor_voices(_=Depends(require_admin)):
     """เสียงทั้งหมดที่นักพากย์ส่ง (รอตรวจขึ้นก่อน)"""
-    info = actors.voice_actors()
-    out = [with_actor(v, info[v.id]) for v in voice_store.all() if v.id in info]
-    return sorted(out, key=lambda v: v.review != "pending")
+    info, moods = actors.voice_actors(), actors.mood_reviews()
+    out = [with_actor(v, info[v.id], True, moods) for v in voice_store.all() if v.id in info]
+    pending = lambda v: v.review == "pending" or any(m.review == "pending" for m in v.moods)  # noqa: E731
+    return sorted(out, key=lambda v: not pending(v))
 
 
 @app.post("/admin/actor-voices/{voice_id}/review", status_code=204, dependencies=[Depends(require_key)])
@@ -1551,6 +1580,21 @@ def admin_review_voice(voice_id: str, body: Review, admin=Depends(require_admin)
     owner = actors.voice_actors().get(voice_id)
     if owner:
         notify.voice_reviewed(owner["user_id"], v.name, body.approve, body.note.strip())
+
+
+@app.post("/admin/actor-voices/{voice_id}/moods/{mood}/review", status_code=204, dependencies=[Depends(require_key)])
+def admin_review_mood(voice_id: str, mood: Mood, body: Review, admin=Depends(require_admin)):
+    """อนุมัติหรือส่งกลับเสียงอารมณ์ทีละอารมณ์ (เสียงหลักไม่เปลี่ยนสถานะ)"""
+    v, m = get_mood_or_404(voice_id, mood)
+    if body.approve and m.status != VoiceStatus.ready:
+        raise HTTPException(409, "เสียงอารมณ์นี้ยังเตรียมไม่เสร็จหรือเตรียมไม่สำเร็จ")
+    try:
+        actors.review_mood(voice_id, mood, body.approve, body.note.strip(), admin["email"])
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+    owner = actors.voice_actors().get(voice_id)
+    if owner:
+        notify.voice_reviewed(owner["user_id"], f"{v.name} ({mood})", body.approve, body.note.strip())
 
 
 @app.get("/admin/actor-usage", dependencies=[Depends(require_key)])

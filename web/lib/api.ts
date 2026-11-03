@@ -120,6 +120,8 @@ export interface VoiceMood {
   duration: number | null;
   quality: number | null;
   analysis?: VoiceAnalysis | null;
+  review?: string | null; // เสียงอารมณ์ของนักพากย์: pending / approved / rejected
+  review_note?: string;
 }
 
 export interface LibraryVoice {
@@ -184,6 +186,8 @@ export interface ActorMe {
   voices: LibraryVoice[];
   usage: UsageSummary[];
   payouts: ActorPayout[];
+  /** id เสียง → อารมณ์ ("" = ปกติ) → จำนวนประโยคที่ถูกใช้พากย์ */
+  mood_usage: Record<string, Record<string, number>>;
   payment: ActorPayment | null;
   banks: string[];
   wht: WhtRule;
@@ -391,6 +395,8 @@ export const api = {
   adminReviewActor: (userId: string, approve: boolean, note = "") =>
     request<void>(`/admin/actors/${userId}/review`, json("POST", { approve, note })),
   adminActorVoices: () => request<LibraryVoice[]>("/admin/actor-voices"),
+  adminReviewMood: (voiceId: string, mood: Mood, approve: boolean, note = "") =>
+    request<void>(`/admin/actor-voices/${voiceId}/moods/${mood}/review`, json("POST", { approve, note })),
   adminReviewVoice: (voiceId: string, approve: boolean, note = "") =>
     request<void>(`/admin/actor-voices/${voiceId}/review`, json("POST", { approve, note })),
   adminActorUsage: (month = "") =>

@@ -717,3 +717,5 @@ body { background: var(--bg); }
 .job-actions .icon-btn { height: 28px; width: 28px; justify-content: center; padding: 0; background: rgba(0, 0, 0, .6); border-color: rgba(255, 255, 255, .2); color: #fff; }
 @media (hover: none) { .job-actions { opacity: 1; } }
 @media (max-width: 900px) { .sidebar { box-shadow: none; } .sidebar.open { box-shadow: 12px 0 40px rgba(0, 0, 0, .3); } }
+.chip.suggest { border-style: dashed; border-color: rgba(255, 138, 76, .55); color: var(--text); }
+.mood-review { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }

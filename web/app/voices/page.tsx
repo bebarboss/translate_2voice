@@ -315,6 +315,8 @@ function MoodRow({ v, m, preview, run, canEdit }: {
     <div className="mood-row">
       <div className="row" style={{ gap: 8 }}>
         <span className="badge awaiting_review">{tx(MOOD_LABEL[m.mood])}</span>
+        {m.review === "pending" && <span className="badge warn">{tx("รอผู้ดูแลตรวจ")}</span>}
+        {m.review === "rejected" && <span className="badge failed">{tx("ไม่ผ่านการตรวจ")}</span>}
         {m.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[m.stage] ?? m.stage}...</span>}
         {m.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
         {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}
@@ -323,8 +325,8 @@ function MoodRow({ v, m, preview, run, canEdit }: {
           {canEdit && m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>{tx("แก้ข้อความ")}</button>}
           {canEdit && m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>{tx("ลองใหม่")}</button>}
           {canEdit && !(m.status === "processing" && m.stage !== "queued") && (
-            <button type="button" className="icon-btn" aria-label={tx("ลบอารมณ์{0}", { 0: MOOD_LABEL[m.mood] })}
-              onClick={() => window.confirm(tx("ลบเสียงอารมณ์{0}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ", { 0: MOOD_LABEL[m.mood] }))
+            <button type="button" className="icon-btn" aria-label={tx("ลบอารมณ์{0}", { 0: tx(MOOD_LABEL[m.mood]) })}
+              onClick={() => window.confirm(tx("ลบเสียงอารมณ์{0}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ", { 0: tx(MOOD_LABEL[m.mood]) }))
                 && run(() => api.deleteVoiceMood(v.id, m.mood))}>{tx("ลบ")}</button>
           )}
           {m.status === "ready" && (
@@ -458,6 +460,9 @@ function VoiceCard({ v, preview, onChanged, known, canEdit }: {
             {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
             {v.gender && <span className="badge queued">{tx(GENDER_LABEL[v.gender])}</span>}
             {v.tone && <span className="badge awaiting_review">{v.tone}</span>}
+            {v.moods.some((m) => m.status === "ready") && (
+              <span className="badge done">{tx("อารมณ์ {0}/{1}", { 0: v.moods.filter((m) => m.status === "ready" && (m.review == null || m.review === "approved")).length, 1: MOODS.length })}</span>
+            )}
             {v.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>}
             {v.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
             {v.status === "ready" && v.quality != null && v.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}

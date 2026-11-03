@@ -5,6 +5,8 @@
 - actors: ข้อมูลนักพากย์ สถานะ pending / approved / rejected / withdrawn
 - actor_consents: ทุกครั้งที่กดยอมรับ (เวอร์ชันหนังสือ แฮชข้อความ เวลา IP เบราว์เซอร์) และเวลาที่ถอน
 - actor_voices: เสียงในคลังที่นักพากย์อัด สถานะตรวจ pending / approved / rejected
+- actor_moods: เสียงอารมณ์ที่นักพากย์อัดเพิ่ม ตรวจแยกทีละอารมณ์ (เสียงหลักที่ผ่านแล้วไม่ต้องรอตรวจใหม่)
+  อารมณ์ที่ไม่มีแถวในตารางนี้ (อัดก่อนมีการตรวจแยก) ถือตามสถานะของเสียงหลัก
 - voice_usage: งาน × เสียง = วินาทีของเสียงพากย์ในผลงานรอบล่าสุดของงานนั้น (พากย์ใหม่ = แทนค่าเดิม ไม่นับซ้ำ)
 - actor_payouts: การจ่ายค่าตอบแทนแต่ละครั้ง ยอดค้างจ่าย = ค่าตอบแทนตามการใช้งานของเดือน − ที่จ่ายแล้ว
   amount = ยอดก่อนหักภาษี, wht = ภาษีหัก ณ ที่จ่าย (โอนจริง = amount − wht) และสำเนาชื่อ เลขผู้เสียภาษี ที่อยู่ ณ วันจ่าย
@@ -12,6 +14,7 @@
 นักพากย์ใช้เสียงตัวเองพากย์งานของตัวเอง ไม่นับเป็นค่าตอบแทน
 """
 import hashlib
+import json
 import logging
 import re
 import time
@@ -88,6 +91,9 @@ CREATE TABLE IF NOT EXISTS actor_payouts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT NOT NULL, month TEXT NOT NULL, amount INTEGER NOT NULL,
   note TEXT NOT NULL DEFAULT '', paid_by TEXT NOT NULL, paid_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS actor_payouts_actor ON actor_payouts(actor_id, month);
+CREATE TABLE IF NOT EXISTS actor_moods (
+  voice_id TEXT NOT NULL, mood TEXT NOT NULL, review TEXT NOT NULL DEFAULT 'pending', note TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL, reviewed_at REAL, reviewed_by TEXT, PRIMARY KEY (voice_id, mood));
 CREATE TABLE IF NOT EXISTS actor_payment (
   user_id TEXT PRIMARY KEY, payee_name TEXT NOT NULL, tax_id TEXT NOT NULL, address TEXT NOT NULL,
   bank TEXT NOT NULL, account_no TEXT NOT NULL, account_name TEXT NOT NULL, updated_at REAL NOT NULL);
@@ -104,6 +110,9 @@ def _init() -> None:
             db.executescript(SCHEMA)
             if "items" not in {r["name"] for r in db.execute("PRAGMA table_info(actor_consents)")}:
                 db.execute("ALTER TABLE actor_consents ADD COLUMN items TEXT NOT NULL DEFAULT ''")
+            if "moods" not in {r["name"] for r in db.execute("PRAGMA table_info(voice_usage)")}:
+                # จำนวนประโยคที่ใช้เสียงอารมณ์แต่ละแบบ (JSON {อารมณ์: ประโยค}) แสดงให้นักพากย์เห็นว่าอารมณ์ไหนถูกใช้
+                db.execute("ALTER TABLE voice_usage ADD COLUMN moods TEXT NOT NULL DEFAULT '{}'")
             if "wht" not in {r["name"] for r in db.execute("PRAGMA table_info(actor_payouts)")}:
                 db.execute("ALTER TABLE actor_payouts ADD COLUMN wht INTEGER NOT NULL DEFAULT 0")
                 for col in ("payee_name", "tax_id", "address"):
@@ -274,6 +283,8 @@ def withdraw(uid: str) -> list[str]:
                    (time.time(), uid))
         db.execute("UPDATE actors SET status = 'withdrawn', note = '' WHERE user_id = ?", (uid,))
         db.execute("DELETE FROM actor_voices WHERE user_id = ?", (uid,))
+        if ids:
+            db.execute(f"DELETE FROM actor_moods WHERE voice_id IN ({','.join('?' * len(ids))})", ids)
     return ids
 
 
@@ -347,6 +358,58 @@ def remove_voice(voice_id: str) -> None:
     _init()
     with _tx() as db:
         db.execute("DELETE FROM actor_voices WHERE voice_id = ?", (voice_id,))
+        db.execute("DELETE FROM actor_moods WHERE voice_id = ?", (voice_id,))
+
+
+# ---------------------------------------------------------------- เสียงอารมณ์ (ตรวจแยกทีละอารมณ์)
+def add_mood(voice_id: str, mood: str) -> None:
+    """นักพากย์อัดเสียงอารมณ์ใหม่หรืออัดซ้ำ: อารมณ์นั้นรอตรวจ เสียงหลักและอารมณ์อื่นใช้ได้ตามเดิม"""
+    _init()
+    with _tx() as db:
+        db.execute("INSERT INTO actor_moods (voice_id, mood, created_at) VALUES (?, ?, ?) "
+                   "ON CONFLICT (voice_id, mood) DO UPDATE SET review = 'pending', note = '', created_at = excluded.created_at, "
+                   "reviewed_at = NULL, reviewed_by = NULL", (voice_id, mood, time.time()))
+
+
+def remove_mood(voice_id: str, mood: str) -> None:
+    _init()
+    with _tx() as db:
+        db.execute("DELETE FROM actor_moods WHERE voice_id = ? AND mood = ?", (voice_id, mood))
+
+
+def review_mood(voice_id: str, mood: str, approve: bool, note: str, by: str) -> None:
+    _init()
+    with _tx() as db:
+        if db.execute("SELECT 1 FROM actor_voices WHERE voice_id = ?", (voice_id,)).fetchone() is None:
+            raise AccountError(404, "ไม่ใช่เสียงของนักพากย์")
+        db.execute("INSERT INTO actor_moods (voice_id, mood, review, note, created_at, reviewed_at, reviewed_by) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (voice_id, mood) DO UPDATE SET review = excluded.review, "
+                   "note = excluded.note, reviewed_at = excluded.reviewed_at, reviewed_by = excluded.reviewed_by",
+                   (voice_id, mood, "approved" if approve else "rejected", note, time.time(), time.time(), by))
+
+
+def mood_reviews() -> dict[str, dict[str, dict]]:
+    """id เสียง → อารมณ์ → {review, note} (เฉพาะอารมณ์ที่ตรวจแยก)"""
+    _init()
+    out: dict[str, dict[str, dict]] = {}
+    for r in _read("SELECT voice_id, mood, review, note FROM actor_moods"):
+        out.setdefault(r["voice_id"], {})[r["mood"]] = {"review": r["review"], "note": r["note"]}
+    return out
+
+
+def mood_review(voice_id: str, mood: str, voice_review: Optional[str] = None) -> Optional[str]:
+    """สถานะตรวจของเสียงอารมณ์ (None = ไม่ใช่เสียงของนักพากย์) ไม่มีแถว = ตามเสียงหลัก"""
+    info = voice_actors().get(voice_id)
+    if info is None:
+        return None
+    m = mood_reviews().get(voice_id, {}).get(mood)
+    return m["review"] if m else (voice_review or info["review"])
+
+
+def blocked_moods() -> set[tuple[str, str]]:
+    """(id เสียง, อารมณ์) ที่ยังไม่ผ่านการตรวจ ห้ามใช้พากย์งานของผู้ใช้ และซ่อนจากผู้ใช้คนอื่น"""
+    _init()
+    return {(r["voice_id"], r["mood"]) for r in _read("SELECT voice_id, mood FROM actor_moods WHERE review != 'approved'")}
 
 
 def voice_actors() -> dict[str, dict]:
@@ -367,29 +430,44 @@ def review_voice(voice_id: str, approve: bool, note: str, by: str) -> None:
 
 
 # ---------------------------------------------------------------- บันทึกการใช้เสียงและค่าตอบแทน
-def record_usage(job_id: str, owner: Optional[str], job_name: str, usage: dict[str, tuple[float, int]]) -> None:
-    """งานพากย์เสร็จ: usage = id เสียง → (วินาทีเสียงพากย์, จำนวนประโยค) ของรอบนี้ แทนค่ารอบก่อนของงานเดียวกัน
+def record_usage(job_id: str, owner: Optional[str], job_name: str, usage: dict[str, tuple]) -> None:
+    """งานพากย์เสร็จ: usage = id เสียง → (วินาทีเสียงพากย์, จำนวนประโยค[, {อารมณ์: ประโยค}]) ของรอบนี้ แทนค่ารอบก่อนของงานเดียวกัน
     เสียงที่รอบนี้ไม่ได้ใช้แล้ว (เปลี่ยนเป็นเสียงอื่น) ลบออก เวลาใช้ครั้งแรก (เดือน) คงเดิม"""
     _init()
     owners = voice_actors()
     now = time.time()
     with _tx() as db:
         keep = []
-        for voice_id, (seconds, lines) in usage.items():
+        for voice_id, (seconds, lines, *rest) in usage.items():
+            moods = json.dumps(rest[0] if rest else {}, ensure_ascii=False)
             a = owners.get(voice_id)
             if a is None or seconds <= 0:
                 continue
             keep.append(voice_id)
-            db.execute("INSERT INTO voice_usage (job_id, voice_id, actor_id, user_id, job_name, seconds, lines, month, "
-                       "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            db.execute("INSERT INTO voice_usage (job_id, voice_id, actor_id, user_id, job_name, seconds, lines, moods, month, "
+                       "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                        "ON CONFLICT (job_id, voice_id) DO UPDATE SET seconds = excluded.seconds, "
-                       "lines = excluded.lines, job_name = excluded.job_name, updated_at = excluded.updated_at",
-                       (job_id, voice_id, a["user_id"], owner or "", job_name, round(seconds, 2), lines,
+                       "lines = excluded.lines, moods = excluded.moods, job_name = excluded.job_name, updated_at = excluded.updated_at",
+                       (job_id, voice_id, a["user_id"], owner or "", job_name, round(seconds, 2), lines, moods,
                         month_of(now), now, now))
         db.execute(f"DELETE FROM voice_usage WHERE job_id = ? AND voice_id NOT IN ({','.join('?' * len(keep))})",
                    (job_id, *keep))
     if keep:
         log.info("job %s: actor voice usage %s", job_id, {v: usage[v] for v in keep})
+
+
+def mood_usage(uid: str) -> dict[str, dict[str, int]]:
+    """id เสียงของนักพากย์ → อารมณ์ ("" = ปกติ) → จำนวนประโยคที่ถูกใช้พากย์ (รวมทุกงาน รอบล่าสุดของแต่ละงาน)"""
+    _init()
+    out: dict[str, dict[str, int]] = {}
+    for r in _read("SELECT voice_id, lines, moods FROM voice_usage WHERE actor_id = ?", uid):
+        per = out.setdefault(r["voice_id"], {})
+        moods = json.loads(r["moods"] or "{}")
+        for m, n in moods.items():
+            per[m] = per.get(m, 0) + n
+        if not moods:  # งานที่บันทึกก่อนแยกอารมณ์ นับเป็นเสียงปกติ
+            per[""] = per.get("", 0) + r["lines"]
+    return out
 
 
 def _payable(r) -> bool:

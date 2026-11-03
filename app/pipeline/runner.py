@@ -260,6 +260,11 @@ def _library_refs(job, voice_store, target: str) -> dict[str, dict[str, tuple[st
     """ผู้พูด → อารมณ์ ("" = ปกติ) → (คีย์เสียงตัวอย่าง, ไฟล์, ข้อความในเสียงนั้น, ส่วนของคีย์แคช) ของเสียงในคลังที่ผู้ใช้เลือก
     เสียงที่ถูกลบหรือยังไม่พร้อม ใช้เสียงต้นฉบับแทน อารมณ์ที่ยังไม่พร้อมไม่มีในรายการ (ประโยคนั้นใช้เสียงปกติ)"""
     out = {}
+    try:  # เสียงอารมณ์ของนักพากย์ที่ยังไม่ผ่านการตรวจ ไม่ใช้พากย์ (ใช้เสียงปกติแทน)
+        from .. import actors
+        blocked = actors.blocked_moods()
+    except Exception:  # noqa: BLE001
+        blocked = set()
     for speaker, voice_id in job.voice_map.items():
         v = voice_store.get(voice_id) if voice_store else None
         path = voice_store.ref_path(voice_id) if v else None
@@ -270,7 +275,7 @@ def _library_refs(job, voice_store, target: str) -> dict[str, dict[str, tuple[st
         refs = {"": (voice_id, path, tts.reference_text(v.text, "th", target), ["library", voice_id, v.text])}
         for m in v.moods:
             mpath = voice_store.ref_path(voice_id, m.mood)
-            if m.status == "ready" and m.text and mpath.exists():
+            if m.status == "ready" and m.text and mpath.exists() and (voice_id, m.mood) not in blocked:
                 refs[m.mood] = (f"{voice_id}:{m.mood}", mpath, tts.reference_text(m.text, "th", target),
                                 ["library", voice_id, m.mood, m.text])
         out[speaker] = refs
@@ -540,7 +545,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         for s in {_group_speaker(g) for g in groups}:
             mine = [c for c, g in zip(clips, groups) if _group_speaker(g) == s]
             mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60)
-        _record_voice_usage(job, groups, done, sr, library_refs)
+        _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
         return
     stage("mux_video", 0.95)
     mix.mux_video(video, d / "final_audio.wav", d / "output.mp4")
@@ -553,21 +558,24 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if job.burn_subs:
         stage("burn_subs", 0.97)
         subs.burn(d / "output.mp4", utterances, effective_style(job), d / "output_subs.mp4")
-    _record_voice_usage(job, groups, done, sr, library_refs)
+    _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
 
 
-def _record_voice_usage(job, groups: list, done: dict, sr: int, library_refs: dict) -> None:
-    """บันทึกว่าเสียงในคลังแต่ละเสียงถูกใช้พากย์กี่วินาทีในผลงานรอบนี้ (ใช้คิดค่าตอบแทนนักพากย์ actors.py)"""
+def _record_voice_usage(job, groups: list, done: dict, sr: int, library_refs: dict, mood_of=lambda u: "") -> None:
+    """บันทึกว่าเสียงในคลังแต่ละเสียงถูกใช้พากย์กี่วินาทีในผลงานรอบนี้ (ใช้คิดค่าตอบแทนนักพากย์ actors.py)
+    และจำนวนประโยคที่ใช้เสียงอารมณ์แต่ละแบบ ("" = เสียงปกติ)"""
     usage: dict[str, list] = {}
     for i, g in enumerate(groups):
         speaker = _group_speaker(g)
         if speaker in library_refs and i in done:
-            u = usage.setdefault(job.voice_map[speaker], [0.0, 0])
+            u = usage.setdefault(job.voice_map[speaker], [0.0, 0, {}])
             u[0] += len(done[i]) / sr
             u[1] += len(g)
+            m = mood_of(max(g, key=lambda x: x.duration))
+            u[2][m] = u[2].get(m, 0) + len(g)
     try:
         from .. import actors
-        actors.record_usage(job.id, job.owner, job.filename, {v: (s, n) for v, (s, n) in usage.items()})
+        actors.record_usage(job.id, job.owner, job.filename, {v: (s, n, m) for v, (s, n, m) in usage.items()})
     except Exception:  # บันทึกไม่ได้ไม่ควรทำให้งานพากย์ล้ม
         log.exception("record voice usage failed for job %s", job.id)
 

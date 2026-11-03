@@ -58,16 +58,24 @@ class JobStore:
             except Exception:
                 log.warning("skip broken job file %s", job_file)
                 continue
+            changed = False
             if job.status == JobStatus.running:  # งานที่รอคิวอยู่ Worker.start เอาเข้าคิวต่อให้
                 job.status = JobStatus.failed
                 job.error = "เซิร์ฟเวอร์รีสตาร์ตระหว่างทำงาน กดลองใหม่ได้เลย"
-                self._write(job)
+                changed = True
             # งานที่สร้างบนเครื่องอื่น (เช่น Windows แล้วย้ายมารันใน Docker) เก็บ path เดิมไว้ ชี้กลับมาที่โฟลเดอร์งานนี้
             if job.input_path and not Path(job.input_path).exists():
                 local = job_file.parent / PureWindowsPath(job.input_path).name
                 if local.exists():
                     job.input_path = str(local)
+                    changed = True
+            if changed:
+                # เขียนไฟล์ของงานเดียวไม่ได้ (ไฟล์ถูกล็อกฝั่ง Windows ฯลฯ) ต้องไม่ทำให้ API เปิดไม่ขึ้นทั้งระบบ
+                # สถานะใหม่ยังอยู่ในหน่วยความจำ และจะถูกเขียนลงไฟล์อีกครั้งเมื่องานนี้เปลี่ยนสถานะ
+                try:
                     self._write(job)
+                except OSError as e:
+                    log.warning("could not update %s at startup: %s", job_file, e)
             self._jobs[job.id] = job
 
     def _write(self, job: Job) -> None:

@@ -129,6 +129,55 @@ const REVIEW_BADGE = {
   rejected: <span className="badge failed">{tx("ให้อัดใหม่")}</span>,
 };
 
+/** อารมณ์ที่ใช้บ่อยในงานพากย์ แนะนำให้อัดก่อน */
+const SUGGESTED: Mood[] = ["happy", "angry", "sad"];
+
+/** สถานะเสียงอารมณ์ของเสียงหนึ่ง: มีแล้วกี่แบบ แต่ละแบบผ่านการตรวจไหม และถูกใช้พากย์ไปกี่ประโยค กดเพื่ออัด */
+function MoodChips({ v, usage, picked, onPick }: {
+  v: LibraryVoice; usage: Record<string, number>; picked?: Mood; onPick: (m: Mood) => void;
+}) {
+  const ready = v.moods.filter((x) => x.status === "ready" && x.review === "approved").length;
+  const missing = SUGGESTED.filter((m) => !v.moods.some((x) => x.mood === m));
+  const state = (m: Mood): [string, string] => {
+    const got = v.moods.find((x) => x.mood === m);
+    if (!got) return ["+ ", SUGGESTED.includes(m) ? tx("แนะนำให้อัด") : tx("กดเพื่ออัด")];
+    if (got.status === "processing") return ["… ", tx("กำลังเตรียม")];
+    if (got.status === "failed") return ["! ", tx("เตรียมไม่สำเร็จ กดเพื่ออัดใหม่")];
+    if (got.review === "pending") return ["⏳ ", tx("รอผู้ดูแลตรวจ")];
+    if (got.review === "rejected") return ["✕ ", tx("ไม่ผ่านการตรวจ กดเพื่ออัดใหม่")];
+    return ["✓ ", tx("ผ่านแล้ว กดเพื่ออัดใหม่")];
+  };
+  const used = Object.entries(usage).filter(([, n]) => n > 0);
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div className="row" style={{ gap: 6 }}>
+        <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", { 0: ready, 1: MOODS.length })}</span>
+        {MOODS.map((m) => {
+          const [mark, hint] = state(m);
+          const suggest = SUGGESTED.includes(m) && !v.moods.some((x) => x.mood === m);
+          return (
+            <button key={m} type="button" className={`chip${suggest ? " suggest" : ""}`} aria-pressed={picked === m}
+              title={hint} aria-label={`${tx(MOOD_LABEL[m])} · ${hint}`} onClick={() => onPick(m)}>
+              {mark}{tx(MOOD_LABEL[m])}
+            </button>
+          );
+        })}
+      </div>
+      {missing.length > 0 && v.status === "ready" && (
+        <span className="dim">{tx("แนะนำให้อัด {0} ก่อน งานละครและการ์ตูนใช้อารมณ์เหล่านี้บ่อย เสียงที่มีอารมณ์ครบจะถูกแนะนำให้ผู้ใช้บ่อยขึ้น",
+          { 0: missing.map((m) => tx(MOOD_LABEL[m])).join(" ") })}</span>
+      )}
+      {v.moods.filter((x) => x.review === "rejected" && x.review_note).map((x) => (
+        <div key={x.mood} className="alert error">{tx("ผู้ดูแล ({0}):", { 0: tx(MOOD_LABEL[x.mood]) })} {x.review_note}</div>
+      ))}
+      {used.length > 0 && (
+        <span className="dim">{tx("ถูกใช้พากย์:")} {used.map(([m, n]) =>
+          tx("{0} {1} ประโยค", { 0: m ? tx(MOOD_LABEL[m as Mood]) : tx("ปกติ"), 1: n })).join(" · ")}</span>
+      )}
+    </div>
+  );
+}
+
 function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   const preview = usePreview();
   const [target, setTarget] = useState<{ voice?: LibraryVoice; mood?: Mood }>({});
@@ -155,7 +204,9 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
       setBlob(null);
       setKey((k) => k + 1);
       setTarget({});
-      setMessage({ kind: "info", text: tx("ส่งเสียงแล้ว ระบบกำลังเตรียมเสียง แล้วผู้ดูแลจะตรวจฟังก่อนขึ้นคลัง") });
+      setMessage({ kind: "info", text: target.mood
+        ? tx("ส่งเสียงอารมณ์แล้ว ระหว่างรอผู้ดูแลตรวจ เสียงหลักและอารมณ์อื่นยังใช้พากย์ได้ตามปกติ")
+        : tx("ส่งเสียงแล้ว ระบบกำลังเตรียมเสียง แล้วผู้ดูแลจะตรวจฟังก่อนขึ้นคลัง") });
       reload();
     } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); } finally { setBusy(false); }
   };
@@ -165,7 +216,7 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   };
 
   const lines = target.mood ? [MOOD_SCRIPT[target.mood]] : SCRIPT;
-  const title = target.mood ? tx("เสียงอารมณ์{0} ของ {1}", { 0: MOOD_LABEL[target.mood], 1: target.voice?.name })
+  const title = target.mood ? tx("เสียงอารมณ์{0} ของ {1}", { 0: tx(MOOD_LABEL[target.mood]), 1: target.voice?.name })
     : target.voice ? tx("อัดเสียงหลักของ {0} ใหม่", { 0: target.voice.name }) : tx("เสียงหลักใหม่");
   return (
     <>
@@ -211,19 +262,8 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
             </div>
             {v.error && <div className="alert error">{v.error}</div>}
             {v.review === "rejected" && v.review_note && <div className="alert error">{tx("ผู้ดูแล:")} {v.review_note}</div>}
-            <div className="row" style={{ gap: 6 }}>
-              <span className="dim">{tx("เสียงอารมณ์:")}</span>
-              {MOODS.map((m) => {
-                const got = v.moods.find((x) => x.mood === m);
-                return (
-                  <button key={m} type="button" className="chip" aria-pressed={target.voice?.id === v.id && target.mood === m}
-                    title={got ? tx("{0} กดเพื่ออัดใหม่", { 0: got.status === "ready" ? "มีแล้ว" : got.status === "failed" ? "ไม่สำเร็จ" : "กำลังเตรียม" }) : tx("กดเพื่ออัด")}
-                    onClick={() => setTarget({ voice: v, mood: m })}>
-                    {got?.status === "ready" ? "✓ " : got?.status === "processing" ? "… " : got ? "! " : "+ "}{tx(MOOD_LABEL[m])}
-                  </button>
-                );
-              })}
-            </div>
+            <MoodChips v={v} usage={me.mood_usage[v.id] ?? {}} picked={target.voice?.id === v.id ? target.mood : undefined}
+              onPick={(m) => setTarget({ voice: v, mood: m })} />
           </div>
         ))}
       </section>

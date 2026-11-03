@@ -167,6 +167,9 @@ class VoiceMood(BaseModel):
     quality: Optional[float] = None
     analysis: Optional[VoiceAnalysis] = None
     denoise: bool = False  # ลดเสียงรบกวนหลังแยกเพลง
+    # เสียงอารมณ์ของนักพากย์ (actors.py) เติมตอนส่งออกทาง API ไม่ได้เก็บกับเสียง
+    review: Optional[str] = None  # pending / approved / rejected
+    review_note: str = ""
 
 
 class SpeakerToLibrary(BaseModel):

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fileUrl, type LibraryVoice, type SpeakerVoice } from "@/lib/api";
-import { GENDER_LABEL } from "@/lib/format";
+import { GENDER_LABEL, MOOD_LABEL } from "@/lib/format";
 import { XIcon } from "./Icons";
 import VoiceAvatar from "./VoiceAvatar";
 import { PreviewButton, usePreview } from "./VoicePreview";
@@ -10,6 +10,11 @@ import { PreviewButton, usePreview } from "./VoicePreview";
 import { tx } from "@/lib/i18n";
 /** แถบเลือกเสียงจากคลังที่สไลด์ออกมาจากขวา เรียงตามความใกล้เคียงกับเสียงตัวละคร ค้นหาและกรองหมวดได้
  *  voiceId null = เลียนเสียงนักแสดงต้นฉบับ */
+/** เสียงอารมณ์ที่พร้อมใช้ (ผ่านการตรวจแล้วถ้าเป็นเสียงของนักพากย์) */
+const readyMoods = (v: LibraryVoice) => v.moods.filter((m) => m.status === "ready" && (m.review == null || m.review === "approved"));
+const moodCount = (v: LibraryVoice) => readyMoods(v).length;
+const moodTitle = (v: LibraryVoice) => readyMoods(v).map((m) => tx(MOOD_LABEL[m.mood])).join(", ");
+
 export default function VoicePicker({ cast, label, color, stemUrl, voices, selected, onPick, onClose }: {
   cast: SpeakerVoice;
   label: string;
@@ -106,7 +111,8 @@ export default function VoicePicker({ cast, label, color, stemUrl, voices, selec
                       {v.id === topId && <span className="badge awaiting_review">{tx("★ แนะนำ")}</span>}
                       {v.gender && <span className="badge queued">{tx(GENDER_LABEL[v.gender])}</span>}
                       {v.tone && <span className="badge queued">{v.tone}</span>}
-                      {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
+                      {moodCount(v) > 0 && <span className="badge done" title={moodTitle(v)}>{tx("อารมณ์ {0}", { 0: moodCount(v) })}</span>}
+                      {(v.categories ?? []).map((c) => <span key={c} className="badge category">{tx(c)}</span>)}
                     </span>
                     {v.description && <span className="dim pick-desc">{v.description}</span>}
                   </span>
