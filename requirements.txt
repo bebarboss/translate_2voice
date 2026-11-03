@@ -24,3 +24,7 @@ pythainlp>=5.0
 # ตัดคำญี่ปุ่น/จีน ใช้วางจุดหยุด (/) ในต้นฉบับที่ขอบคำ ไม่ตกกลางชื่อ (pauses.source_pauses)
 janome>=0.5.0
 jieba>=0.42
+# นำเข้าไทม์ไลน์จากโปรแกรมตัดต่อ (app/timeline): แกน OTIO + ตัวอ่าน Final Cut Pro XML และ FCPXML
+opentimelineio==0.18.1
+otio-fcp-adapter==1.0.0
+otio-fcpx-xml-adapter==1.0.0

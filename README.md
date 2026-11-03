@@ -206,6 +206,26 @@ Vercel รับ body ได้ไม่เกิน 4.5 MB หน้าเว�
 
 สถานะงาน: `queued` → `running` → (`awaiting_review` ถ้า `review=true`) → `done` หรือ `failed` / `cancelled`
 
+### นำเข้าไทม์ไลน์จากโปรแกรมตัดต่อ (`app/timeline/`)
+
+ส่งไทม์ไลน์จาก Premiere Pro หรือ DaVinci Resolve พร้อมไฟล์เสียงแยกแทร็ก ได้แทร็กพากย์ไทยแยกคนกลับไปวางบนไทม์ไลน์เดิม
+รองรับ Final Cut Pro XML (`.xml`), FCPXML (`.fcpxml`), EDL (`.edl`) และ OTIO (`.otio`) หรือ zip ที่รวมไทม์ไลน์กับไฟล์สื่อ
+
+| Method | Path | ทำอะไร |
+|---|---|---|
+| POST | `/timeline` | form-data: `file` (ไทม์ไลน์หรือ zip), `media` (ไฟล์สื่อ หลายไฟล์ได้), `fps` (จำเป็นสำหรับ EDL ที่ไม่บอก), `drop_frame`, `source_lang`, `target_lang`, `review`, `start` คืนแทร็ก คลิป และ `missing` (ไฟล์ที่ขาด) |
+| GET | `/jobs/{id}/timeline` | แทร็ก คลิป (timecode ตามไทม์ไลน์) ผู้พูด เสียงที่เลือก ไฟล์ที่ขาด |
+| POST | `/jobs/{id}/timeline/media` | อัปโหลดไฟล์ที่ขาด (`files` หลายไฟล์หรือ zip) |
+| PUT | `/jobs/{id}/timeline` | `{"tracks": [{"index": 1, "speaker_name": "พิธีกร", "voice_id": "...", "enabled": true}]}` ชื่อเดียวกัน = คนเดียวกัน, `enabled: false` = ไม่ใช่บทพูด (ใส่ในเสียงรวมอย่างเดียว) |
+| POST | `/jobs/{id}/timeline/start` | เริ่มถอดเสียงทีละแทร็ก → แปล → (ตรวจบท) → พากย์ด้วย `/jobs/{id}/synthesize` ตามปกติ |
+| GET | `/jobs/{id}/timeline/export?formats=xml,fcpxml,stems,mix,srt&media_dir=` | zip: ไทม์ไลน์ + แทร็กพากย์ไทยต่อคน, WAV แยกผู้พูดยาวเท่าไทม์ไลน์ (sample rate ของโปรเจกต์, 24-bit), เสียงรวม, SRT, README วิธี import |
+
+- `importer.py` อ่านไทม์ไลน์ด้วย OpenTimelineIO (EDL แปลงเอง เพราะ `cmx_3600` ของ OTIO 0.18 วางแทร็ก A2 ขึ้นไปผิดที่) จับคู่ไฟล์สื่อตามชื่อไฟล์
+- `processor.py` วางเสียงแต่ละแทร็กตามไทม์ไลน์ ถอดเสียงทีละผู้พูด (faster-whisper ตัวเดียวกับงานปกติ) แบ่งประโยคตรงรอยต่อคลิป และไม่ให้เสียงพากย์ล้นออกนอกคลิป
+- `exporter.py` เขียน Final Cut Pro XML ด้วย OTIO และเขียน FCPXML 1.9 เอง (ตัวเขียนของ OTIO ใช้กับไทม์ไลน์ที่ไม่ได้มาจาก Final Cut ไม่ได้)
+- `timecode.py` อัตราเฟรม NTSC ใช้เศษส่วนจริง (30000/1001) และ drop-frame ตาม SMPTE
+- ทดสอบ: `pip install pytest` แล้ว `python -m pytest tests/timeline` (ไฟล์ตัวอย่างใน `tests/timeline/fixtures/` เขียนตามรูปแบบที่ Premiere และ Resolve ส่งออก)
+
 ## เคล็ดลับ
 
 - **ใส่จำนวนตัวละคร** ถ้ารู้ การแยกผู้พูดจะแม่นขึ้นมาก

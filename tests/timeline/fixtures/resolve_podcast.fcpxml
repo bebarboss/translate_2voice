@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<!-- รูปแบบเดียวกับที่ DaVinci Resolve ส่งออก (File > Export > Timeline > FCPXML 1.9) 25 fps, 48 kHz, เริ่ม 01:00:00:00 -->
+<fcpxml version="1.9">
+    <resources>
+        <format id="r0" name="FFVideoFormat1080p25" frameDuration="1/25s" width="1920" height="1080"/>
+        <asset id="r1" name="anna_mic.wav" start="0/1s" duration="3000/25s" hasAudio="1" audioSources="1" audioChannels="1" audioRate="48000">
+            <media-rep kind="original-media" src="file:///Volumes/Media/Podcast/anna_mic.wav"/>
+        </asset>
+        <asset id="r2" name="ben_mic.wav" start="0/1s" duration="3000/25s" hasAudio="1" audioSources="1" audioChannels="1" audioRate="48000">
+            <media-rep kind="original-media" src="file:///Volumes/Media/Podcast/ben_mic.wav"/>
+        </asset>
+    </resources>
+    <library>
+        <event name="Podcast EP12">
+            <project name="Podcast EP12">
+                <sequence format="r0" duration="250/25s" tcStart="90000/25s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <gap name="Gap" offset="90000/25s" start="90000/25s" duration="250/25s">
+                            <asset-clip name="anna_mic.wav" lane="-1" offset="90000/25s" ref="r1" start="50/25s" duration="100/25s" format="r0" tcFormat="NDF" enabled="1"/>
+                            <asset-clip name="anna_mic.wav" lane="-1" offset="90150/25s" ref="r1" start="400/25s" duration="75/25s" format="r0" tcFormat="NDF" enabled="1"/>
+                            <asset-clip name="ben_mic.wav" lane="-2" offset="90100/25s" ref="r2" start="0/25s" duration="50/25s" format="r0" tcFormat="NDF" enabled="1"/>
+                        </gap>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

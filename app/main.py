@@ -1028,6 +1028,221 @@ def get_voice_mood_audio(voice_id: str, mood: Mood):
     return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
 
 
+# ---------------------------------------------------------------- ไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/)
+class TrackSetup(BaseModel):
+    index: int = Field(..., ge=1, description="ลำดับแทร็กเสียง (A1 = 1)")
+    enabled: Optional[bool] = Field(None, description="false = ไม่ใช่บทพูด (เพลง เสียงประกอบ) ไม่ถอดไม่พากย์ แต่ใส่ในเสียงรวม")
+    speaker_name: Optional[str] = Field(None, max_length=40, description="ชื่อผู้พูด หลายแทร็กชื่อเดียวกัน = คนเดียวกัน")
+    voice_id: Optional[str] = Field(None, description="เสียงในคลังที่ใช้พากย์ ว่าง = ใช้เสียงต้นฉบับของแทร็กเป็นตัวอย่าง")
+
+
+class TimelineSetup(BaseModel):
+    tracks: list[TrackSetup]
+
+
+def _timeline_job(job_id: str, setup: bool = False):
+    from .timeline import model as tl_model
+    job = get_job_or_404(job_id)
+    if not job.timeline:
+        raise HTTPException(404, "งานนี้ไม่ใช่งานไทม์ไลน์")
+    if setup and job.stage != "timeline_setup":
+        raise HTTPException(409, "เริ่มถอดเสียงไปแล้ว ตั้งค่าแทร็กไม่ได้ (แก้ผู้พูดของแต่ละประโยคในหน้าตรวจบทแทน)")
+    return job, tl_model.load(store.dir(job_id))
+
+
+def _timeline_out(job: Job, info) -> dict:
+    from .timeline import timecode as tc
+    from .timeline.model import dumps
+    out = dumps(info)
+    out["fps"] = round(info.fps, 3)
+    out["start_tc"] = tc.to_timecode(info.start, info.rate, info.drop_frame)
+    out["duration_tc"] = tc.to_timecode(info.duration, info.rate, info.drop_frame)
+    for t in out["tracks"]:
+        t["speaker_name"] = job.speaker_names.get(t["speaker"], "")
+        t["voice_id"] = job.voice_map.get(t["speaker"])
+        for c in t["clips"]:
+            c["start_tc"] = tc.to_timecode(info.start + c["start"], info.rate, info.drop_frame)
+            c["end_tc"] = tc.to_timecode(info.start + c["end"], info.rate, info.drop_frame)
+    return {"job": job.model_dump(mode="json"), "timeline": out}
+
+
+@app.post("/timeline", status_code=201, dependencies=[Depends(require_key_or_upload_token)])
+async def import_timeline(
+    request: Request,
+    file: UploadFile = File(..., description="ไฟล์ไทม์ไลน์ (.xml .fcpxml .edl .otio) หรือ zip ที่มีไทม์ไลน์และไฟล์สื่อ"),
+    media: list[UploadFile] = File([], description="ไฟล์เสียง/วิดีโอที่ไทม์ไลน์อ้างถึง (ส่งได้หลายไฟล์ หรือรวมใน zip)"),
+    fps: Optional[float] = Form(None, gt=0, le=120, description="อัตราเฟรม จำเป็นสำหรับ EDL ที่ไม่ได้บอกไว้"),
+    drop_frame: Optional[bool] = Form(None, description="บังคับ drop-frame (ไม่ส่ง = ดูจากไฟล์)"),
+    timeline_name: Optional[str] = Form(None, description="ชื่อไฟล์ไทม์ไลน์ใน zip เมื่อมีหลายไฟล์"),
+    source_lang: Optional[str] = Form(None, description="ภาษาต้นฉบับ ว่าง = ตรวจอัตโนมัติ"),
+    target_lang: str = Form("th"),
+    genre: str = Form("", max_length=80),
+    glossary: str = Form("", max_length=2000),
+    review: bool = Form(True, description="true = หยุดรอตรวจบทก่อนพากย์"),
+    start: bool = Form(False, description="true = ไฟล์สื่อครบแล้วเริ่มถอดเสียงเลย (ตั้งค่าแทร็กแบบเริ่มต้น)"),
+):
+    """นำเข้าไทม์ไลน์ อ่านแทร็กเสียง คลิป และไฟล์ที่อ้างถึง คืนรายชื่อไฟล์ที่ขาด (missing)
+    ขั้นต่อไป: อัปโหลดไฟล์ที่ขาด (POST /jobs/{id}/timeline/media) → ตั้งผู้พูดและเสียง (PUT /jobs/{id}/timeline)
+    → เริ่ม (POST /jobs/{id}/timeline/start)"""
+    from .timeline import importer, model as tl_model
+
+    owner = current_user_id(request)
+    if target_lang not in ("th", "en"):
+        raise HTTPException(400, "ภาษาพากย์ต้องเป็น th หรือ en")
+    job_id = store.new_id()
+    job_dir = store.dir(job_id)
+    base = job_dir / "timeline"
+    (base / "media").mkdir(parents=True, exist_ok=True)
+    name = Path(file.filename or "timeline").name
+    try:
+        if name.lower().endswith(".zip"):
+            tmp = job_dir / "upload.zip"
+            await save_upload(file, tmp, job_dir)
+            files = importer.extract_zip(tmp, base, settings.max_upload_mb * 2**20 * 4)
+            tmp.unlink(missing_ok=True)
+            tl_path = importer.find_timeline(files, timeline_name)
+        else:
+            if Path(name).suffix.lower() not in importer.TIMELINE_EXT:
+                raise importer.TimelineError(f"รองรับ {', '.join(sorted(importer.TIMELINE_EXT))} หรือ .zip")
+            tl_path = base / name
+            await save_upload(file, tl_path, job_dir)
+        for m in media:
+            if m.filename:
+                await save_upload(m, base / "media" / Path(m.filename).name, job_dir)
+        _, info = importer.read(tl_path, fps, drop_frame)
+        info.source = str(tl_path.relative_to(base)).replace("\\", "/")
+        importer.resolve_media(info, base, exclude=tl_path)
+    except importer.TimelineError as e:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(400, str(e))
+    tl_model.save(job_dir, info)
+    job = store.add(Job(id=job_id, filename=name, timeline=True, source_lang=(source_lang or "").strip().lower() or None,
+                        target_lang=target_lang, review=review, genre=genre.strip(), glossary=glossary.strip(),
+                        owner=owner, speakers=info.speakers(),
+                        speaker_names={t.speaker: t.name for t in info.dialogue()}))
+    job = store.update(job_id, status=JobStatus.awaiting_review, stage="timeline_setup")
+    if start and not info.missing:
+        return start_timeline(job_id, request)
+    return _timeline_out(job, info)
+
+
+@app.get("/jobs/{job_id}/timeline", dependencies=[Depends(require_key)])
+def get_timeline(job_id: str):
+    """แทร็ก คลิป (timecode ตามไทม์ไลน์) ผู้พูด เสียงที่เลือก และไฟล์ที่ยังขาด"""
+    job, info = _timeline_job(job_id)
+    return _timeline_out(job, info)
+
+
+@app.post("/jobs/{job_id}/timeline/media", dependencies=[Depends(require_key_or_upload_token)])
+async def add_timeline_media(job_id: str, files: list[UploadFile] = File(..., description="ไฟล์สื่อที่ขาด (หรือ zip)")):
+    """อัปโหลดไฟล์สื่อที่ไทม์ไลน์อ้างถึงเพิ่ม แล้วจับคู่ใหม่ คืนรายชื่อที่ยังขาด"""
+    from .timeline import importer, model as tl_model
+    job, info = _timeline_job(job_id, setup=True)
+    job_dir = store.dir(job_id)
+    base = job_dir / "timeline"
+    dest = base / "media"
+    for f in files:
+        name = Path(f.filename or "").name
+        if not name:
+            continue
+        if name.lower().endswith(".zip"):
+            tmp = job_dir / "upload.zip"
+            await save_upload(f, tmp, job_dir / "_none")
+            try:
+                importer.extract_zip(tmp, dest, settings.max_upload_mb * 2**20 * 4)
+            except importer.TimelineError as e:
+                raise HTTPException(400, str(e))
+            finally:
+                tmp.unlink(missing_ok=True)
+        else:
+            await save_upload(f, dest / name, job_dir / "_none")
+    importer.resolve_media(info, base, exclude=base / info.source)
+    tl_model.save(job_dir, info)
+    return _timeline_out(job, info)
+
+
+@app.put("/jobs/{job_id}/timeline", dependencies=[Depends(require_key)])
+def setup_timeline(job_id: str, body: TimelineSetup, request: Request):
+    """ตั้งค่าแทร็ก: เปิด/ปิด (บทพูดหรือไม่) ชื่อผู้พูด (ชื่อเดียวกัน = คนเดียวกัน) และเสียงพากย์จากคลัง
+    แทร็กที่ไม่ได้ส่งมาคงค่าเดิม"""
+    from .timeline import model as tl_model
+    job, info = _timeline_job(job_id, setup=True)
+    by_index = {t.index: t for t in info.tracks}
+    names = {t.speaker: job.speaker_names.get(t.speaker) or t.name for t in info.tracks if t.speaker}
+    voices = dict(job.voice_map)
+    wanted_name: dict[int, str] = {t.index: names.get(t.speaker, t.name) for t in info.tracks}
+    wanted_voice: dict[int, Optional[str]] = {t.index: voices.get(t.speaker) for t in info.tracks}
+    hidden = hidden_voices(request)
+    for s in body.tracks:
+        t = by_index.get(s.index)
+        if t is None or not t.clips:
+            raise HTTPException(400, f"ไม่มีแทร็กเสียง A{s.index} หรือแทร็กนี้ไม่มีคลิป")
+        if s.enabled is not None:
+            t.enabled = s.enabled
+        if s.speaker_name is not None and s.speaker_name.strip():
+            wanted_name[t.index] = s.speaker_name.strip()
+        if s.voice_id is not None:
+            if s.voice_id:
+                v = voice_store.get(s.voice_id) if s.voice_id not in hidden else None
+                if v is None or v.status != VoiceStatus.ready:
+                    raise HTTPException(400, f"เสียง {s.voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
+            wanted_voice[t.index] = s.voice_id or None
+    # ชื่อเดียวกัน = ผู้พูดคนเดียวกัน เรียงตามลำดับแทร็ก
+    ids: dict[str, str] = {}
+    speaker_names, voice_map = {}, {}
+    for t in info.tracks:
+        if not t.clips:
+            continue
+        label = wanted_name[t.index]
+        t.speaker = ids.setdefault(label, f"speaker_{len(ids) + 1:02d}")
+        speaker_names[t.speaker] = label
+        if t.enabled and wanted_voice[t.index]:
+            voice_map[t.speaker] = wanted_voice[t.index]
+    if not info.dialogue():
+        raise HTTPException(400, "ต้องเปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด")
+    tl_model.save(store.dir(job_id), info)
+    job = store.update(job_id, speakers=info.speakers(), speaker_names=speaker_names, voice_map=voice_map)
+    return _timeline_out(job, info)
+
+
+@app.post("/jobs/{job_id}/timeline/start", response_model=JobCreated, status_code=202, dependencies=[Depends(require_key)])
+def start_timeline(job_id: str, request: Request):
+    """เริ่มถอดเสียงทีละแทร็ก แปล (และพากย์ต่อเลยถ้าไม่ได้ขอตรวจบท)"""
+    job, info = _timeline_job(job_id, setup=True)
+    if info.missing:
+        raise HTTPException(409, "ไฟล์สื่อยังไม่ครบ: " + ", ".join(info.missing))
+    if not info.dialogue():
+        raise HTTPException(400, "ต้องเปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด")
+    owner = current_user_id(request)
+    _check_quota(owner)
+    if owner:
+        try:
+            accounts.can_start(owner)
+        except accounts.AccountError as e:
+            raise HTTPException(e.status, str(e))
+    store.update(job_id, status=JobStatus.queued, stage="queued", progress=0.0, error=None)
+    worker.submit(job_id, "analyze")
+    return JobCreated(id=job_id, status=JobStatus.queued)
+
+
+@app.get("/jobs/{job_id}/timeline/export", dependencies=[Depends(require_key)])
+def export_timeline(job_id: str, formats: str = "xml,fcpxml,stems,mix,srt", media_dir: Optional[str] = None):
+    """zip สำหรับนำกลับเข้าโปรแกรมตัดต่อ formats เลือกได้: xml (Premiere/Resolve), fcpxml (Resolve/Final Cut Pro),
+    stems (WAV แยกผู้พูด), mix (เสียงรวม), srt — มี README เสมอ
+    media_dir: โฟลเดอร์บนเครื่องผู้ตัดต่อที่จะวางไฟล์เสียงพากย์ ไม่ส่ง = TH_dub ข้างไฟล์เสียงเดิม"""
+    from .timeline import exporter
+    job, info = _timeline_job(job_id)
+    if job.status != JobStatus.done:
+        raise HTTPException(409, "ยังพากย์ไม่เสร็จ")
+    chosen = tuple(f.strip() for f in formats.split(",") if f.strip())
+    try:
+        z = exporter.build(store.dir(job_id), info, store.load_transcript(job_id), job.speaker_names, chosen,
+                           (media_dir or "").strip() or None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return FileResponse(z, media_type="application/zip", filename=z.name)
+
+
 # ---------------------------------------------------------------- นักพากย์ (actors.py)
 class ActorApply(BaseModel):
     stage_name: str = Field(..., min_length=1, max_length=60)

@@ -52,6 +52,10 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     d = store.dir(job_id)
     stage = _stage(store, job_id)
     cancel = lambda: store.check_cancel(job_id)  # noqa: E731
+    if job.timeline:  # ไทม์ไลน์จากโปรแกรมตัดต่อ: ถอดเสียงทีละแทร็ก (timeline/processor.py)
+        from ..timeline import processor
+        processor.run_analyze(store, job_id)
+        return
 
     if job.source_url and not (job.input_path and Path(job.input_path).exists()):
         from .download import download
@@ -201,7 +205,7 @@ def _pause_holes(g: list, p, orig: np.ndarray, sr: int, words: Optional[list]) -
 
 def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
                    voices_: Optional[dict] = None, pinned: frozenset = frozenset(),
-                   mood=lambda u: "") -> list[list]:
+                   mood=lambda u: "", part=lambda u: None) -> list[list]:
     """รวมท่อนที่พูดต่อกันเป็นประโยคเดียว (คนเดิม เว้นไม่เกิน max_gap และท่อนก่อนยังไม่จบประโยค) แล้วพากย์รวดเดียว
 
     ถ้าพากย์ทีละท่อน ทุกท่อนจะลงเสียงเหมือนจบประโยคและขาดเป็นช่วง ๆ ฟังไม่ต่อเนื่อง
@@ -209,6 +213,7 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     voices_: ไม่รวมท่อนที่เสียงต่างกันชัด (ระบบแยกผู้พูดอาจรวมเด็กกับผู้ใหญ่เป็นคนเดียว) ไม่งั้นทั้งคู่จะได้เสียงตัวอย่างเดียวกัน
     pinned: ผู้พูดที่ผู้ใช้เลือกเสียงจากคลังให้ ท่อนของคนนี้ห้ามไปรวมกับคนอื่น (และกลับกัน) ไม่งั้นได้เสียงผิดตัว
     mood: อารมณ์ที่ใช้พากย์ของแต่ละท่อน ท่อนต่างอารมณ์ใช้เสียงตัวอย่างคนละอัน จึงไม่รวมกัน
+    part: ท่อนต่างค่ากันห้ามรวมกัน (งานไทม์ไลน์: คนละคลิปหรือคนละแทร็ก ไม่ให้เสียงพากย์ข้ามรอยตัด)
     """
     from .transcribe import SENTENCE_END
     from .voices import clearly_different, of_run
@@ -218,7 +223,7 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
         g = groups[-1] if groups else None
         if (g and u.speaker == g[-1].speaker and u.start - g[-1].end <= max_gap
                 and u.end - g[0].start <= max_span and not g[-1].source.strip().endswith(SENTENCE_END)
-                and mood(u) == mood(g[-1])
+                and mood(u) == mood(g[-1]) and part(u) == part(g[-1])
                 and not clearly_different(of_run([g[-1]], voices_), of_run([u], voices_))):
             g.append(u)
         else:
@@ -229,7 +234,7 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     def differ(a, b) -> bool:
         if a[0].speaker != b[0].speaker and (a[0].speaker in pinned or b[0].speaker in pinned):
             return True
-        if mood(a[0]) != mood(b[0]):
+        if mood(a[0]) != mood(b[0]) or part(a[0]) != part(b[0]):
             return True
         return clearly_different(of_run(a, voices_), of_run(b, voices_))
     merged: list[list] = []
@@ -362,8 +367,13 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         """อารมณ์ที่ใช้พากย์จริง: ที่ผู้ใช้เลือก หรือที่ระบบเลือกให้ เฉพาะตัวละครที่ใช้เสียงในคลังและเสียงนั้นมีอารมณ์นั้น"""
         m = u.mood or u.mood_auto
         return m if m != "normal" and m in library_refs.get(u.speaker, {}) else ""
+    timeline, clip_spans, part = None, {}, (lambda u: None)
+    if job.timeline:  # ไม่รวมประโยคข้ามคลิปหรือข้ามแทร็ก และเสียงพากย์ไม่ล้นออกนอกคลิป
+        from ..timeline import model as tl_model, processor as tl
+        timeline = tl_model.load(d)
+        clip_spans, part = tl.speaker_spans(timeline), tl.dub_part(timeline)
     groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map,
-                            pinned=frozenset(library_refs), mood=mood_of)
+                            pinned=frozenset(library_refs), mood=mood_of, part=part)
     words = _load_words(d)
     if library_refs:
         log.info("library voices: %s", {s: sorted(k) for s, k in library_refs.items()})
@@ -415,6 +425,10 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                     log.info("line %d: overlaps next speaker, may run %.1fs past the cut", first.id,
                              until - first.start - limit_sec)
                     limit_sec = until - first.start
+        if timeline is not None:
+            end = tl.clip_end(timeline, clip_spans, speaker, (first.start + last.end) / 2)
+            if end is not None:
+                limit_sec = max(slot, min(limit_sec, end - first.start))
 
         p = _Plan(i, g, speaker, slot, limit_sec, max_speedup, max_slowdown, ref, ref_text, ref_key)
         # ประโยคที่บท ตัวละคร และเวลาเหมือนรอบก่อน → ใช้เสียงเดิม ไม่ต้องพากย์ใหม่
@@ -519,6 +533,15 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         _free_vram("transcribe")
     mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60)
     mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", rs.voice_gain, rs.bgm_gain)
+    if timeline is not None:  # ไม่มีวิดีโอ: เก็บเสียงพากย์แยกผู้พูดไว้ส่งออก (timeline/exporter.py)
+        subs.write_srt(utterances, d / "subtitles.srt")
+        dub = d / "timeline" / "dub"
+        dub.mkdir(parents=True, exist_ok=True)
+        for s in {_group_speaker(g) for g in groups}:
+            mine = [c for c, g in zip(clips, groups) if _group_speaker(g) == s]
+            mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60)
+        _record_voice_usage(job, groups, done, sr, library_refs)
+        return
     stage("mux_video", 0.95)
     mix.mux_video(video, d / "final_audio.wav", d / "output.mp4")
     subs.write_srt(utterances, d / "subtitles.srt")

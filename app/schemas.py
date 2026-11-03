@@ -101,6 +101,8 @@ class Job(BaseModel):
     # งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว ไม่แปลไม่พากย์ ผู้ใช้เลือกบันทึกเสียงของแต่ละคนลงคลัง
     library: bool = False
     saved_voices: dict[str, str] = Field(default_factory=dict)  # ผู้พูด → id เสียงในคลังที่บันทึกจากงานนี้
+    # งานไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/): แทร็กเสียงแยกคน ผลลัพธ์ส่งออกเป็น XML/FCPXML + เสียงแยกแทร็ก
+    timeline: bool = False
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
