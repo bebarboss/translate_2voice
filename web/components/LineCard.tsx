@@ -67,6 +67,9 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           {tr.overlaps.ids.has(u.id) && <span className="badge overlap" title={tx("ตัวละครอื่นพูดพร้อมกันในช่วงนี้ เสียงพากย์จะเล่นทับกัน")}>{tx("พูดซ้อน")}</span>}
           {changed && <span className="badge awaiting_review">{tx("แก้แล้ว")}</span>}
           {tooLong && <span className="badge warn">{tx("ยาวเกินเวลา")}</span>}
+          {!!u.heard && !changed && (
+            <span className="badge warn" title={tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })}>{tx("ควรฟัง")}</span>
+          )}
         </span>
       </div>
       <p className="src">{u.source}</p>

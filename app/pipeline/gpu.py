@@ -29,6 +29,7 @@ log = logging.getLogger("dubbing.gpu")
 Stage = Callable[[str, float], None]
 
 ANALYSIS_FILE = "gpu_analysis.json"  # ค่าที่คำนวณบน Modal ตอนวิเคราะห์ เก็บไว้ใช้ตอนพากย์
+CHECKS_KEY = "__checks__"  # คีย์ในผลพากย์จาก Modal ที่เก็บผลตรวจเสียงพากย์ (JSON) แทนเสียง
 PROGRESS_DICT = "dubbing-progress"  # modal.Dict ที่ฝั่ง Modal เขียนความคืบหน้าให้ฝั่งนี้อ่าน
 POLL_SEC = 2.0
 SOURCE_SR = 44100  # เสียงที่ส่งไปแยกเสียงพูด
@@ -41,6 +42,7 @@ REMOTE_FIELDS = (
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
     "diar_refine", "diar_exclusive", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
+    "dub_check", "dub_check_min", "dub_check_retries",
 )
 
 
@@ -208,8 +210,10 @@ def untranscribed_speech(utterances: list[Utterance], orig: np.ndarray, sr: int,
     return out
 
 
-def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float) -> np.ndarray:
-    """พากย์หนึ่งช่วง โมเดลปรับจังหวะพูดให้พอดีฉากเองตอนสร้างเสียง ไม่ต้องเร่งความเร็วทีหลัง"""
+def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
+               checks: Optional[dict] = None) -> np.ndarray:
+    """พากย์หนึ่งช่วง โมเดลปรับจังหวะพูดให้พอดีฉากเองตอนสร้างเสียง ไม่ต้องเร่งความเร็วทีหลัง
+    checks: ใส่ผลตรวจเสียงพากย์ id → [คะแนน, ที่ได้ยิน] (เฉพาะช่วงที่ line["check_text"])"""
     from .tts import SAMPLE_RATE
 
     # F5-TTS สุ่มได้เสียงเงียบเป็นครั้งคราว → สร้างใหม่ (สูงสุด 3 รอบ)
@@ -239,12 +243,28 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float)
                 v = once()
                 tries.append((gap(v), v))
             voice = min(tries, key=lambda x: x[0] if np.isfinite(x[0]) else 99)[1]
+    # F5-TTS บางรอบพูดไม่ตรงบท (ตกคำ พูดซ้ำ อ่านมั่ว) → ถอดเสียงพากย์กลับมาเทียบกับบท ไม่ผ่านก็พากย์ใหม่
+    if line.get("check_text") and settings.dub_check and not settings.mock_pipeline:
+        from .transcribe import heard, match_score
+        text = heard(voice, SAMPLE_RATE, line["target_lang"])
+        tries = [(match_score(line["text"], text), text, voice)]
+        for _ in range(settings.dub_check_retries):
+            if tries[-1][0] >= settings.dub_check_min:
+                break
+            log.info("line %s: dub sounds off (%.2f, heard %r), retrying", line["id"], tries[-1][0], tries[-1][1])
+            v = once()
+            text = heard(v, SAMPLE_RATE, line["target_lang"])
+            tries.append((match_score(line["text"], text), text, v))
+        score, text, voice = max(tries, key=lambda x: x[0])
+        if checks is not None:
+            checks[line["id"]] = [round(score, 3), text]
     return voice
 
 
 def synthesize_core(vocals: Path, lines: list[dict], steps: int, speed: float, refs: dict[str, Path],
-                    ref_dir: Path, on_progress: Optional[Callable[[float], None]] = None) -> dict[str, np.ndarray]:
-    """พากย์ทุกช่วงใน lines คืน id → เสียง 24 kHz (ยังไม่ตัดความเงียบ)
+                    ref_dir: Path, on_progress: Optional[Callable[[float], None]] = None,
+                    checks: Optional[dict] = None) -> dict[str, np.ndarray]:
+    """พากย์ทุกช่วงใน lines คืน id → เสียง 24 kHz (ยังไม่ตัดความเงียบ) ผลตรวจเสียงพากย์ใส่ใน checks
     เสียงตัวอย่าง: line["ref"] = คีย์ใน refs (เสียงในคลัง) หรือ ref_start/ref_end = ช่วงที่ตัดจาก vocals"""
     from .tts import SAMPLE_RATE
 
@@ -258,7 +278,7 @@ def synthesize_core(vocals: Path, lines: list[dict], steps: int, speed: float, r
             ref_path = ref_dir / f"ref_{round(start * 1000):08d}_{round(end * 1000):08d}.wav"
             if not ref_path.exists():
                 audio.cut_clip(vocals, start, end, ref_path, SAMPLE_RATE)
-        out[line["id"]] = speak_line(synthesize, ref_path, line, steps, speed)
+        out[line["id"]] = speak_line(synthesize, ref_path, line, steps, speed, checks)
         if on_progress:
             on_progress((i + 1) / len(lines))
     return out
@@ -321,8 +341,9 @@ def serve_synthesize(vocals_flac: bytes, lines: list[dict], steps: int, speed: f
             wav, sr = _decode(data)
             ref_paths[key] = work / f"library_{i}.wav"
             sf.write(ref_paths[key], wav, sr)
-        out = synthesize_core(vocals, lines, steps, speed, ref_paths, work, lambda f: report("tts", round(f, 3)))
-        return {key: _encode(wav, REF_SR) for key, wav in out.items()}
+        checks: dict = {}
+        out = synthesize_core(vocals, lines, steps, speed, ref_paths, work, lambda f: report("tts", round(f, 3)), checks)
+        return {**{key: _encode(wav, REF_SR) for key, wav in out.items()}, CHECKS_KEY: json.dumps(checks).encode()}
 
 
 # ================================================================ ฝั่งเครื่องนี้ (เรียก Modal)
@@ -486,10 +507,12 @@ def _ref_track(lines: list[dict], orig: np.ndarray, sr: int, gap: float = 0.5) -
 
 def synthesize_lines(vocals: Path, lines: list[dict], steps: int, speed: float, refs: dict[str, Path],
                      ref_dir: Path, on_progress: Optional[Callable[[float], None]] = None,
-                     check_cancel: Optional[Callable[[], None]] = None) -> dict[str, np.ndarray]:
-    """พากย์ทั้งชุด คืน id → เสียง 24 kHz โหมด modal แบ่งเป็นชุดละ MODAL_TTS_BATCH ประโยค ส่งพร้อมกัน"""
+                     check_cancel: Optional[Callable[[], None]] = None,
+                     checks: Optional[dict] = None) -> dict[str, np.ndarray]:
+    """พากย์ทั้งชุด คืน id → เสียง 24 kHz โหมด modal แบ่งเป็นชุดละ MODAL_TTS_BATCH ประโยค ส่งพร้อมกัน
+    checks: ใส่ผลตรวจเสียงพากย์ id → [คะแนน, ที่ได้ยิน]"""
     if not remote():
-        return synthesize_core(vocals, lines, steps, speed, refs, ref_dir)
+        return synthesize_core(vocals, lines, steps, speed, refs, ref_dir, checks=checks)
     if not lines:
         return {}
     orig, sr = _mono(vocals)
@@ -510,6 +533,9 @@ def synthesize_lines(vocals: Path, lines: list[dict], steps: int, speed: float, 
 
     out = {}
     for res in _run("synthesize_lines", calls, progress, check_cancel):
+        found = json.loads(res.pop(CHECKS_KEY, b"{}"))
+        if checks is not None:
+            checks.update(found)
         for key, data in res.items():
             out[key] = _decode(data)[0]
     return out

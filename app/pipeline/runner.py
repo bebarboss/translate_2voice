@@ -159,6 +159,8 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     store.save_transcript(job_id, utterances)
     from .. import memory
     memory.save_ai_targets(store.dir(job_id), utterances)  # เทียบภายหลังว่าผู้ใช้แก้บรรทัดไหน
+    from .. import quality
+    quality.snapshot(store.dir(job_id), utterances)
     stage("analyzed", hi)
 
 
@@ -518,13 +520,20 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                 p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
             lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
                        "target_lang": target, "slot": max(c.end - c.start, 0.3), "max_speedup": p.max_speedup,
-                       "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None}
+                       "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True}
                       for k, c in enumerate(p.chunks)]
         progress = (lambda f: stage("tts", lo + (hi - lo) * f)) if gpu.remote() else None
+        checks: dict = {}
         voices_ = gpu.synthesize_lines(vocals, lines, rs.f5_steps, settings.f5_speed, library_paths, refs_dir,
-                                       progress, cancel)
+                                       progress, cancel, checks)
         for p in batch:
             first = p.g[0]
+            # ผลตรวจเสียงพากย์: ช่วงที่แย่ที่สุดของประโยค ไม่ผ่านเกณฑ์ก็ติดป้ายให้ผู้ใช้ฟัง (ผ่าน = ล้างป้ายเดิม)
+            found = [checks[f"{first.id}:{k}"] for k in range(len(p.chunks)) if f"{first.id}:{k}" in checks]
+            worst = min(found, key=lambda x: x[0]) if found else None
+            bad = worst is not None and worst[0] < settings.dub_check_min
+            for u in p.g:
+                u.heard, u.heard_score = (worst[1], worst[0]) if bad else ("", worst[0] if worst else None)
             out, cursor = np.zeros(0, dtype=np.float32), 0
             for k, c in enumerate(p.chunks):
                 v = voices_[f"{first.id}:{k}"]
@@ -578,7 +587,10 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
     store.save_transcript(job_id, utterances)
     _free_vram("tts")
-    store.update(job_id, synth_stats=SynthStats(redubbed=redubbed, reused=reused))
+    unclear = sum(1 for g in groups if g[0].heard)
+    if unclear:
+        log.info("job %s: %d lines may not match the script: %s", job_id, unclear, [g[0].id for g in groups if g[0].heard])
+    store.update(job_id, synth_stats=SynthStats(redubbed=redubbed, reused=reused, unclear=unclear))
 
     stage("mix", 0.93)
     if not settings.mock_pipeline:
@@ -628,9 +640,19 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
 
 def _remember(store: JobStore, job_id: str, utterances: list[Utterance]) -> None:
-    """พากย์เสร็จ: เก็บบทที่ใช้จริงของงานในโปรเจกต์ลงความจำคำแปล (ล้มไม่ทำให้งานล้ม)"""
+    """พากย์เสร็จ: วัดว่าผู้ใช้แก้อะไรจากที่ AI ทำ (quality.py) และเก็บบทของงานในโปรเจกต์ลงความจำคำแปล
+    (ล้มไม่ทำให้งานล้ม)"""
     job = store.get(job_id)
-    if job is None or not job.project_id:
+    if job is None:
+        return
+    try:
+        from .. import quality
+        q = quality.record(job, utterances, store.dir(job_id))
+        if q:
+            log.info("job %s quality: %s", job_id, {k: q[k] for k in ("lines_ai", "text_edited", "speaker_changed", "retimed")})
+    except Exception:  # noqa: BLE001
+        log.exception("quality save failed for job %s", job_id)
+    if not job.project_id:
         return
     try:
         from .. import memory

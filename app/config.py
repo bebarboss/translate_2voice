@@ -174,6 +174,11 @@ class Settings:
     # เสียงพากย์หลุดจากเสียงตัวอย่างเกินกี่เซมิโทนให้พากย์ใหม่ และลองใหม่ได้กี่รอบ (0 = ไม่ลอง)
     voice_drift: float = _float("VOICE_DRIFT", 4.0)
     voice_retries: int = _int("VOICE_RETRIES", 1)
+    # ตรวจเสียงพากย์: ถอดเสียงพากย์กลับด้วย Whisper เทียบกับบท ตรงกันไม่ถึง DUB_CHECK_MIN (0–1) ให้พากย์ใหม่
+    # ได้ DUB_CHECK_RETRIES รอบ เก็บรอบที่ตรงที่สุด ยังไม่ผ่านก็ติดป้าย "ควรฟัง" ในหน้าผลงาน
+    dub_check: bool = _bool("DUB_CHECK", True)
+    dub_check_min: float = _float("DUB_CHECK_MIN", 0.6)
+    dub_check_retries: int = _int("DUB_CHECK_RETRIES", 2)
     # อารมณ์ตามต้นฉบับ (emotion.py): เลือกเสียงตัวอย่างที่ตื่นเต้นพอ ๆ กัน และขยายขีดเร่ง/ยืดตามอารมณ์
     emotion_match: bool = _bool("EMOTION_MATCH", True)
     ref_emotion_weight: float = _float("REF_EMOTION_WEIGHT", 0.5)

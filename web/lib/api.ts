@@ -33,7 +33,7 @@ export interface Job {
   sub_style: SubtitleStyle | null;
   speakers: string[];
   duration: number | null;
-  synth_stats: { redubbed: number; reused: number } | null;
+  synth_stats: { redubbed: number; reused: number; unclear?: number } | null;
   voice_map: Record<string, string>;
   queue_position?: number | null; // ลำดับคิว (เฉพาะตอนรอคิว)
   speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
@@ -268,6 +268,9 @@ export interface Utterance {
   mood: LineMood;
   mood_auto?: Mood | "";
   mood_auto_text?: string;
+  /** ตรวจเสียงพากย์แล้วไม่ตรงบท: สิ่งที่ระบบได้ยิน และคะแนน 0–1 */
+  heard?: string;
+  heard_score?: number | null;
   ref_reading: string;
 }
 
@@ -387,6 +390,9 @@ export const api = {
   closeAccount: (confirm: string) => request<void>("/auth/close", json("POST", { confirm })),
   backups: () => request<Backups>("/admin/backups"),
   backupNow: () => request<{ name: string; bytes: number }>("/admin/backups", { method: "POST" }),
+  quality: (days = 30) => request<Quality>(`/admin/quality?days=${days}`),
+  qualityLines: (days = 30, kind: QualityKind = "", limit = 50) =>
+    request<QualityLine[]>(`/admin/quality/lines?days=${days}&kind=${kind}&limit=${limit}`),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),
@@ -530,6 +536,20 @@ export const api = {
   },
 };
 
+export type QualityStats = {
+  jobs: number; lines: number; text_edited: number; speaker_changed: number; retimed: number;
+  added: number; removed: number; edit_distance: number; synth_runs: number; translations: number;
+};
+export type Quality = {
+  available: boolean; days: number; total: QualityStats;
+  weeks: (QualityStats & { key: string })[]; langs: (QualityStats & { key: string })[];
+};
+export type QualityLine = {
+  job_id: string; line_id: number; target_lang: string; source: string; ai_target: string; final_target: string;
+  ai_speaker: string; final_speaker: string; kinds: string; updated_at: string;
+};
+export type QualityKind = "" | "text" | "speaker" | "time";
+
 export type Backups = {
   dir: string; hours: number; keep: number;
   backups: { name: string; bytes: number; created_at: number }[];
@@ -546,6 +566,7 @@ export const fileUrl = {
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
   actorUsageCsv: (month: string) => `${BASE}/admin/actor-usage-csv?month=${month}`,
   actorWhtCsv: (month: string) => `${BASE}/admin/actor-wht-csv?month=${month}`,
+  qualityCsv: (days: number, kind = "") => `${BASE}/admin/quality/lines.csv?days=${days}&kind=${kind}`,
   stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceImage: (id: string, version = "") => `${BASE}/voices/${id}/image${version ? `?v=${encodeURIComponent(version)}` : ""}`,

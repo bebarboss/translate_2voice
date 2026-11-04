@@ -233,6 +233,13 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
           {tx("รอบล่าสุดพากย์ใหม่")} {job.synth_stats.redubbed}  {tx("ประโยค · ใช้เสียงเดิม")} {job.synth_stats.reused}  {tx("ประโยค")}
         </span>
       )}
+      {sorted.some((u) => u.heard) && (
+        <div className="alert info row" style={{ justifyContent: "space-between", gap: 12 }}>
+          <span>{tx("ระบบฟังเสียงพากย์แล้ว {0} ประโยคอาจพูดไม่ตรงบท (พากย์ใหม่ให้อัตโนมัติแล้วยังไม่ผ่าน) ลองฟัง แล้วกดสุ่มเสียงใหม่หรือแก้บทให้สั้นลง",
+            { 0: sorted.filter((u) => u.heard).length })}</span>
+          <button type="button" className="btn small" onClick={() => { const u = sorted.find((x) => x.heard); if (u) pick(u); }}>{tx("ไปประโยคแรก")}</button>
+        </div>
+      )}
       {message && <div className={`alert ${message.kind}`} role="alert">{message.text}</div>}
       {tr.message && <div className={`alert ${tr.message.kind}`} role={tr.message.kind === "error" ? "alert" : "status"}>{tr.message.text}</div>}
 

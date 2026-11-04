@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
-import { api, type AccountType, type AdminUser, type Backups, type Plan } from "@/lib/api";
+import { api, fileUrl, type AccountType, type AdminUser, type Backups, type Plan, type Quality, type QualityKind, type QualityLine } from "@/lib/api";
 import { fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
@@ -35,6 +35,98 @@ function BackupSection() {
           {data.hours > 0 ? tx("สำรองอัตโนมัติทุก {0} ชั่วโมง เก็บ {1} ชุดล่าสุด", { 0: data.hours, 1: data.keep }) : tx("ปิดการสำรองอัตโนมัติอยู่ (BACKUP_HOURS=0)")}
           {" · "}{last ? tx("ล่าสุด {0} ({1} MB) ทั้งหมด {2} ชุด", { 0: new Date(last.created_at * 1000).toLocaleString(locale()), 1: (last.bytes / 1e6).toFixed(1), 2: data.backups.length }) : tx("ยังไม่มีไฟล์สำรอง")}
         </span>
+      )}
+    </section>
+  );
+}
+
+/** ผู้ดูแล: ผู้ใช้แก้อะไรจากที่ AI ทำบ่อยแค่ไหน (วัดผลหลังปรับระบบ) และบรรทัดที่แก้ล่าสุด (ชุดทดสอบ) */
+const KIND_LABEL: Record<string, string> = { text: "คำแปล", speaker: "ผู้พูด", time: "เวลา" };
+const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+function QualitySection() {
+  const [days, setDays] = useState(30);
+  const [kind, setKind] = useState<QualityKind>("");
+  const [data, setData] = useState<Quality | null>(null);
+  const [lines, setLines] = useState<QualityLine[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => { api.quality(days).then(setData).catch((e) => setError(e.message)); }, [days]);
+  useEffect(() => { setLines(null); api.qualityLines(days, kind, 30).then(setLines).catch((e) => setError(e.message)); }, [days, kind]);
+  const t = data?.total;
+  return (
+    <section className="card" aria-labelledby="quality-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="quality-title" style={{ margin: 0 }}>{tx("คุณภาพงาน")}</h2>
+        <div className="seg" role="group" aria-label={tx("ช่วงเวลา")}>
+          {[7, 30, 90].map((d) => (
+            <button key={d} type="button" aria-pressed={days === d} onClick={() => setDays(d)}>{tx("{0} วัน", { 0: d })}</button>
+          ))}
+        </div>
+      </div>
+      <span className="muted" style={{ fontSize: 14 }}>
+        {tx("เทียบบทที่ AI ทำกับบทที่ผู้ใช้ใช้พากย์จริง ยิ่งต่ำยิ่งดี (นับทุกครั้งที่พากย์เสร็จ งานก่อนหน้านี้ไม่มีข้อมูล)")}
+      </span>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {data && !data.available && (
+        <div className="alert info">{tx("ยังไม่ได้สร้างตารางบน Supabase: รัน supabase/migrations/20261104010000_quality.sql ใน SQL Editor")}</div>
+      )}
+      {t && data?.available && (t.jobs === 0 ? <div className="empty">{tx("ยังไม่มีงานที่พากย์เสร็จในช่วงนี้")}</div> : <>
+        <div className="row" style={{ gap: 24, flexWrap: "wrap" }}>
+          {([
+            [tx("แก้คำแปล"), pct(t.text_edited)],
+            [tx("เปลี่ยนผู้พูด"), pct(t.speaker_changed)],
+            [tx("เลื่อนเวลา"), pct(t.retimed)],
+            [tx("ระยะแก้คำแปล"), pct(t.edit_distance)],
+            [tx("พากย์ต่องาน"), tx("{0} ครั้ง", { 0: t.synth_runs })],
+            [tx("งาน / บรรทัด"), `${fmtNum(t.jobs)} / ${fmtNum(t.lines)}`],
+          ] as [string, string][]).map(([k, v]) => (
+            <div key={k}><div className="dim">{k}</div><b className="mono" style={{ fontSize: 20 }}>{v}</b></div>
+          ))}
+        </div>
+        <table className="ledger" style={{ minWidth: 0 }}>
+          <thead><tr><th>{tx("สัปดาห์ / ภาษา")}</th><th>{tx("งาน")}</th><th>{tx("คำแปล")}</th><th>{tx("ผู้พูด")}</th><th>{tx("เวลา")}</th><th>{tx("ระยะแก้")}</th><th>{tx("พากย์ต่องาน")}</th></tr></thead>
+          <tbody>
+            {[...data.weeks.map((w) => ({ ...w, label: tx("สัปดาห์ {0}", { 0: new Date(w.key).toLocaleDateString(locale(), { day: "numeric", month: "short" }) }) })),
+              ...data.langs.map((l) => ({ ...l, label: l.key }))].map((r) => (
+              <tr key={r.label}>
+                <td>{r.label}</td><td className="mono">{r.jobs}</td><td className="mono">{pct(r.text_edited)}</td>
+                <td className="mono">{pct(r.speaker_changed)}</td><td className="mono">{pct(r.retimed)}</td>
+                <td className="mono">{pct(r.edit_distance)}</td><td className="mono">{r.synth_runs}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>)}
+      {data?.available && (
+        <>
+          <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+            <h3 style={{ margin: 0 }}>{tx("บรรทัดที่ผู้ใช้แก้ล่าสุด")}</h3>
+            <div className="row" style={{ gap: 8 }}>
+              <div className="seg" role="group" aria-label={tx("แบบที่แก้")}>
+                {(["", "text", "speaker", "time"] as QualityKind[]).map((k) => (
+                  <button key={k || "all"} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>{k ? tx(KIND_LABEL[k]) : tx("ทั้งหมด")}</button>
+                ))}
+              </div>
+              <a className="btn small" href={fileUrl.qualityCsv(days, kind)} download>{tx("ดาวน์โหลดชุดทดสอบ (CSV)")}</a>
+            </div>
+          </div>
+          {!lines ? <div className="empty">{tx("กำลังโหลด...")}</div> : lines.length === 0 ? <div className="empty">{tx("ยังไม่มี")}</div> : (
+            <table className="ledger" style={{ minWidth: 0 }}>
+              <thead><tr><th>{tx("งาน")}</th><th>{tx("ต้นฉบับ")}</th><th>{tx("AI")}</th><th>{tx("ผู้ใช้แก้เป็น")}</th></tr></thead>
+              <tbody>
+                {lines.map((l) => (
+                  <tr key={`${l.job_id}-${l.line_id}`}>
+                    <td><Link href={`/jobs/${l.job_id}`} className="mono">{l.job_id.slice(0, 6)}#{l.line_id}</Link>
+                      <div className="dim">{l.kinds.split(",").map((k) => tx(KIND_LABEL[k] ?? k)).join(" · ")}</div></td>
+                    <td className="muted">{l.source}</td>
+                    <td>{l.ai_target}{l.ai_speaker !== l.final_speaker && <div className="dim">{l.ai_speaker}</div>}</td>
+                    <td>{l.final_target}{l.ai_speaker !== l.final_speaker && <div className="dim">{l.final_speaker}</div>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
       )}
     </section>
   );
@@ -134,7 +226,7 @@ function UsersSection({ me, billing }: { me: string; billing: boolean }) {
   );
 }
 
-/** ผู้ดูแลระบบ: ผู้ใช้ทั้งหมด (เครดิต แพ็กเกจ สิทธิ์ผู้ดูแล) และการสำรองข้อมูล */
+/** ผู้ดูแลระบบ: ผู้ใช้ทั้งหมด (เครดิต แพ็กเกจ สิทธิ์ผู้ดูแล) คุณภาพงาน และการสำรองข้อมูล */
 export default function AdminPage() {
   const { config, user, loaded } = useAuth();
   useEffect(() => {
@@ -155,6 +247,7 @@ export default function AdminPage() {
         </div>
       </div>
       <UsersSection me={user.id} billing={config.billing} />
+      <QualitySection />
       <BackupSection />
     </main>
   );

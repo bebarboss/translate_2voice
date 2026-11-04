@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import accounts, actors, backup, consent, memory, notify, projects, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -412,6 +412,7 @@ def delete_job(job_id: str):
     job = get_job_or_404(job_id)
     if job.status in ACTIVE:
         raise HTTPException(409, "งานกำลังทำงานอยู่ กดยกเลิกก่อนแล้วค่อยลบ")
+    quality.forget_job(job_id)
     store.delete(job_id)
 
 
@@ -1734,6 +1735,7 @@ def close_my_account(body: CloseAccount, user=Depends(require_user)):
     for j in jobs:
         store.delete(j.id)
     consent.forget(uid)
+    quality.forget_owner(uid)
     own = [p.id for p in projects.get_store().all() if p.owner == uid]
     memory.forget_projects(own)
     for pid in own:
@@ -1750,6 +1752,39 @@ def admin_backups(_=Depends(require_admin)):
     """ไฟล์สำรองข้อมูลที่มี (ใหม่ก่อน) และตั้งค่าปัจจุบัน"""
     return {"dir": str(settings.backup_dir), "hours": settings.backup_hours, "keep": settings.backup_keep,
             "backups": backup.list_backups()}
+
+
+@app.get("/admin/quality", dependencies=[Depends(require_key)])
+def admin_quality(days: int = 30, _=Depends(require_admin)):
+    """สัดส่วนบรรทัดที่ผู้ใช้แก้จากที่ AI ทำ (คำแปล ผู้พูด เวลา) รวม รายสัปดาห์ และแยกคู่ภาษา"""
+    return quality.summary(max(1, min(days, 365)))
+
+
+@app.get("/admin/quality/lines", dependencies=[Depends(require_key)])
+def admin_quality_lines(days: int = 30, kind: str = "", limit: int = 50, _=Depends(require_admin)):
+    """บรรทัดที่ผู้ใช้แก้ล่าสุด kind = text / speaker / time"""
+    if kind not in ("", "text", "speaker", "time"):
+        raise HTTPException(422, "kind ต้องเป็น text, speaker หรือ time")
+    return quality.edited_lines(max(1, min(days, 365)), kind, max(1, min(limit, 500)))
+
+
+@app.get("/admin/quality/lines.csv", dependencies=[Depends(require_key)])
+def admin_quality_csv(days: int = 90, kind: str = "", _=Depends(require_admin)):
+    """ชุดทดสอบ: ต้นฉบับ บทของ AI และบทที่ผู้ใช้แก้ (ใช้วัดผลหลังปรับ prompt หรือเปลี่ยนโมเดล)"""
+    if kind not in ("", "text", "speaker", "time"):
+        raise HTTPException(422, "kind ต้องเป็น text, speaker หรือ time")
+    import csv
+    import io
+
+    rows = quality.edited_lines(max(1, min(days, 365)), kind)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    cols = ["job_id", "line_id", "target_lang", "kinds", "source", "ai_target", "final_target", "ai_speaker", "final_speaker", "updated_at"]
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([r.get(c, "") for c in cols])
+    return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv",
+                    headers={"content-disposition": "attachment; filename=quality-lines.csv"})
 
 
 @app.post("/admin/backups", dependencies=[Depends(require_key)])

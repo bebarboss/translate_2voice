@@ -35,6 +35,35 @@ def unload() -> None:
     _model = None
 
 
+def heard(wav, sr: int, language: str) -> str:
+    """ถอดเสียงพากย์สั้น ๆ (numpy) กลับเป็นข้อความ ใช้ตรวจว่าเสียงพากย์พูดตรงบทไหม (gpu.speak_line)"""
+    import numpy as np
+
+    if sr != 16000:  # Whisper ต้องการ 16 kHz (ประมาณค่าเชิงเส้นพอสำหรับการตรวจ)
+        n = int(len(wav) * 16000 / sr)
+        wav = np.interp(np.linspace(0, len(wav) - 1, n), np.arange(len(wav)), wav)
+    segments, _ = _load().transcribe(np.asarray(wav, dtype=np.float32), language=language, beam_size=1,
+                                     vad_filter=False, condition_on_previous_text=False, without_timestamps=True)
+    return " ".join(s.text.strip() for s in segments).strip()
+
+
+def _letters(text: str) -> str:
+    """ตัวอักษรและตัวเลขอย่างเดียว ตัวพิมพ์เล็ก (ไม่นับช่องว่าง วรรคตอน และ / จุดหยุด)"""
+    text = unicodedata.normalize("NFC", text).lower()
+    return "".join(ch for ch in text if unicodedata.category(ch)[0] in "LMN")
+
+
+def match_score(expected: str, got: str) -> float:
+    """บทที่ส่งไปพากย์กับที่ถอดเสียงพากย์ได้ ตรงกันแค่ไหน (0–1) บทสั้นมาก (ไม่ถึง 4 ตัว) ถือว่าผ่าน
+    เพราะ Whisper ถอดคำเดียวพลาดบ่อย ("ครับ" → "คับ") ตัวเลขในบทกับคำอ่านที่ได้ยินนับเป็นไม่ตรงบางส่วน"""
+    import difflib
+
+    a, b = _letters(expected), _letters(got)
+    if len(a) < 4:
+        return 1.0
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+
 def detect_language(wav16k: Path) -> str:
     """ภาษาที่พูดในคลิป ตรวจจากเสียงทั้งช่วงโดยไม่ผ่าน VAD
     faster-whisper ตรวจภาษาจากเสียงที่ผ่าน VAD เมื่อถอดเสียงพร้อม vad_filter=True ซึ่งตัดเสียงเป็นท่อนแล้วต่อกัน

@@ -48,6 +48,9 @@ class Utterance(BaseModel):
     mood: str = ""
     mood_auto: str = ""  # อารมณ์ที่ระบบเลือกให้ ("" = ปกติ) ใช้เมื่อ mood = ""
     mood_auto_text: str = ""  # บทพากย์ตอนที่เลือก mood_auto บทเปลี่ยนแล้วเลือกใหม่
+    # ตรวจเสียงพากย์ (gpu.speak_line): ถอดเสียงพากย์กลับแล้วไม่ตรงบทแม้พากย์ใหม่แล้ว → สิ่งที่ได้ยิน และคะแนน 0–1
+    heard: str = ""
+    heard_score: Optional[float] = None
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property
@@ -73,6 +76,7 @@ class UtteranceSplit(BaseModel):
 class SynthStats(BaseModel):
     redubbed: int = 0  # ประโยคที่พากย์ใหม่รอบล่าสุด
     reused: int = 0  # ประโยคที่ใช้เสียงเดิม
+    unclear: int = 0  # ประโยคที่ตรวจแล้วเสียงพากย์ไม่ตรงบท (ควรฟัง)
 
 
 class Job(BaseModel):
