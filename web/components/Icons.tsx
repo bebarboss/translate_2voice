@@ -82,3 +82,6 @@ export const TagIcon = ({ size = 18, color = "currentColor" }: P) =>
 
 export const ShieldIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>);
+
+export const FolderIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);

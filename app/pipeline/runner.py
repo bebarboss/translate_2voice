@@ -125,6 +125,9 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     span = hi - lo
     title = Path(job.filename or "").stem
     from . import translate as translate_mod  # ชื่อ translate ในฟังก์ชันนี้คือฟังก์ชันแปล
+    from .. import projects
+    job, project = _apply_project(store, job_id, utterances)
+    hints = projects.project_hints(project, {**hints, "names": job.speaker_names})
     if settings.story_analysis and not settings.mock_pipeline and settings.typhoon_api_key:
         stage("story", lo)
         try:  # อ่านบททั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ (ขั้นเสริม ล้มก็แปลต่อตามเดิม)
@@ -137,6 +140,8 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         except Exception as exc:  # noqa: BLE001
             log.warning("story analysis failed for job %s: %s", job_id, exc)
     hints = translate_mod.story_hints(job.story, hints)
+    for s, info in projects.character_info(project, job.project_matches, job.speaker_names).items():
+        hints.setdefault("characters", {})[s] = {**hints.get("characters", {}).get(s, {}), **info}
     stage("translate", lo)
     translate(utterances, lang, job.target_lang,
               on_progress=lambda f: stage("translate", lo + span * 0.75 * f), check_cancel=cancel,
@@ -148,6 +153,35 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
     stage("analyzed", hi)
+
+
+def _apply_project(store: JobStore, job_id: str, utterances: list[Utterance]):
+    """งานในโปรเจกต์: จับคู่ผู้พูดกับตัวละครของโปรเจกต์ด้วยลายเสียง ที่มั่นใจตั้งชื่อและเสียงพากย์ให้
+    (ไม่ทับชื่อหรือเสียงที่ผู้ใช้ตั้งเองในงานนี้) คืน (งาน, โปรเจกต์) ไม่อยู่ในโปรเจกต์คืน (งาน, None)"""
+    job = store.get(job_id)
+    if not job.project_id:
+        return job, None
+    from .. import projects
+    project = projects.get_store().get(job.project_id)
+    if project is None or not project.characters:
+        return job, project
+    try:
+        from . import library
+        matches = projects.match_speakers(project, library.speaker_profiles(store.dir(job_id), utterances))
+    except Exception as exc:  # noqa: BLE001  ขั้นเสริม จับคู่ไม่ได้ก็ทำงานต่อแบบไม่มีโปรเจกต์
+        log.warning("project match failed for job %s: %s", job_id, exc)
+        return job, project
+    by_id = {c.id: c for c in project.characters}
+    names, voices = dict(job.speaker_names or {}), dict(job.voice_map or {})
+    for s, m in matches.items():
+        c = by_id[m["character"]]
+        m["name"] = c.name
+        if m["sure"]:
+            names.setdefault(s, c.name)
+            if c.voice_id and s not in voices:
+                voices[s] = c.voice_id
+    log.info("job %s project %s matches: %s", job_id, project.id, matches)
+    return store.update(job_id, project_matches=matches, speaker_names=names, voice_map=voices), project
 
 
 def _marked_sources(d: Path, utterances: list[Utterance]) -> dict[int, str]:

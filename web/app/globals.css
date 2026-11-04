@@ -724,3 +724,11 @@ body { background: var(--bg); }
 .story-char { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); }
 .story-issues { display: grid; gap: 6px; }
 .retranslate summary .badge { margin-left: auto; }
+.project-card { display: flex; flex-direction: column; gap: 6px; padding: 18px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); text-decoration: none; transition: border-color .15s, background .15s; }
+.project-card:hover { border-color: var(--border-3); color: var(--text); }
+.project-card b { font-size: 16px; font-weight: 600; }
+.project-icon { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 6px;
+  background: var(--accent-soft); color: var(--accent); }
+.project-match { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.project-match:last-child { border-bottom: none; }

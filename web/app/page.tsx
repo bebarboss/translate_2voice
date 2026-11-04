@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { api, uploadJob, type CreateOptions, type Job, type TargetLang } from "@/lib/api";
+import { api, uploadJob, type CreateOptions, type Job, type Project, type TargetLang } from "@/lib/api";
 import { GENRES, LANGS, TARGET_LABEL, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { ArrowRight, LinkIcon, UploadIcon } from "@/components/Icons";
@@ -28,6 +28,8 @@ export default function UploadPage() {
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [recent, setRecent] = useState<Job[] | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState("");
   const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -37,7 +39,20 @@ export default function UploadPage() {
       setBurnSubs(s.default_burn_subs);
     }).catch(() => { /* ใช้ค่าเริ่มต้นในหน้าเว็บ */ });
     api.listJobs().then((j) => setRecent(j.slice(0, 5))).catch(() => setRecent([]));
+    // ?project=<id> จากปุ่ม "ส่งคลิปเข้าโปรเจกต์" เลือกโปรเจกต์นั้นไว้ให้
+    const wanted = new URLSearchParams(window.location.search).get("project") ?? "";
+    api.listProjects().then((list) => {
+      setProjects(list);
+      const p = list.find((x) => x.id === wanted);
+      if (p) { setProjectId(p.id); setTargetLang(p.target_lang); }
+    }).catch(() => setProjects([]));
   }, []);
+  const project = projects.find((p) => p.id === projectId);
+  const pickProject = (id: string) => {
+    setProjectId(id);
+    const p = projects.find((x) => x.id === id);
+    if (p) setTargetLang(p.target_lang);
+  };
 
   const pickFile = (f: File | undefined | null) => {
     setError("");
@@ -58,7 +73,7 @@ export default function UploadPage() {
     setBusy(true);
     const opts: CreateOptions = {
       sourceLang, targetLang, review, burnSubs, genre: genre.trim(), glossary: glossary.trim(),
-      numSpeakers: speakers ? Number(speakers) : null,
+      numSpeakers: speakers ? Number(speakers) : null, projectId: projectId || undefined,
     };
     try {
       let id: string;
@@ -132,6 +147,20 @@ export default function UploadPage() {
             </div>
           </div>
           <span className="dim">{tx("รองรับ YouTube, TikTok, Facebook, Bilibili และเว็บอื่นที่ yt-dlp รองรับ · คลิปยาวไม่เกิน 60 นาที")}</span>
+        </div>
+      )}
+
+      {projects.length > 0 && (
+        <div className="card tight field">
+          <label htmlFor="proj">{tx("โปรเจกต์")}</label>
+          <select id="proj" className="select" value={projectId} onChange={(e) => pickProject(e.target.value)}>
+            <option value="">{tx("ไม่อยู่ในโปรเจกต์")}</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <span className="dim">
+            {project ? tx("ใช้ตัวละคร {0} ตัว เสียงพากย์ และชื่อเฉพาะของโปรเจกต์นี้ ระบบจับคู่ตัวละครด้วยลายเสียงให้เอง", { 0: project.characters.length })
+              : tx("พากย์ซีรีส์หลายตอน? เลือกโปรเจกต์ ตอนนี้จะได้ชื่อตัวละครและเสียงพากย์ตามตอนก่อน ๆ")}
+          </span>
         </div>
       )}
 

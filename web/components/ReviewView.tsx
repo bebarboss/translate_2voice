@@ -6,6 +6,7 @@ import { api, fileUrl, type Job, type Utterance } from "@/lib/api";
 import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, stripPauseMarks } from "@/lib/format";
 import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
+import ProjectPanel from "./ProjectPanel";
 import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
@@ -151,6 +152,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
+      <ProjectPanel job={job} label={tr.label} onChanged={onChanged} />
       <RetranslatePanel job={job} names={tr.names} onStarted={onChanged}
         onJump={(id) => { const u = tr.sorted.find((x) => x.id === id); if (u) { setPicked(id); seek(u.start); } }} />
 

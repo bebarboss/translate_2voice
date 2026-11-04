@@ -10,6 +10,7 @@ import { useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import SpeakerLanes from "./SpeakerLanes";
 import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
+import ProjectPanel from "./ProjectPanel";
 import SubtitleStylePanel from "./SubtitleStylePanel";
 import { ArrowLeft, ArrowRight, CheckIcon, DownloadIcon, MicIcon, PlayIcon } from "./Icons";
 
@@ -234,6 +235,8 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       )}
       {message && <div className={`alert ${message.kind}`} role="alert">{message.text}</div>}
       {tr.message && <div className={`alert ${tr.message.kind}`} role={tr.message.kind === "error" ? "alert" : "status"}>{tr.message.text}</div>}
+
+      <ProjectPanel job={job} label={tr.label} onChanged={onChanged} />
 
       <div className="split">
         <section className="main" aria-label={tx("วิดีโอที่พากย์แล้ว")}>

@@ -20,11 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import accounts, actors, backup, consent, notify, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, notify, projects, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
-from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood,
+from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
@@ -126,6 +126,11 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
         job = store.get(job_id)
         if job is not None and job.owner != user["id"]:
             raise HTTPException(404, "ไม่พบงานนี้")
+    project_id = request.path_params.get("project_id")
+    if project_id:
+        proj = projects.get_store().get(project_id)
+        if proj is not None and proj.owner != user["id"]:
+            raise HTTPException(404, "ไม่พบโปรเจกต์นี้")
     voice_id = request.path_params.get("voice_id")
     if voice_id and voice_id in hidden_voices(request):
         raise HTTPException(404, "ไม่พบเสียงนี้ในคลัง")
@@ -309,8 +314,14 @@ async def create_job(
     genre: str = Form("", max_length=80, description="แนวเรื่อง เช่น การ์ตูนเด็ก ละครจีนโบราณ ช่วยเลือกสรรพนามตอนแปล"),
     glossary: str = Form("", max_length=2000, description="ชื่อเฉพาะและคำแปล บรรทัดละคำ เช่น ドラえもん = โดราเอมอน"),
     library: bool = Form(False, description="true = คลิปสำหรับเก็บเสียงเข้าคลัง (รับไฟล์เสียงได้) แยกผู้พูดและถอดเสียงแล้วหยุดรอ ไม่แปลไม่พากย์"),
+    project_id: Optional[str] = Form(None, description="ส่งเข้าโปรเจกต์ จับคู่ตัวละคร ชื่อเฉพาะ และเสียงพากย์ตามที่โปรเจกต์จำไว้"),
 ):
     owner = current_user_id(request)
+    project = None
+    if project_id:
+        project = projects.get_store().get(project_id)
+        if project is None or (owner and project.owner != owner and not accounts.is_admin(request.state.user)):
+            raise HTTPException(404, "ไม่พบโปรเจกต์นี้")
     _check_quota(owner)
     if owner:
         try:
@@ -318,7 +329,7 @@ async def create_job(
         except accounts.AccountError as e:
             raise HTTPException(e.status, str(e))
     rs = runtime_settings.get()
-    target = (target_lang or rs.default_target_lang).strip().lower()
+    target = (target_lang or (project.target_lang if project else "") or rs.default_target_lang).strip().lower()
     if target not in ("th", "en"):
         raise HTTPException(400, "ภาษาพากย์ต้องเป็น th หรือ en")
     url = (url or "").strip()
@@ -361,6 +372,7 @@ async def create_job(
         genre=genre.strip(),
         glossary=glossary.strip(),
         owner=owner,
+        project_id=project.id if project and not library else None,
     ))
     worker.submit(job.id, "analyze")
     return JobCreated(id=job.id, status=JobStatus.queued)
@@ -1272,6 +1284,187 @@ def export_timeline(job_id: str, formats: str = "xml,fcpxml,stems,mix,srt", medi
         raise HTTPException(400, str(e))
     return FileResponse(z, media_type="application/zip", filename=z.name)
 
+
+
+# ---------------------------------------------------------------- โปรเจกต์ (projects.py)
+class ProjectIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    genre: str = Field("", max_length=120)
+    glossary: str = Field("", max_length=4000)
+    speech_style: str = Field("", max_length=400)
+    target_lang: TargetLang = "th"
+
+
+class ProjectPatch(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=80)
+    genre: Optional[str] = Field(None, max_length=120)
+    glossary: Optional[str] = Field(None, max_length=4000)
+    speech_style: Optional[str] = Field(None, max_length=400)
+    target_lang: Optional[TargetLang] = None
+
+
+class CharacterPatch(BaseModel):
+    name: Optional[str] = Field(None, max_length=60)
+    gender: Optional[str] = Field(None, max_length=10)
+    role: Optional[str] = Field(None, max_length=200)
+    self: Optional[str] = Field(None, max_length=40)
+    addresses: Optional[str] = Field(None, max_length=120)
+    voice_id: Optional[str] = Field(None, max_length=40, description="ว่าง = เลียนเสียงต้นฉบับ")
+
+
+class JobProject(BaseModel):
+    project_id: Optional[str] = Field(None, description="null = เอางานออกจากโปรเจกต์")
+
+
+class ProjectSync(BaseModel):
+    """ผู้พูด → id ตัวละครในโปรเจกต์ที่จะบันทึกทับ, "new" = ตัวละครใหม่, "skip" = ไม่บันทึก
+    ไม่ส่งผู้พูดไหน ใช้ผลจับคู่ที่มั่นใจ (หรือสร้างตัวใหม่ถ้าตั้งชื่อไว้)"""
+    mapping: dict[str, str] = Field(default_factory=dict)
+    settings: bool = Field(False, description="true = บันทึกแนวเรื่อง ชื่อเฉพาะ และระดับภาษาของงานนี้เป็นค่าของโปรเจกต์ด้วย")
+
+
+def get_project_or_404(project_id: str):
+    p = projects.get_store().get(project_id)
+    if p is None:
+        raise HTTPException(404, "ไม่พบโปรเจกต์นี้")
+    return p
+
+
+def _own_projects(request: Request) -> list:
+    user = getattr(request.state, "user", None)
+    items = projects.get_store().all()
+    return items if user is None or accounts.is_admin(user) else [p for p in items if p.owner == user["id"]]
+
+
+def _episodes(project_id: str) -> list[Job]:
+    return [j for j in store.all() if j.project_id == project_id]
+
+
+@app.get("/projects", dependencies=[Depends(require_key)])
+def list_projects(request: Request):
+    """โปรเจกต์ของผู้ใช้ (ใหม่ก่อน) พร้อมจำนวนตอน"""
+    counts: dict[str, int] = {}
+    for j in store.all():
+        if j.project_id:
+            counts[j.project_id] = counts.get(j.project_id, 0) + 1
+    return [projects.public(p, counts.get(p.id, 0)) for p in _own_projects(request)]
+
+
+@app.post("/projects", status_code=201, dependencies=[Depends(require_key)])
+def create_project(body: ProjectIn, request: Request):
+    p = Project(id=projects.ProjectStore.new_id(), owner=current_user_id(request), name=body.name.strip(),
+                genre=body.genre.strip(), glossary=body.glossary.strip(), speech_style=body.speech_style.strip(),
+                target_lang=body.target_lang)
+    return projects.public(projects.get_store().add(p))
+
+
+@app.get("/projects/{project_id}", dependencies=[Depends(require_key)])
+def get_project(project_id: str):
+    """โปรเจกต์พร้อมตอนทั้งหมด (ใหม่ก่อน)"""
+    p = get_project_or_404(project_id)
+    eps = _episodes(project_id)
+    return {**projects.public(p, len(eps)), "jobs": [j.model_dump(mode="json") for j in eps]}
+
+
+@app.patch("/projects/{project_id}", dependencies=[Depends(require_key)])
+def update_project(project_id: str, body: ProjectPatch):
+    p = get_project_or_404(project_id)
+    for k, v in body.model_dump(exclude_unset=True).items():
+        if v is not None:
+            setattr(p, k, v.strip() if isinstance(v, str) else v)
+    return projects.public(projects.get_store().save(p), len(_episodes(project_id)))
+
+
+@app.delete("/projects/{project_id}", status_code=204, dependencies=[Depends(require_key)])
+def delete_project(project_id: str):
+    """ลบโปรเจกต์ งานในโปรเจกต์ยังอยู่ (แค่ไม่อยู่ในโปรเจกต์แล้ว)"""
+    get_project_or_404(project_id)
+    for j in _episodes(project_id):
+        store.update(j.id, project_id=None, project_matches={})
+    projects.get_store().delete(project_id)
+
+
+@app.patch("/projects/{project_id}/characters/{char_id}", dependencies=[Depends(require_key)])
+def update_character(project_id: str, char_id: str, body: CharacterPatch, request: Request):
+    """แก้ตัวละครของโปรเจกต์ (ชื่อ ข้อมูลให้ผู้แปล เสียงพากย์) มีผลกับงานที่ส่งเข้ามาหลังจากนี้"""
+    p = get_project_or_404(project_id)
+    c = next((x for x in p.characters if x.id == char_id), None)
+    if c is None:
+        raise HTTPException(404, "ไม่พบตัวละครนี้")
+    fields = body.model_dump(exclude_unset=True)
+    if "voice_id" in fields:
+        vid = fields.pop("voice_id") or None
+        if vid and (voice_store.get(vid) is None or vid in hidden_voices(request)):
+            raise HTTPException(400, "ไม่พบเสียงนี้ในคลัง")
+        c.voice_id = vid
+    for k, v in fields.items():
+        if v is not None:
+            setattr(c, k, v.strip())
+    return projects.public(projects.get_store().save(p), len(_episodes(project_id)))
+
+
+@app.delete("/projects/{project_id}/characters/{char_id}", dependencies=[Depends(require_key)])
+def delete_character(project_id: str, char_id: str):
+    p = get_project_or_404(project_id)
+    p.characters = [x for x in p.characters if x.id != char_id]
+    return projects.public(projects.get_store().save(p), len(_episodes(project_id)))
+
+
+@app.put("/jobs/{job_id}/project", response_model=Job, dependencies=[Depends(require_key)])
+def set_job_project(job_id: str, body: JobProject, request: Request):
+    """ย้ายงานเข้าหรือออกจากโปรเจกต์ งานที่แยกผู้พูดแล้วจับคู่ตัวละครให้ทันที (ตั้งชื่อและเสียงเฉพาะที่มั่นใจ)"""
+    job = get_job_or_404(job_id)
+    if body.project_id:
+        p = get_project_or_404(body.project_id)
+        user = getattr(request.state, "user", None)
+        if user is not None and not accounts.is_admin(user) and p.owner != user["id"]:
+            raise HTTPException(404, "ไม่พบโปรเจกต์นี้")
+    job = store.update(job_id, project_id=body.project_id or None, project_matches={})
+    utterances = store.load_transcript(job_id)
+    if job.project_id and utterances and job.status not in ACTIVE:
+        from .pipeline import runner
+        job, _ = runner._apply_project(store, job_id, utterances)
+    return job
+
+
+@app.post("/jobs/{job_id}/project/sync", dependencies=[Depends(require_key)])
+def sync_job_project(job_id: str, body: ProjectSync):
+    """บันทึกตัวละครของงานนี้เข้าโปรเจกต์: ชื่อ เสียงพากย์ ข้อมูลจากการวิเคราะห์เรื่อง และลายเสียง (ใช้จับคู่ตอนถัดไป)"""
+    job = get_job_or_404(job_id)
+    if not job.project_id:
+        raise HTTPException(409, "งานนี้ไม่ได้อยู่ในโปรเจกต์")
+    p = get_project_or_404(job.project_id)
+    utterances = store.load_transcript(job_id)
+    if not utterances:
+        raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอแยกผู้พูดเสร็จก่อน")
+    from .pipeline import library
+    prof = library.speaker_profiles(store.dir(job_id), utterances)
+    info = {c["speaker"]: c for c in (job.story or {}).get("characters", [])}
+    matches = {s: dict(m) for s, m in (job.project_matches or {}).items()}
+    ids = {c.id for c in p.characters}
+    saved = 0
+    for s in job.speakers:
+        choice = body.mapping.get(s)
+        if choice is None:
+            m = matches.get(s)
+            choice = m["character"] if m and (m.get("sure") or m.get("confirmed")) else ("new" if job.speaker_names.get(s) else "skip")
+        if choice == "skip":
+            continue
+        if choice != "new" and choice not in ids:
+            raise HTTPException(400, f"ไม่พบตัวละคร {choice} ในโปรเจกต์")
+        name = job.speaker_names.get(s) or (info.get(s) or {}).get("name") or s
+        c = projects.learn(p, s, None if choice == "new" else choice, name, job.voice_map.get(s), prof.get(s), info.get(s))
+        ids.add(c.id)
+        matches[s] = {"character": c.id, "name": c.name, "score": (matches.get(s) or {}).get("score"), "sure": True, "confirmed": True}
+        saved += 1
+    if body.settings:
+        p.genre = job.genre or (job.story or {}).get("genre") or p.genre
+        p.glossary = job.glossary or "\n".join((job.story or {}).get("glossary") or []) or p.glossary
+        p.speech_style = (job.story or {}).get("register") or p.speech_style
+    projects.get_store().save(p)
+    job = store.update(job_id, project_matches=matches)
+    return {"saved": saved, "project": projects.public(projects.get_store().get(p.id), len(_episodes(p.id))),
+            "job": job.model_dump(mode="json")}
 
 # ---------------------------------------------------------------- นักพากย์ (actors.py)
 class ActorApply(BaseModel):

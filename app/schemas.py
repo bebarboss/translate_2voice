@@ -105,11 +105,43 @@ class Job(BaseModel):
     timeline: bool = False
     # ผลวิเคราะห์บททั้งเรื่องก่อนแปล (translate.analyze_story): genre setting register characters glossary asr_fixes speaker_doubts
     story: Optional[dict] = None
+    # โปรเจกต์ (projects.py): ผู้พูด → {character, name, score, sure, confirmed} ที่จับคู่กับตัวละครของโปรเจกต์ด้วยลายเสียง
+    project_id: Optional[str] = None
+    project_matches: dict[str, dict] = Field(default_factory=dict)
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
     queue_position: Optional[int] = None  # ลำดับคิว (เฉพาะคำตอบของ API ตอนรอคิว ไม่ได้บันทึกลงไฟล์)
     error: Optional[str] = None
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
+
+
+class ProjectCharacter(BaseModel):
+    """ตัวละครประจำโปรเจกต์ จำข้ามตอน: ชื่อ ข้อมูลให้ผู้แปล เสียงพากย์ และลายเสียงเฉลี่ยจากตอนที่บันทึกเข้ามา"""
+    id: str
+    name: str = ""
+    gender: str = ""
+    role: str = ""
+    self: str = ""  # สรรพนามแทนตัวเอง
+    addresses: str = ""  # เรียกคนอื่นว่าอะไร
+    voice_id: Optional[str] = None  # เสียงในคลัง None = เลียนเสียงต้นฉบับ
+    embedding: Optional[list[float]] = None
+    pitch: Optional[float] = None  # เซมิโทน
+    samples: int = 0  # บันทึกมาจากกี่ตอน
+    updated_at: datetime = Field(default_factory=now)
+
+
+class Project(BaseModel):
+    """โปรเจกต์ (เรื่องหนึ่งเรื่องที่มีหลายตอน) ค่าในนี้เป็นค่าตั้งต้นของทุกงานในโปรเจกต์"""
+    id: str
+    name: str
+    owner: Optional[str] = None
+    genre: str = ""
+    glossary: str = ""
+    speech_style: str = ""  # ระดับภาษาและสรรพนามของเรื่อง
+    target_lang: TargetLang = "th"
+    characters: list[ProjectCharacter] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 

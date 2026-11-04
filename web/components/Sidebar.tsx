@@ -8,12 +8,13 @@ import { fmtNum } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
-import { GearIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
+import { FolderIcon, GearIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
   { href: "/", label: "งานใหม่", icon: <PlusIcon size={16} /> },
   { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <ScissorsIcon size={16} /> },
   { href: "/jobs", label: "งานทั้งหมด", icon: <ListIcon /> },
+  { href: "/projects", label: "โปรเจกต์", icon: <FolderIcon size={16} /> },
   { href: "/voices", label: "คลังเสียง", icon: <WaveIcon /> },
   { href: "/settings", label: "ตั้งค่า", icon: <GearIcon /> },
 ];

@@ -41,12 +41,27 @@ export interface Job {
   saved_voices?: Record<string, string>; // ตัวละคร → id เสียงในคลังที่บันทึกจากงานนี้
   timeline?: boolean; // งานไทม์ไลน์จากโปรแกรมตัดต่อ (ไม่มีวิดีโอ ผลลัพธ์ส่งออกเป็น XML + เสียงแยกแทร็ก)
   story?: StoryAnalysis | null; // ผลวิเคราะห์บททั้งเรื่องก่อนแปล
+  project_id?: string | null;
+  project_matches?: Record<string, ProjectMatch>; // ผู้พูด → ตัวละครของโปรเจกต์ที่จับคู่ด้วยลายเสียง
   error: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type Gender = "male" | "female" | "";
+
+/** ตัวละครประจำโปรเจกต์ (จำข้ามตอน) learned = มีลายเสียงไว้จับคู่ตอนถัดไปแล้ว */
+export interface ProjectCharacter {
+  id: string; name: string; gender: string; role: string; self: string; addresses: string;
+  voice_id: string | null; pitch: number | null; samples: number; learned: boolean; updated_at: string;
+}
+export interface Project {
+  id: string; name: string; owner: string | null; genre: string; glossary: string; speech_style: string;
+  target_lang: TargetLang; characters: ProjectCharacter[]; episodes: number; created_at: string; updated_at: string;
+}
+/** sure = ลายเสียงตรงพอ ตั้งชื่อและเสียงให้เอง, confirmed = ผู้ใช้บันทึกเข้าโปรเจกต์แล้ว */
+export interface ProjectMatch { character: string; name: string; score: number | null; sure: boolean; confirmed?: boolean }
+export type ProjectInput = Pick<Project, "name" | "genre" | "glossary" | "speech_style" | "target_lang">;
 
 /** AI อ่านบทต้นฉบับทั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด ผู้พูดที่น่าสงสัย */
 export interface StoryAnalysis {
@@ -303,6 +318,7 @@ export interface CreateOptions {
   genre: string;
   glossary: string;
   library?: boolean;
+  projectId?: string; // ส่งเข้าโปรเจกต์
 }
 
 const BASE = "/api";
@@ -461,6 +477,19 @@ export const api = {
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
 
+  listProjects: () => request<Project[]>("/projects"),
+  createProject: (body: ProjectInput) => request<Project>("/projects", json("POST", body)),
+  getProject: (id: string) => request<Project & { jobs: Job[] }>(`/projects/${id}`),
+  updateProject: (id: string, patch: Partial<ProjectInput>) => request<Project>(`/projects/${id}`, json("PATCH", patch)),
+  deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
+  updateCharacter: (id: string, charId: string, patch: Partial<Pick<ProjectCharacter, "name" | "gender" | "role" | "self" | "addresses" | "voice_id">>) =>
+    request<Project>(`/projects/${id}/characters/${charId}`, json("PATCH", patch)),
+  deleteCharacter: (id: string, charId: string) => request<Project>(`/projects/${id}/characters/${charId}`, { method: "DELETE" }),
+  setJobProject: (jobId: string, projectId: string | null) => request<Job>(`/jobs/${jobId}/project`, json("PUT", { project_id: projectId })),
+  /** mapping: ผู้พูด → id ตัวละคร / "new" / "skip" */
+  syncProject: (jobId: string, mapping: Record<string, string>, settings: boolean) =>
+    request<{ saved: number; project: Project; job: Job }>(`/jobs/${jobId}/project/sync`, json("POST", { mapping, settings })),
+
   getTimeline: (id: string) => request<TimelineState>(`/jobs/${id}/timeline`),
   setupTimeline: (id: string, tracks: TrackSetup[]) => request<TimelineState>(`/jobs/${id}/timeline`, json("PUT", { tracks })),
   startTimeline: (id: string) => request<{ id: string }>(`/jobs/${id}/timeline/start`, { method: "POST" }),
@@ -542,6 +571,7 @@ function buildForm(opts: CreateOptions): FormData {
   if (opts.genre) form.append("genre", opts.genre);
   if (opts.glossary) form.append("glossary", opts.glossary);
   if (opts.library) form.append("library", "true");
+  if (opts.projectId) form.append("project_id", opts.projectId);
   return form;
 }
 
