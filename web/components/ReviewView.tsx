@@ -151,7 +151,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 
-      <RetranslatePanel job={job} names={tr.names} onStarted={onChanged} />
+      <RetranslatePanel job={job} names={tr.names} onStarted={onChanged}
+        onJump={(id) => { const u = tr.sorted.find((x) => x.id === id); if (u) { setPicked(id); seek(u.start); } }} />
 
       <div className="split">
         <section className="main" aria-label={tx("วิดีโอ")}>

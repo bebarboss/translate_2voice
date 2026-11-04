@@ -52,7 +52,9 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
 6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
 7. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
 8. ต้นฉบับบางท่อนมีเครื่องหมาย / คือจุดที่นักแสดงหยุดหายใจหรือเว้นจังหวะจริง ให้ใส่ / ในคำแปลของท่อนนั้นจำนวนเท่ากัน ตรงตำแหน่งที่ความหมายตรงกับต้นฉบับ (เสียงพากย์จะหยุดตรงนั้น) ห้ามใส่ / ในท่อนที่ต้นฉบับไม่มี และห้ามวาง / กลางคำหรือกลางชื่อ ถ้าตำแหน่งที่ตรงกันตกกลางคำ ให้วางที่ขอบคำที่ใกล้ที่สุด
-9. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+9. register คือระดับภาษาของเรื่อง characters บอกว่าผู้พูดแต่ละคนเป็นใคร เพศ บทบาท แทนตัวเองและเรียกคนอื่นว่าอะไร ให้ใช้ตามนั้นทุกบรรทัด
+   ท่อนที่มี likely_said แปลว่าบทถอดเสียงน่าจะผิด ถ้า text อ่านไม่เป็นความหรือชื่อผิด ให้แปลตามความหมายของ likely_said ถ้า text มีความหมายอยู่แล้วให้แปลตาม text
+10. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
@@ -285,6 +287,9 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
         "title": title,
         **({"genre": hints["genre"]} if hints.get("genre") else {}),
         **({"glossary": glossary} if glossary else {}),
+        **({"register": hints["register"]} if hints.get("register") else {}),
+        **({"characters": {_speaker_label(sp, hints): info for sp, info in hints["characters"].items()
+                           if any(sp == g[0].speaker for g in groups)}} if hints.get("characters") else {}),
         "source_language": names.get(lang, lang),
         "previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context],
         "sentences": [{"id": g[0].id, "speaker": _speaker_label(g[0].speaker, hints),
@@ -292,7 +297,9 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
-                                  "text": (hints.get("marked") or {}).get(u.id, u.source)} for u in g]}
+                                  "text": (hints.get("marked") or {}).get(u.id, u.source),
+                                  **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {})}
+                                 for u in g]}
                       for g in groups],
     }
     if target == "en":
@@ -506,6 +513,108 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         if on_progress:
             on_progress(done / len(utts))
 
+
+
+# ---------------------------------------------------------------- วิเคราะห์เรื่องก่อนแปล
+STORY_PROMPT = """คุณคือผู้กำกับบทพากย์ อ่านบทต้นฉบับทั้งเรื่อง (ถอดจากเสียงอัตโนมัติ อาจมีคำผิด) แล้ววิเคราะห์ให้ผู้แปลใช้
+บอกสิ่งที่บทและชื่อคลิปบ่งชี้เท่านั้น ห้ามแต่งข้อมูลที่ไม่มีหลักฐาน ถ้าไม่แน่ใจให้เว้นว่าง
+- genre: แนวเรื่องสั้น ๆ เช่น ซีรีส์เกาหลีราชสำนักแฟนตาซี, หนังแอ็กชันจากเกมต่อสู้, การ์ตูนเด็ก
+- setting: ยุคและสถานที่ของเรื่อง สั้น ๆ
+- register: ระดับภาษาและสรรพนามที่ควรใช้ในภาษาปลายทาง (เช่น ราชาศัพท์ หม่อมฉัน/เพคะ/ฝ่าบาท, ภาษาพูดสมัยใหม่ ฉัน/นาย)
+- characters: ผู้พูดแต่ละคน (speaker ตามที่ให้มา) speaker เดียวกันอาจเป็นคนละคนเพราะระบบแยกเสียงผิดได้ ให้บอกคนที่พูดมากที่สุด
+  name = ชื่อตัวละครอย่างเดียวเป็นภาษาปลายทางตามที่ใช้กันในฉบับแปลของเรื่องนั้น ไม่ใส่วงเล็บหรือบทบาท (ไม่รู้ชื่อให้ใช้บทบาท เช่น ผู้บรรยาย, จักรพรรดิ)
+  gender = male / female / unknown, role = บทบาทและความสัมพันธ์กับคนอื่นสั้น ๆ
+  self = สรรพนามแทนตัวเอง, addresses = เรียกคนอื่นว่าอะไร (ภาษาปลายทาง)
+- glossary: เฉพาะชื่อเฉพาะ (คน สถานที่ ชื่อเรื่อง ท่าไม้ตาย องค์กร) เป็น "ต้นฉบับ = ภาษาปลายทาง" สะกดตามฉบับแปลที่ใช้กันจริง
+  ไม่ใส่คำทั่วไป (หย่า แต่งงาน ฝ่าบาท) ไม่ใส่วงเล็บหรือคำอธิบาย หนึ่งชื่อหนึ่งบรรทัด
+  ถ้าบทถอดผิดจากชื่อจริง ให้ใส่ชื่อที่ถูก (เช่น ได้ยิน Kyle แต่ในเรื่องคือ Guile → Guile = กายล์)
+- asr_fixes: เฉพาะบรรทัดที่ถอดเสียงผิดจนอ่านไม่เป็นความ ชื่อผิด หรือคำถูกตัดกลางคำ {"id": เลขบรรทัด, "likely": "ต้นฉบับที่น่าจะพูดจริง"}
+  บรรทัดที่อ่านแล้วมีความหมายอยู่แล้ว ห้ามเปลี่ยนคำให้เข้ากับที่คิดว่าควรเป็น
+- speaker_doubts: บรรทัดที่เนื้อหาไม่น่าใช่คนที่ระบบบอก {"id": เลขบรรทัด, "note": "เหตุผลสั้น ๆ"}
+ตอบเป็น JSON อย่างเดียว"""
+
+
+def _story_lines(utts: list[Utterance]) -> list[dict]:
+    return [{"id": u.id, "speaker": u.speaker, "t": round(u.start, 1), "text": u.source} for u in utts if u.source.strip()]
+
+
+def analyze_story(utts: list[Utterance], lang: str, target: str = "th", title: str = "",
+                  hints: Optional[dict] = None, max_chars: int = 24000) -> dict:
+    """อ่านบทต้นฉบับทั้งเรื่องแล้วสรุปแนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่ถอดเสียงน่าจะผิด และผู้พูดที่น่าสงสัย
+    hints: แนวเรื่อง ชื่อเฉพาะ และชื่อตัวละครที่ผู้ใช้ตั้งไว้ (ถือเป็นข้อเท็จจริง) บทยาวเกิน max_chars อ่านเป็นช่วงแล้วต่อยอดผลเดิม"""
+    hints = hints or {}
+    names = LANG_NAMES_EN if target == "en" else LANG_NAMES
+    lines = _story_lines(utts)
+    chunks, cur, size = [], [], 0
+    for x in lines:
+        n = len(x["text"]) + 30
+        if cur and size + n > max_chars:
+            chunks.append(cur)
+            cur, size = [], 0
+        cur.append(x)
+        size += n
+    if cur:
+        chunks.append(cur)
+    result: dict = {}
+    for part in chunks:
+        payload = {
+            "title": title, "source_language": names.get(lang, lang), "target_language": names.get(target, target),
+            **({"user_genre": hints["genre"]} if hints.get("genre") else {}),
+            **({"user_glossary": _glossary(hints)} if _glossary(hints) else {}),
+            **({"user_names": hints["names"]} if hints.get("names") else {}),
+            **({"previous_analysis": result} if result else {}),
+            "lines": part,
+        }
+        reply = _chat(STORY_PROMPT, (
+            "วิเคราะห์บทนี้ (user_* คือข้อมูลที่ผู้ใช้ตั้งไว้ ให้ยึดตามนั้น previous_analysis คือผลจากช่วงก่อนหน้า ให้ต่อยอดและตอบผลรวมทั้งหมด)\n"
+            'ตอบรูปแบบ {"genre":"","setting":"","register":"","characters":[{"speaker":"speaker_01","name":"","gender":"",'
+            '"role":"","self":"","addresses":""}],"glossary":["ต้นฉบับ = ปลายทาง"],"asr_fixes":[{"id":1,"likely":""}],'
+            '"speaker_doubts":[{"id":1,"note":""}]}\n\n' + json.dumps(payload, ensure_ascii=False)),
+            temperature=0.2, max_tokens=4096)
+        data = _parse_json(reply)
+        if isinstance(data, dict) and data:
+            result = data
+    return clean_story(result, {u.speaker for u in utts}, {u.id for u in utts})
+
+
+def clean_story(data: dict, speakers: set[str], ids: set[int]) -> dict:
+    """ตัดค่าที่ผิดรูปแบบ และผู้พูดหรือบรรทัดที่ไม่มีในงาน (กันโมเดลตอบมั่ว)"""
+    s = lambda v, n=200: str(v or "").strip()[:n]  # noqa: E731
+    chars = []
+    for c in data.get("characters") or []:
+        if isinstance(c, dict) and c.get("speaker") in speakers:
+            g = s(c.get("gender"), 10).lower()
+            chars.append({"speaker": c["speaker"], "name": re.sub(r"\s*[(（].*?[)）]\s*", " ", s(c.get("name"), 60)).strip(), "gender": g if g in ("male", "female") else "",
+                          "role": s(c.get("role")), "self": s(c.get("self"), 40), "addresses": s(c.get("addresses"), 120)})
+    gloss = [re.sub(r"\s*[(（].*?[)）]", "", s(x, 120)).strip() for x in data.get("glossary") or [] if isinstance(x, str) and "=" in x][:60]
+    pick = lambda key, field: [{"id": int(x["id"]), field: s(x.get(field), 300)} for x in data.get(key) or []  # noqa: E731
+                               if isinstance(x, dict) and str(x.get("id", "")).lstrip("-").isdigit() and int(x["id"]) in ids
+                               and s(x.get(field))]
+    return {"genre": s(data.get("genre"), 120), "setting": s(data.get("setting")), "register": s(data.get("register"), 400),
+            "characters": chars, "glossary": gloss, "asr_fixes": pick("asr_fixes", "likely")[:40],
+            "speaker_doubts": pick("speaker_doubts", "note")[:40]}
+
+
+def story_hints(story: Optional[dict], hints: dict) -> dict:
+    """รวมผลวิเคราะห์เรื่องเข้ากับสิ่งที่ผู้ใช้ตั้งไว้ ของผู้ใช้มาก่อนเสมอ"""
+    if not story:
+        return hints
+    out = dict(hints)
+    if not out.get("genre"):
+        out["genre"] = " · ".join(x for x in (story.get("genre"), story.get("setting")) if x)
+    user = _glossary(hints)
+    known = {line.split("=")[0].strip().lower() for line in user}
+    out["glossary"] = "\n".join(user + [g for g in story.get("glossary") or [] if g.split("=")[0].strip().lower() not in known])
+    names = dict(hints.get("names") or {})
+    for c in story.get("characters") or []:
+        if c.get("name") and not names.get(c["speaker"]):
+            names[c["speaker"]] = c["name"]
+    out["names"] = names
+    out["register"] = story.get("register") or ""
+    out["characters"] = {c["speaker"]: {k: c[k] for k in ("gender", "role", "self", "addresses") if c.get(k)}
+                         for c in story.get("characters") or []}
+    out["asr_fixes"] = {x["id"]: x["likely"] for x in story.get("asr_fixes") or []}
+    return out
 
 def detect_moods(lines: list[tuple[Utterance, list[str]]], context: list[Utterance],
                  arousal: Optional[dict[int, float]] = None) -> dict[int, str]:

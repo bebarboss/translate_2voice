@@ -3,19 +3,28 @@
 import { useState } from "react";
 import { api, type Job } from "@/lib/api";
 import { GENRES } from "@/lib/format";
-
 import { tx } from "@/lib/i18n";
-/** แปลบทใหม่ทั้งเรื่องจากบทถอดเสียงเดิม ใช้แนวเรื่อง คำเฉพาะ และชื่อตัวละครที่ตั้งไว้ */
-export default function RetranslatePanel({ job, names, onStarted }: {
+
+const GENDER: Record<string, string> = { male: "ชาย", female: "หญิง" };
+
+/** บริบทเรื่องที่ AI วิเคราะห์จากบททั้งเรื่อง (แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด)
+ * และแปลบทใหม่ทั้งเรื่องด้วยแนวเรื่อง คำเฉพาะ และชื่อตัวละครที่แก้ไว้ (ค่าเริ่มต้นมาจากผลวิเคราะห์) */
+export default function RetranslatePanel({ job, names, onStarted, onJump }: {
   job: Job;
   names: Record<string, string>;
   onStarted: () => void;
+  onJump?: (lineId: number) => void;
 }) {
-  const [genre, setGenre] = useState(job.genre ?? "");
-  const [glossary, setGlossary] = useState(job.glossary ?? "");
+  const story = job.story;
+  const [genre, setGenre] = useState(job.genre || (story ? [story.genre, story.setting].filter(Boolean).join(" · ") : ""));
+  const [glossary, setGlossary] = useState(job.glossary || (story?.glossary ?? []).join("\n"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const named = Object.values(names).filter(Boolean);
+  const issues = [
+    ...(story?.asr_fixes ?? []).map((x) => ({ id: x.id, kind: tx("อาจถอดเสียงผิด"), text: x.likely })),
+    ...(story?.speaker_doubts ?? []).map((x) => ({ id: x.id, kind: tx("อาจผิดตัวละคร"), text: x.note })),
+  ].sort((a, b) => a.id - b.id);
 
   const start = async () => {
     if (!window.confirm(tx("แปลบทใหม่ทั้งเรื่อง? บทที่แก้เองไว้จะถูกแทนด้วยคำแปลใหม่ (ตัวละคร เวลา และอารมณ์ของแต่ละประโยคคงเดิม)"))) return;
@@ -32,7 +41,46 @@ export default function RetranslatePanel({ job, names, onStarted }: {
 
   return (
     <details className="card tight retranslate">
-      <summary>{tx("แปลใหม่ทั้งเรื่อง")} <span className="dim">{tx("ใช้แนวเรื่อง ชื่อเฉพาะ และชื่อตัวละคร ช่วยให้สรรพนามและชื่อถูกต้อง")}</span></summary>
+      <summary>
+        {story ? tx("บริบทเรื่องและแปลใหม่") : tx("แปลใหม่ทั้งเรื่อง")}{" "}
+        <span className="dim">
+          {story?.genre ? story.genre : tx("ใช้แนวเรื่อง ชื่อเฉพาะ และชื่อตัวละคร ช่วยให้สรรพนามและชื่อถูกต้อง")}
+        </span>
+        {issues.length > 0 && <span className="badge warn">{tx("ควรตรวจ {0} จุด", { 0: issues.length })}</span>}
+      </summary>
+
+      {story && (
+        <div className="story">
+          <span className="dim">{tx("AI อ่านบทต้นฉบับทั้งเรื่องแล้วสรุปไว้ให้ผู้แปลใช้ เป็นการเดาจากบท ตรวจและแก้ได้ด้านล่าง")}</span>
+          {story.register && <div><b>{tx("ระดับภาษา")}</b> <span className="muted">{story.register}</span></div>}
+          {story.characters.length > 0 && (
+            <div className="story-chars">
+              {story.characters.map((c) => (
+                <div key={c.speaker} className="story-char">
+                  <b>{names[c.speaker] || c.name || c.speaker}</b>
+                  <span className="dim">{[c.gender && tx(GENDER[c.gender]), c.role].filter(Boolean).join(" · ")}</span>
+                  {(c.self || c.addresses) && (
+                    <span className="dim">{[c.self && tx("แทนตัวว่า {0}", { 0: c.self }), c.addresses && tx("เรียกคนอื่นว่า {0}", { 0: c.addresses })].filter(Boolean).join(" · ")}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {issues.length > 0 && (
+            <div className="story-issues">
+              <b>{tx("จุดที่ควรตรวจ")}</b>
+              {issues.map((x, i) => (
+                <div key={`${x.id}-${i}`} className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}>
+                  <button type="button" className="time-btn" onClick={() => onJump?.(x.id)} title={tx("ไปที่ประโยคนี้")}>#{x.id}</button>
+                  <span className="badge warn">{x.kind}</span>
+                  <span className="muted" style={{ fontSize: 14 }}>{x.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid-2">
         <div className="field">
           <label htmlFor="rt-genre">{tx("แนวเรื่อง")}</label>

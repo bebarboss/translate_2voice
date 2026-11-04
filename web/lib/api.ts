@@ -40,12 +40,22 @@ export interface Job {
   library?: boolean; // งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว
   saved_voices?: Record<string, string>; // ตัวละคร → id เสียงในคลังที่บันทึกจากงานนี้
   timeline?: boolean; // งานไทม์ไลน์จากโปรแกรมตัดต่อ (ไม่มีวิดีโอ ผลลัพธ์ส่งออกเป็น XML + เสียงแยกแทร็ก)
+  story?: StoryAnalysis | null; // ผลวิเคราะห์บททั้งเรื่องก่อนแปล
   error: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export type Gender = "male" | "female" | "";
+
+/** AI อ่านบทต้นฉบับทั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด ผู้พูดที่น่าสงสัย */
+export interface StoryAnalysis {
+  genre: string; setting: string; register: string;
+  characters: { speaker: string; name: string; gender: string; role: string; self: string; addresses: string }[];
+  glossary: string[];
+  asr_fixes: { id: number; likely: string }[];
+  speaker_doubts: { id: number; note: string }[];
+}
 
 // ---- ไทม์ไลน์จากโปรแกรมตัดต่อ (POST /timeline) เวลาเป็นเฟรม timecode เป็นสตริงตามอัตราเฟรมของไทม์ไลน์
 export interface TimelineClip {

@@ -123,10 +123,24 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     hints = {"genre": job.genre, "glossary": job.glossary, "names": job.speaker_names,
              "marked": _marked_sources(store.dir(job_id), utterances)}
     span = hi - lo
+    title = Path(job.filename or "").stem
+    from . import translate as translate_mod  # ชื่อ translate ในฟังก์ชันนี้คือฟังก์ชันแปล
+    if settings.story_analysis and not settings.mock_pipeline and settings.typhoon_api_key:
+        stage("story", lo)
+        try:  # อ่านบททั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ (ขั้นเสริม ล้มก็แปลต่อตามเดิม)
+            story = translate_mod.analyze_story(utterances, lang, job.target_lang, title, hints)
+            names = {**{c["speaker"]: c["name"] for c in story["characters"] if c.get("name")}, **(job.speaker_names or {})}
+            job = store.update(job_id, story=story, speaker_names=names)
+            log.info("job %s story: %s", job_id, {k: story[k] for k in ("genre", "setting")})
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("story analysis failed for job %s: %s", job_id, exc)
+    hints = translate_mod.story_hints(job.story, hints)
     stage("translate", lo)
     translate(utterances, lang, job.target_lang,
               on_progress=lambda f: stage("translate", lo + span * 0.75 * f), check_cancel=cancel,
-              title=Path(job.filename or "").stem, hints=hints)
+              title=title, hints=hints)
     _free_vram("translate")
     store.save_transcript(job_id, utterances)
 
@@ -384,8 +398,17 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         log.info("library voices: %s", {s: sorted(k) for s, k in library_refs.items()})
     library_paths = {key: path for refs in library_refs.values() for key, path, _, _ in refs.values()}
 
+    def marked_chunks(p: _Plan) -> dict:
+        """ประโยคที่มีจุด / ใส่ช่วงที่แบ่งไว้ในคีย์ด้วย: วิธีแบ่งตาม / เปลี่ยน (แก้บท หรือปรับ pauses.plan) ต้องพากย์ใหม่
+        ประโยคที่ไม่มี / คีย์เหมือนเดิม ใช้เสียงเดิมต่อได้"""
+        if not settings.pause_match or settings.mock_pipeline or not any(pauses.MARK in u.target for u in p.g):
+            return {}
+        if not p.chunks:
+            p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
+        return {"chunks": [[round(c.start, 2), round(c.end, 2), c.text] for c in p.chunks]}
+
     def key_for(p: _Plan, text: str) -> str:
-        return _clip_key(text=text, speaker=p.speaker, start=p.g[0].start, end=p.g[-1].end,
+        return _clip_key(text=text, speaker=p.speaker, start=p.g[0].start, end=p.g[-1].end, **marked_chunks(p),
                          lines=[u.id for u in p.g], limit=round(p.limit_sec, 3), ref=p.ref_key,
                          ref_text=p.ref_text, target=target, steps=rs.f5_steps, speed=settings.f5_speed,
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,

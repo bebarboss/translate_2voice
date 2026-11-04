@@ -103,6 +103,8 @@ class Job(BaseModel):
     saved_voices: dict[str, str] = Field(default_factory=dict)  # ผู้พูด → id เสียงในคลังที่บันทึกจากงานนี้
     # งานไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/): แทร็กเสียงแยกคน ผลลัพธ์ส่งออกเป็น XML/FCPXML + เสียงแยกแทร็ก
     timeline: bool = False
+    # ผลวิเคราะห์บททั้งเรื่องก่อนแปล (translate.analyze_story): genre setting register characters glossary asr_fixes speaker_doubts
+    story: Optional[dict] = None
     duration: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
