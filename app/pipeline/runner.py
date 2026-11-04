@@ -142,6 +142,11 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     hints = translate_mod.story_hints(job.story, hints)
     for s, info in projects.character_info(project, job.project_matches, job.speaker_names).items():
         hints.setdefault("characters", {})[s] = {**hints.get("characters", {}).get(s, {}), **info}
+    if project is not None:  # ความจำคำแปลจากตอนก่อน ๆ ของโปรเจกต์ (memory.py)
+        from .. import memory
+        hints["memory"] = memory.load(project.id, job.target_lang, exclude_job=job_id)
+        hints["char_of"] = {s: m["character"] for s, m in (job.project_matches or {}).items() if m.get("sure") or m.get("confirmed")}
+        log.info("job %s: %d translation memory rows", job_id, len(hints["memory"]))
     stage("translate", lo)
     translate(utterances, lang, job.target_lang,
               on_progress=lambda f: stage("translate", lo + span * 0.75 * f), check_cancel=cancel,
@@ -152,6 +157,8 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
+    from .. import memory
+    memory.save_ai_targets(store.dir(job_id), utterances)  # เทียบภายหลังว่าผู้ใช้แก้บรรทัดไหน
     stage("analyzed", hi)
 
 
@@ -603,6 +610,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             mine = [c for c, g in zip(clips, groups) if _group_speaker(g) == s]
             mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60)
         _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
+        _remember(store, job_id, utterances)
         return
     stage("mux_video", 0.95)
     mix.mux_video(video, d / "final_audio.wav", d / "output.mp4")
@@ -616,6 +624,20 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         stage("burn_subs", 0.97)
         subs.burn(d / "output.mp4", utterances, effective_style(job), d / "output_subs.mp4")
     _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
+    _remember(store, job_id, utterances)
+
+
+def _remember(store: JobStore, job_id: str, utterances: list[Utterance]) -> None:
+    """พากย์เสร็จ: เก็บบทที่ใช้จริงของงานในโปรเจกต์ลงความจำคำแปล (ล้มไม่ทำให้งานล้ม)"""
+    job = store.get(job_id)
+    if job is None or not job.project_id:
+        return
+    try:
+        from .. import memory
+        n = memory.record_job(job, utterances, store.dir(job_id))
+        log.info("job %s: %d lines saved to translation memory", job_id, n)
+    except Exception:  # noqa: BLE001
+        log.exception("translation memory save failed for job %s", job_id)
 
 
 def _record_voice_usage(job, groups: list, done: dict, sr: int, library_refs: dict, mood_of=lambda u: "") -> None:

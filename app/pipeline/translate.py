@@ -54,7 +54,9 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
 8. ต้นฉบับบางท่อนมีเครื่องหมาย / คือจุดที่นักแสดงหยุดหายใจหรือเว้นจังหวะจริง ให้ใส่ / ในคำแปลของท่อนนั้นจำนวนเท่ากัน ตรงตำแหน่งที่ความหมายตรงกับต้นฉบับ (เสียงพากย์จะหยุดตรงนั้น) ห้ามใส่ / ในท่อนที่ต้นฉบับไม่มี และห้ามวาง / กลางคำหรือกลางชื่อ ถ้าตำแหน่งที่ตรงกันตกกลางคำ ให้วางที่ขอบคำที่ใกล้ที่สุด
 9. register คือระดับภาษาของเรื่อง characters บอกว่าผู้พูดแต่ละคนเป็นใคร เพศ บทบาท แทนตัวเองและเรียกคนอื่นว่าอะไร ให้ใช้ตามนั้นทุกบรรทัด
    ท่อนที่มี likely_said แปลว่าบทถอดเสียงน่าจะผิด ถ้า text อ่านไม่เป็นความหรือชื่อผิด ให้แปลตามความหมายของ likely_said ถ้า text มีความหมายอยู่แล้วให้แปลตาม text
-10. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+10. examples คือบทจากตอนก่อน ๆ ของเรื่องนี้ที่ผู้ใช้แก้เองแล้ว ให้ยึดสรรพนาม คำเรียก ชื่อ และสำนวนของแต่ละตัวละครตามนั้น (ไม่ต้องแปล examples)
+   ท่อนที่มี previous_translation คือต้นฉบับประโยคเดียวกันที่เคยพากย์ไปแล้ว ให้ใช้คำแปลนั้นถ้าเข้ากับบริบท ปรับความยาวได้ตาม min_chars–max_chars
+11. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
@@ -283,8 +285,13 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     budget = hints.get("budgets") or {}
     lo_key, limit_key = ("min_words", "max_words") if target == "en" else ("min_chars", "max_chars")
     glossary = _glossary(hints)
+    examples, fixed = [], {}
+    if hints.get("memory"):
+        from ..memory import examples_for
+        examples, fixed = examples_for(hints["memory"], [u for g in groups for u in g], hints.get("char_of") or {})
     payload = {
         "title": title,
+        **({"examples": examples} if examples else {}),
         **({"genre": hints["genre"]} if hints.get("genre") else {}),
         **({"glossary": glossary} if glossary else {}),
         **({"register": hints["register"]} if hints.get("register") else {}),
@@ -298,7 +305,8 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
                                   "text": (hints.get("marked") or {}).get(u.id, u.source),
-                                  **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {})}
+                                  **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {}),
+                                  **({"previous_translation": fixed[u.id]} if u.id in fixed else {})}
                                  for u in g]}
                       for g in groups],
     }

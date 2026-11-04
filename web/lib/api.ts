@@ -61,6 +61,11 @@ export interface Project {
 }
 /** sure = ลายเสียงตรงพอ ตั้งชื่อและเสียงให้เอง, confirmed = ผู้ใช้บันทึกเข้าโปรเจกต์แล้ว */
 export interface ProjectMatch { character: string; name: string; score: number | null; sure: boolean; confirmed?: boolean }
+/** ความจำคำแปล: total = บรรทัดที่จำไว้, edited = บรรทัดที่ผู้ใช้แก้ (ใช้เป็นตัวอย่าง), available = ใช้ได้ (ตารางพร้อม) */
+export interface ProjectMemory {
+  available: boolean; total: number; edited: number;
+  items: { id: number; job_id: string; line_id: number; speaker_name: string; source: string; target: string; updated_at: string | number }[];
+}
 export type ProjectInput = Pick<Project, "name" | "genre" | "glossary" | "speech_style" | "target_lang">;
 
 /** AI อ่านบทต้นฉบับทั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด ผู้พูดที่น่าสงสัย */
@@ -484,6 +489,9 @@ export const api = {
   deleteProject: (id: string) => request<void>(`/projects/${id}`, { method: "DELETE" }),
   updateCharacter: (id: string, charId: string, patch: Partial<Pick<ProjectCharacter, "name" | "gender" | "role" | "self" | "addresses" | "voice_id">>) =>
     request<Project>(`/projects/${id}/characters/${charId}`, json("PATCH", patch)),
+  projectMemory: (id: string) => request<ProjectMemory>(`/projects/${id}/memory`),
+  deleteMemoryLine: (id: string, memoryId: number) => request<void>(`/projects/${id}/memory/${memoryId}`, { method: "DELETE" }),
+  clearMemory: (id: string) => request<void>(`/projects/${id}/memory`, { method: "DELETE" }),
   deleteCharacter: (id: string, charId: string) => request<Project>(`/projects/${id}/characters/${charId}`, { method: "DELETE" }),
   setJobProject: (jobId: string, projectId: string | null) => request<Job>(`/jobs/${jobId}/project`, json("PUT", { project_id: projectId })),
   /** mapping: ผู้พูด → id ตัวละคร / "new" / "skip" */

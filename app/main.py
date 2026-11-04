@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import accounts, actors, backup, consent, notify, projects, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, memory, notify, projects, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -1381,7 +1381,28 @@ def delete_project(project_id: str):
     get_project_or_404(project_id)
     for j in _episodes(project_id):
         store.update(j.id, project_id=None, project_matches={})
+    memory.forget_projects([project_id])
     projects.get_store().delete(project_id)
+
+
+@app.get("/projects/{project_id}/memory", dependencies=[Depends(require_key)])
+def project_memory(project_id: str, limit: int = 200):
+    """ความจำคำแปล: จำนวนบรรทัดที่จำไว้ และบทที่ผู้ใช้แก้ล่าสุด (ใช้เป็นตัวอย่างตอนแปลตอนถัดไป)"""
+    get_project_or_404(project_id)
+    return memory.listing(project_id, max(1, min(limit, 500)))
+
+
+@app.delete("/projects/{project_id}/memory/{memory_id}", status_code=204, dependencies=[Depends(require_key)])
+def delete_memory_line(project_id: str, memory_id: int):
+    """ลบบทที่จำผิดออก (ตอนถัดไปจะไม่ใช้เป็นตัวอย่าง)"""
+    get_project_or_404(project_id)
+    memory.delete(project_id, memory_id)
+
+
+@app.delete("/projects/{project_id}/memory", status_code=204, dependencies=[Depends(require_key)])
+def clear_memory(project_id: str):
+    get_project_or_404(project_id)
+    memory.delete(project_id)
 
 
 @app.patch("/projects/{project_id}/characters/{char_id}", dependencies=[Depends(require_key)])
@@ -1463,6 +1484,10 @@ def sync_job_project(job_id: str, body: ProjectSync):
         p.speech_style = (job.story or {}).get("register") or p.speech_style
     projects.get_store().save(p)
     job = store.update(job_id, project_matches=matches)
+    try:  # บทของงานนี้เข้าความจำคำแปลด้วย ตอนถัดไปจะได้ใช้สำนวนที่แก้ไว้
+        memory.record_job(job, utterances, store.dir(job_id))
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("translation memory save failed for job %s: %s", job_id, e)
     return {"saved": saved, "project": projects.public(projects.get_store().get(p.id), len(_episodes(p.id))),
             "job": job.model_dump(mode="json")}
 
@@ -1709,6 +1734,10 @@ def close_my_account(body: CloseAccount, user=Depends(require_user)):
     for j in jobs:
         store.delete(j.id)
     consent.forget(uid)
+    own = [p.id for p in projects.get_store().all() if p.owner == uid]
+    memory.forget_projects(own)
+    for pid in own:
+        projects.get_store().delete(pid)
     try:
         accounts.close_account(uid)
     except accounts.AccountError as e:

@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import JobCard from "@/components/JobCard";
 import { ArrowLeft, PlusIcon, TrashIcon } from "@/components/Icons";
-import { api, type Job, type LibraryVoice, type Project, type ProjectCharacter, type TargetLang } from "@/lib/api";
+import { api, type Job, type LibraryVoice, type Project, type ProjectCharacter, type ProjectMemory, type TargetLang } from "@/lib/api";
 import { GENDER_LABEL, GENRES, TARGET_LABEL } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 
@@ -50,6 +50,49 @@ function CharacterRow({ p, c, voices, onSaved, onError }: {
         </button>
       </div>
     </div>
+  );
+}
+
+/** ความจำคำแปล: บทที่ผู้ใช้แก้ในตอนก่อน ๆ ระบบส่งให้ AI ดูเป็นตัวอย่างตอนแปลตอนถัดไป ลบบทที่จำผิดได้ */
+function MemorySection({ projectId }: { projectId: string }) {
+  const [mem, setMem] = useState<ProjectMemory | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(() => { api.projectMemory(projectId).then(setMem).catch((e) => setError(e.message)); }, [projectId]);
+  useEffect(load, [load]);
+  const remove = (id: number) => api.deleteMemoryLine(projectId, id).then(load).catch((e) => setError(e.message));
+  return (
+    <section aria-labelledby="pj-mem" style={{ display: "grid", gap: 12 }}>
+      <div className="set-head">
+        <h2 id="pj-mem">{tx("ความจำคำแปล")}</h2>
+        <p>{tx("บทที่คุณแก้ในตอนก่อน ๆ ระบบส่งให้ AI ดูเป็นตัวอย่างตอนแปลตอนถัดไป สรรพนาม คำเรียก และสำนวนของตัวละครจึงคงที่ ประโยคที่ซ้ำทุกคำใช้คำแปลเดิมได้เลย")}</p>
+      </div>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {!mem ? <div className="empty">{tx("กำลังโหลด...")}</div> : !mem.available ? (
+        <div className="alert warn">{tx("ยังใช้ความจำคำแปลไม่ได้ ผู้ดูแลระบบต้องสร้างตาราง translation_memory บน Supabase ก่อน")}</div>
+      ) : (
+        <div className="set-group" style={{ padding: "4px 18px" }}>
+          <div className="set-row">
+            <div><b>{tx("จำไว้ {0} บรรทัด", { 0: mem.total })}</b>
+              <span className="d">{tx("ผู้ใช้แก้ {0} บรรทัด (ใช้เป็นตัวอย่าง) บันทึกเมื่อพากย์เสร็จหรือกดบันทึกเข้าโปรเจกต์", { 0: mem.edited })}</span></div>
+            {mem.total > 0 && (
+              <button type="button" className="btn small danger" onClick={() => window.confirm(tx("ล้างความจำคำแปลทั้งหมดของโปรเจกต์นี้?"))
+                && api.clearMemory(projectId).then(load).catch((e) => setError(e.message))}>{tx("ล้างทั้งหมด")}</button>
+            )}
+          </div>
+          {mem.items.length === 0 ? <div className="set-row"><span className="dim">{tx("ยังไม่มีบทที่แก้ แก้บทในหน้าตรวจบทแล้วพากย์ ระบบจะจำไว้ให้")}</span></div>
+            : mem.items.map((m) => (
+              <div key={m.id} className="set-row" style={{ alignItems: "flex-start" }}>
+                <div style={{ display: "grid", gap: 2 }}>
+                  <span className="dim">{m.speaker_name || tx("ไม่ระบุตัวละคร")} · {m.source}</span>
+                  <span>{m.target}</span>
+                </div>
+                <button type="button" className="icon-btn" aria-label={tx("ลบบรรทัดนี้ออกจากความจำ")} title={tx("ลบบรรทัดนี้ออกจากความจำ")}
+                  onClick={() => remove(m.id)}><TrashIcon /></button>
+              </div>
+            ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -152,6 +195,8 @@ export default function ProjectPage() {
           </div>
         )}
       </section>
+
+      <MemorySection projectId={p.id} />
 
       <section aria-labelledby="pj-eps" style={{ display: "grid", gap: 12 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
