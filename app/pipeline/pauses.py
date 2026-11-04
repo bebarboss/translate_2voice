@@ -67,6 +67,28 @@ def split_marks(text: str) -> tuple[str, list[int], bool]:
 
 
 _THAI = re.compile(r"[ก-๛]")
+# คำเชื่อมที่ต้องมีคำตามหลังเสมอ ผู้แปลวาง / หลังคำพวกนี้ ("ถ้า / เรา") เสียงพากย์จะหยุดค้างกลางวลี
+_DANGLING = {"ถ้า", "หาก", "และ", "กับ", "หรือ", "แต่", "ของ", "ซึ่ง", "ว่า", "เพราะ", "เมื่อ", "ที่", "ตอนที่", "เพื่อ", "โดย"}
+
+
+def tidy_marks(text: str) -> str:
+    """ย้าย / ที่ตกหลังคำเชื่อมไปไว้หน้าคำเชื่อมนั้น ("ฉันจัดให้ได้ ถ้า / เรา…" → "ฉันจัดให้ได้ / ถ้าเรา…")"""
+    if MARK not in text or not _THAI.search(text):
+        return text
+    pieces = [x.strip() for x in _MARK_RE.split(text.strip())]
+    if len(pieces) < 2 or not all(pieces):
+        return text
+    try:
+        from pythainlp.tokenize import word_tokenize
+    except ImportError:
+        return text
+    for i in range(len(pieces) - 1):
+        toks = word_tokenize(pieces[i], engine="newmm", keep_whitespace=False)
+        if len(toks) > 1 and toks[-1] in _DANGLING:
+            word = toks[-1]
+            pieces[i] = pieces[i][: len(pieces[i]) - len(word)].rstrip()
+            pieces[i + 1] = word + pieces[i + 1]
+    return f" {MARK} ".join(x for x in pieces if x)
 
 
 def _thai_mid_word(left: str, right: str) -> bool:
@@ -98,7 +120,9 @@ def source_pauses(u, orig: np.ndarray, sr: int, words: Optional[list], min_pause
     out = []
     for a, b in find_pauses(seg, sr, min_pause):
         ps, pe = u.start + a, u.start + b
-        k = next((i for i, w in enumerate(own) if w.start > ps + 0.02), None)
+        # คำที่ Whisper ให้เวลาคร่อมช่วงหยุดเกินครึ่งคำ (What 28.24–28.58 กับหยุด 28.26–28.58) ที่จริงพูดหลังหยุด
+        k = next((i for i, w in enumerate(own)
+                  if w.start > ps + 0.02 or min(w.end, pe) - max(w.start, ps) > 0.5 * (w.end - w.start)), None)
         # ญี่ปุ่น/จีน: คำของ Whisper เป็นแค่ตัวอักษรหรือพยางค์ จุดที่ตกกลางคำ (ジャ|イアン) ไม่ใช่จุดหยุดจริง
         # ถ้าส่งไปแปล ผู้แปลจะตัดชื่อในบทไทยตามด้วย (ไจ / แอนท์)
         if k and (not out or k > out[-1][2]) and (edges is None or k in edges):

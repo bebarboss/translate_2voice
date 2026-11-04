@@ -154,7 +154,9 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
       <ProjectPanel job={job} label={tr.label} onChanged={onChanged} />
       <RetranslatePanel job={job} names={tr.names} onStarted={onChanged}
-        onJump={(id) => { const u = tr.sorted.find((x) => x.id === id); if (u) { setPicked(id); seek(u.start); } }} />
+        onJump={(id) => { const u = tr.sorted.find((x) => x.id === id); if (u) { setPicked(id); seek(u.start); } }}
+        speakerOf={(id) => tr.sorted.find((x) => x.id === id)?.speaker} label={tr.label}
+        onSpeaker={(id, s) => { const u = tr.sorted.find((x) => x.id === id); if (u) { tr.changeSpeaker(u, s); setPicked(id); } }} />
 
       <div className="split">
         <section className="main" aria-label={tx("วิดีโอ")}>

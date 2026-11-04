@@ -1070,6 +1070,8 @@ export const EN: Record<string, string> = {
   "อารมณ์ {0}": "{0} moods",
   "อาจถอดเสียงผิด": "Possible transcription error",
   "อาจผิดตัวละคร": "Possibly wrong character",
+  "✓ เปลี่ยนแล้ว": "✓ Changed",
+  "เปลี่ยนเป็น {0}": "Change to {0}",
   "บริบทเรื่องและแปลใหม่": "Story context & re-translate",
   "ควรตรวจ {0} จุด": "{0} to check",
   "AI อ่านบทต้นฉบับทั้งเรื่องแล้วสรุปไว้ให้ผู้แปลใช้ เป็นการเดาจากบท ตรวจและแก้ได้ด้านล่าง": "The AI read the whole source script and summarised it for the translator. It's a guess from the script; check and edit below",

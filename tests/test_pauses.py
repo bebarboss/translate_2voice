@@ -63,3 +63,10 @@ def test_match_marks_drops_far_pairs():
     assert pauses.match_marks([5, 20], 30, [(2.0, 2.5, 1), (7.0, 7.5, 3)], u) == [(5, (2.0, 2.5)), (20, (7.0, 7.5))]
     # / มากกว่าจุดหยุด: เลือก / ที่ตำแหน่งใกล้จุดหยุดที่สุด
     assert pauses.match_marks([5, 15, 25], 30, [(4.8, 5.2, 2)], u) == [(15, (4.8, 5.2))]
+
+
+def test_tidy_marks_moves_mark_before_connector():
+    from app.pipeline.pauses import tidy_marks
+    assert tidy_marks("ฉันจัดให้ได้ ถ้า / เราตั้งชื่อว่า บีสต์") == "ฉันจัดให้ได้ / ถ้าเราตั้งชื่อว่า บีสต์"
+    assert tidy_marks("เดี๋ยว / ระวังตัว") == "เดี๋ยว / ระวังตัว"
+    assert tidy_marks("24/7 ตลอด") == "24/7 ตลอด"

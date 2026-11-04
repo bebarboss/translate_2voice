@@ -74,7 +74,7 @@ export interface StoryAnalysis {
   characters: { speaker: string; name: string; gender: string; role: string; self: string; addresses: string }[];
   glossary: string[];
   asr_fixes: { id: number; likely: string }[];
-  speaker_doubts: { id: number; note: string }[];
+  speaker_doubts: { id: number; speaker?: string; note: string }[];
 }
 
 // ---- ไทม์ไลน์จากโปรแกรมตัดต่อ (POST /timeline) เวลาเป็นเฟรม timecode เป็นสตริงตามอัตราเฟรมของไทม์ไลน์

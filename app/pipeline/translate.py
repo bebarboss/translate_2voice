@@ -14,6 +14,7 @@ from typing import Callable, Optional
 
 from ..config import settings
 from ..schemas import Utterance
+from .pauses import tidy_marks
 from .transcribe import SENTENCE_END
 
 log = logging.getLogger("dubbing.translate")
@@ -349,7 +350,7 @@ def _translate_groups(groups: list[list[Utterance]], lang: str, target: str, con
             ok = len(texts) == len(g) and any(texts)
             if ok and not any(FOREIGN_SCRIPT.search(t) for t in texts):
                 for u, text in zip(g, texts):
-                    u.target = text
+                    u.target = tidy_marks(text)
             else:
                 if ok:
                     foreign[g[0].id] = texts
@@ -538,7 +539,8 @@ STORY_PROMPT = """คุณคือผู้กำกับบทพากย�
   ถ้าบทถอดผิดจากชื่อจริง ให้ใส่ชื่อที่ถูก (เช่น ได้ยิน Kyle แต่ในเรื่องคือ Guile → Guile = กายล์)
 - asr_fixes: เฉพาะบรรทัดที่ถอดเสียงผิดจนอ่านไม่เป็นความ ชื่อผิด หรือคำถูกตัดกลางคำ {"id": เลขบรรทัด, "likely": "ต้นฉบับที่น่าจะพูดจริง"}
   บรรทัดที่อ่านแล้วมีความหมายอยู่แล้ว ห้ามเปลี่ยนคำให้เข้ากับที่คิดว่าควรเป็น
-- speaker_doubts: บรรทัดที่เนื้อหาไม่น่าใช่คนที่ระบบบอก {"id": เลขบรรทัด, "note": "เหตุผลสั้น ๆ"}
+- speaker_doubts: บรรทัดที่เนื้อหาไม่น่าใช่คนที่ระบบบอก {"id": เลขบรรทัด, "speaker": "ผู้พูดที่น่าจะพูดจริง (จากรายชื่อ speaker ที่ให้มา ไม่แน่ใจให้เว้นว่าง)", "note": "เหตุผลสั้น ๆ"}
+  ใส่เฉพาะบรรทัดที่คิดว่าผิดจริง ห้ามใส่บรรทัดที่ speaker ถูกอยู่แล้ว
 ตอบเป็น JSON อย่างเดียว"""
 
 
@@ -577,16 +579,17 @@ def analyze_story(utts: list[Utterance], lang: str, target: str = "th", title: s
             "วิเคราะห์บทนี้ (user_* คือข้อมูลที่ผู้ใช้ตั้งไว้ ให้ยึดตามนั้น previous_analysis คือผลจากช่วงก่อนหน้า ให้ต่อยอดและตอบผลรวมทั้งหมด)\n"
             'ตอบรูปแบบ {"genre":"","setting":"","register":"","characters":[{"speaker":"speaker_01","name":"","gender":"",'
             '"role":"","self":"","addresses":""}],"glossary":["ต้นฉบับ = ปลายทาง"],"asr_fixes":[{"id":1,"likely":""}],'
-            '"speaker_doubts":[{"id":1,"note":""}]}\n\n' + json.dumps(payload, ensure_ascii=False)),
+            '"speaker_doubts":[{"id":1,"speaker":"","note":""}]}\n\n' + json.dumps(payload, ensure_ascii=False)),
             temperature=0.2, max_tokens=4096)
         data = _parse_json(reply)
         if isinstance(data, dict) and data:
             result = data
-    return clean_story(result, {u.speaker for u in utts}, {u.id for u in utts})
+    return clean_story(result, {u.speaker for u in utts}, {u.id for u in utts}, {u.id: u.speaker for u in utts})
 
 
-def clean_story(data: dict, speakers: set[str], ids: set[int]) -> dict:
-    """ตัดค่าที่ผิดรูปแบบ และผู้พูดหรือบรรทัดที่ไม่มีในงาน (กันโมเดลตอบมั่ว)"""
+def clean_story(data: dict, speakers: set[str], ids: set[int], speaker_of: Optional[dict[int, str]] = None) -> dict:
+    """ตัดค่าที่ผิดรูปแบบ และผู้พูดหรือบรรทัดที่ไม่มีในงาน (กันโมเดลตอบมั่ว)
+    speaker_of: id บรรทัด → ผู้พูดตอนนี้ ข้อสงสัยที่เสนอผู้พูดคนเดิมตัดทิ้ง (โมเดลมักใส่บรรทัดที่ถูกอยู่แล้ว)"""
     s = lambda v, n=200: str(v or "").strip()[:n]  # noqa: E731
     chars = []
     for c in data.get("characters") or []:
@@ -598,9 +601,16 @@ def clean_story(data: dict, speakers: set[str], ids: set[int]) -> dict:
     pick = lambda key, field: [{"id": int(x["id"]), field: s(x.get(field), 300)} for x in data.get(key) or []  # noqa: E731
                                if isinstance(x, dict) and str(x.get("id", "")).lstrip("-").isdigit() and int(x["id"]) in ids
                                and s(x.get(field))]
+    doubts = []
+    for x in data.get("speaker_doubts") or []:
+        if not (isinstance(x, dict) and str(x.get("id", "")).lstrip("-").isdigit() and int(x["id"]) in ids and s(x.get("note"))):
+            continue
+        sp = s(x.get("speaker"), 40) if x.get("speaker") in speakers else ""
+        if not (sp and speaker_of and speaker_of.get(int(x["id"])) == sp):
+            doubts.append({"id": int(x["id"]), "speaker": sp, "note": s(x.get("note"), 300)})
     return {"genre": s(data.get("genre"), 120), "setting": s(data.get("setting")), "register": s(data.get("register"), 400),
             "characters": chars, "glossary": gloss, "asr_fixes": pick("asr_fixes", "likely")[:40],
-            "speaker_doubts": pick("speaker_doubts", "note")[:40]}
+            "speaker_doubts": doubts[:40]}
 
 
 def story_hints(story: Optional[dict], hints: dict) -> dict:

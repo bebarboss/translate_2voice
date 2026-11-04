@@ -9,11 +9,15 @@ const GENDER: Record<string, string> = { male: "ชาย", female: "หญิ�
 
 /** บริบทเรื่องที่ AI วิเคราะห์จากบททั้งเรื่อง (แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด)
  * และแปลบทใหม่ทั้งเรื่องด้วยแนวเรื่อง คำเฉพาะ และชื่อตัวละครที่แก้ไว้ (ค่าเริ่มต้นมาจากผลวิเคราะห์) */
-export default function RetranslatePanel({ job, names, onStarted, onJump }: {
+export default function RetranslatePanel({ job, names, onStarted, onJump, speakerOf, onSpeaker, label }: {
   job: Job;
   names: Record<string, string>;
   onStarted: () => void;
   onJump?: (lineId: number) => void;
+  /** ผู้พูดตอนนี้ของบรรทัด กับเปลี่ยนผู้พูด (ปุ่มรับข้อเสนอ "อาจผิดตัวละคร") */
+  speakerOf?: (lineId: number) => string | undefined;
+  onSpeaker?: (lineId: number, speaker: string) => void;
+  label?: (speaker: string) => string;
 }) {
   const story = job.story;
   const [genre, setGenre] = useState(job.genre || (story ? [story.genre, story.setting].filter(Boolean).join(" · ") : ""));
@@ -22,9 +26,10 @@ export default function RetranslatePanel({ job, names, onStarted, onJump }: {
   const [error, setError] = useState("");
   const named = Object.values(names).filter(Boolean);
   const issues = [
-    ...(story?.asr_fixes ?? []).map((x) => ({ id: x.id, kind: tx("อาจถอดเสียงผิด"), text: x.likely })),
-    ...(story?.speaker_doubts ?? []).map((x) => ({ id: x.id, kind: tx("อาจผิดตัวละคร"), text: x.note })),
+    ...(story?.asr_fixes ?? []).map((x) => ({ id: x.id, kind: tx("อาจถอดเสียงผิด"), text: x.likely, speaker: "" })),
+    ...(story?.speaker_doubts ?? []).map((x) => ({ id: x.id, kind: tx("อาจผิดตัวละคร"), text: x.note, speaker: x.speaker ?? "" })),
   ].sort((a, b) => a.id - b.id);
+  const name = (s: string) => label?.(s) || names[s] || s;
 
   const start = async () => {
     if (!window.confirm(tx("แปลบทใหม่ทั้งเรื่อง? บทที่แก้เองไว้จะถูกแทนด้วยคำแปลใหม่ (ตัวละคร เวลา และอารมณ์ของแต่ละประโยคคงเดิม)"))) return;
@@ -73,7 +78,14 @@ export default function RetranslatePanel({ job, names, onStarted, onJump }: {
                 <div key={`${x.id}-${i}`} className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}>
                   <button type="button" className="time-btn" onClick={() => onJump?.(x.id)} title={tx("ไปที่ประโยคนี้")}>#{x.id}</button>
                   <span className="badge warn">{x.kind}</span>
-                  <span className="muted" style={{ fontSize: 14 }}>{x.text}</span>
+                  <span className="muted" style={{ fontSize: 14, flex: 1 }}>{x.text}</span>
+                  {x.speaker && onSpeaker && (speakerOf?.(x.id) === x.speaker
+                    ? <span className="badge done">{tx("✓ เปลี่ยนแล้ว")}</span>
+                    : speakerOf?.(x.id) !== undefined && (
+                      <button type="button" className="btn small" style={{ whiteSpace: "nowrap" }} onClick={() => onSpeaker(x.id, x.speaker)}>
+                        {tx("เปลี่ยนเป็น {0}", { 0: name(x.speaker) })}
+                      </button>
+                    ))}
                 </div>
               ))}
             </div>
