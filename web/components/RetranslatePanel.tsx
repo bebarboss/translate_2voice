@@ -57,6 +57,7 @@ export default function RetranslatePanel({ job, names, onStarted, onJump, speake
       {story && (
         <div className="story">
           <span className="dim">{tx("AI อ่านบทต้นฉบับทั้งเรื่องแล้วสรุปไว้ให้ผู้แปลใช้ เป็นการเดาจากบท ตรวจและแก้ได้ด้านล่าง")}</span>
+          {story.content_type && <div><b>{tx("ประเภทคลิป")}</b> <span className="muted">{tx(story.content_type === "teaser" ? "ทีเซอร์-รวมฉาก" : "เรื่องต่อเนื่อง")}</span></div>}
           {story.register && <div><b>{tx("ระดับภาษา")}</b> <span className="muted">{story.register}</span></div>}
           {story.characters.length > 0 && (
             <div className="story-chars">

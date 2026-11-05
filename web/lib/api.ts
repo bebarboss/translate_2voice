@@ -70,6 +70,7 @@ export type ProjectInput = Pick<Project, "name" | "genre" | "glossary" | "speech
 
 /** AI อ่านบทต้นฉบับทั้งเรื่องก่อนแปล: แนวเรื่อง ระดับภาษา ตัวละคร ชื่อเฉพาะ จุดที่น่าจะถอดผิด ผู้พูดที่น่าสงสัย */
 export interface StoryAnalysis {
+  content_type?: "continuous" | "teaser" | ""; // เรื่องต่อเนื่อง หรือทีเซอร์/รวมฉาก
   genre: string; setting: string; register: string;
   characters: { speaker: string; name: string; gender: string; role: string; self: string; addresses: string }[];
   glossary: string[];
@@ -271,6 +272,9 @@ export interface Utterance {
   /** ตรวจเสียงพากย์แล้วไม่ตรงบท: สิ่งที่ระบบได้ยิน และคะแนน 0–1 */
   heard?: string;
   heard_score?: number | null;
+  unclear?: boolean;
+  /** ตรวจหลังแปลแล้วควรให้คนดู: เหตุผล */
+  check_note?: string;
   ref_reading: string;
 }
 

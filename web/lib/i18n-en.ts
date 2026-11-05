@@ -1176,4 +1176,11 @@ export const EN: Record<string, string> = {
   "ควรฟัง": "Check audio",
   "ระบบฟังเสียงพากย์แล้ว {0} ประโยคอาจพูดไม่ตรงบท (พากย์ใหม่ให้อัตโนมัติแล้วยังไม่ผ่าน) ลองฟัง แล้วกดสุ่มเสียงใหม่หรือแก้บทให้สั้นลง": "After listening to the dub, {0} lines may not match the script (already re-dubbed automatically). Listen, then try a new take or shorten the line",
   "ไปประโยคแรก": "Go to first",
+  "เพลงดังทับเสียงพูด ถอดเสียงสองรอบแล้วยังไม่มั่นใจ ฟังต้นฉบับแล้วแก้ข้อความถ้าผิด": "Music is loud over the speech and two transcription passes were still unsure. Listen to the original and fix the text if needed",
+  "ถอดไม่ชัด ควรฟัง": "Unclear, listen",
+  "ควรตรวจ": "Needs review",
+  "ตรวจบทแปล": "Reviewing translation",
+  "ประเภทคลิป": "Clip type",
+  "ทีเซอร์-รวมฉาก": "Teaser or compilation",
+  "เรื่องต่อเนื่อง": "Continuous story",
 };
