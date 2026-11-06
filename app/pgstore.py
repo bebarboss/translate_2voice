@@ -54,7 +54,8 @@ class Result:
         return self._rows[0] if self._rows else None
 
 
-_POOLER_HOST = "aws-0-eu-west-1.pooler.supabase.com"
+# Transaction pooler — region อยู่ในโฮสต์ของ SUPABASE_DB_URL (เช่น aws-0-ap-southeast-1.pooler...)
+# ห้าม hardcode eu-west-1: ย้ายโปรเจกต์ไป Singapore แล้วแค่เปลี่ยน URL ใน .env
 _POOLER_PORT = 6543
 
 
@@ -68,13 +69,18 @@ def _dsn() -> str:
     user = parts.username or "postgres"
     password = quote(unquote(parts.password or ""), safe="")
     if host.startswith("db.") and host.endswith(".supabase.co"):
-        ref = host.split(".", 2)[1]
-        if "." not in user:
-            user = f"{user}.{ref}"
-        host = _POOLER_HOST
+        # db.<ref>.supabase.co มักเป็น IPv6 และไม่บอก region ของ pooler
+        raise RuntimeError(
+            "ตั้ง SUPABASE_DB_URL เป็น Connection pooler จาก Dashboard → Connect "
+            "(เช่น postgresql://postgres.<ref>:...@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres) "
+            "ไม่ใช้โฮสต์ db.<ref>.supabase.co โดยตรง"
+        )
+    if host.endswith(".pooler.supabase.com"):
+        # ใช้ region ตาม URL ที่มีอยู่ บังคับพอร์ต transaction mode
         port = _POOLER_PORT
-    elif host == _POOLER_HOST or host.endswith(".pooler.supabase.com"):
-        port = _POOLER_PORT
+        if "." not in (parts.username or "") and user == "postgres":
+            # บาง URL เป็น postgres:pass@pooler — pooler ต้องการ postgres.<ref>
+            pass
     user = quote(user, safe=".")
     netloc = f"{user}:{password}@{host}:{port or _POOLER_PORT}"
     url = urlunparse(parts._replace(netloc=netloc))
