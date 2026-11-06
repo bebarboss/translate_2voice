@@ -36,6 +36,10 @@ from .slip_ocr import SlipOcrError, image_mime, read_slip, verdict
 
 SESSION_DAYS = 30
 TOPUP_MIN, TOPUP_MAX = 5, 2000  # ซื้อเครดิตเติมได้ครั้งละกี่เครดิต
+# แคช session ในหน่วยความจำ — ทุกคำขอเคยยิง Postgres (~0.6s จากไทย→EU) แค่เช็คว่าล็อกอินอยู่
+_SESSION_TTL = 45.0
+_session_cache: dict[str, tuple[float, Optional[dict]]] = {}
+_session_cache_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -270,6 +274,7 @@ def save_profile(uid: str, name: str, full_name: str, phone: str, account_type: 
         row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
     if row is None:
         raise AccountError(404, "ไม่พบผู้ใช้นี้")
+    _drop_session_cache(user_id=uid)
     return public_user(row)
 
 
@@ -309,7 +314,23 @@ def google_login(credential: str) -> dict:
     return {"token": token, "user": public_user(row)}
 
 
+def _cache_session(token_hash: str, user: Optional[dict]) -> None:
+    with _session_cache_lock:
+        _session_cache[token_hash] = (time.time() + _SESSION_TTL, user)
+
+
+def _drop_session_cache(token: Optional[str] = None, user_id: Optional[str] = None) -> None:
+    with _session_cache_lock:
+        if token:
+            _session_cache.pop(_token_hash(token), None)
+        if user_id:
+            dead = [h for h, (_, u) in _session_cache.items() if u and u.get("id") == user_id]
+            for h in dead:
+                _session_cache.pop(h, None)
+
+
 def logout(token: str) -> None:
+    _drop_session_cache(token=token)
     with _tx() as db:
         db.execute("DELETE FROM sessions WHERE token_hash = ?", (_token_hash(token),))
 
@@ -317,9 +338,17 @@ def logout(token: str) -> None:
 def user_by_token(token: Optional[str]) -> Optional[sqlite3.Row]:
     if not token:
         return None
+    h = _token_hash(token)
+    now = time.time()
+    with _session_cache_lock:
+        hit = _session_cache.get(h)
+        if hit and hit[0] > now:
+            return hit[1]  # type: ignore[return-value]
     rows = _read("SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id "
-                 "WHERE s.token_hash = ? AND s.expires_at > ?", _token_hash(token), time.time())
-    return rows[0] if rows else None
+                 "WHERE s.token_hash = ? AND s.expires_at > ?", h, now)
+    user = dict(rows[0]) if rows else None
+    _cache_session(h, user)
+    return user  # type: ignore[return-value]
 
 
 def user_by_id(uid: str) -> Optional[sqlite3.Row]:
@@ -348,6 +377,7 @@ def set_admin(uid: str, admin: bool, by: sqlite3.Row) -> None:
             raise AccountError(400, "ผู้ดูแลหลัก (ADMIN_EMAILS) ถอดสิทธิ์ผ่านหน้าเว็บไม่ได้")
         db.execute("UPDATE users SET admin = ? WHERE id = ?", (int(admin), uid))
         _log(db, uid, "adjust", note=f"{'ให้' if admin else 'ถอด'}สิทธิ์ผู้ดูแลโดย {by['email']}")
+    _drop_session_cache(user_id=uid)
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
@@ -401,6 +431,7 @@ def close_account(uid: str) -> float:
         db.execute("UPDATE users SET email = ?, name = 'บัญชีที่ปิดแล้ว', pw_hash = '', credits = 0, admin = 0, "
                    "full_name = '', phone = '', account_type = '', company = '', use_case = '', deleted_at = ? "
                    "WHERE id = ?", (f"closed-{uid}@deleted.invalid", time.time(), uid))
+    _drop_session_cache(user_id=uid)
     for c in cards:
         _detach_card(c["provider"], c["ref"])
     return credits_out(u["credits"])

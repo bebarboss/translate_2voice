@@ -6,11 +6,16 @@
 ร่างนี้ควรให้ทนายตรวจก่อนเปิดใช้จริง ชื่อและช่องทางติดต่อผู้ให้บริการตั้งที่ PDPA_CONTROLLER_NAME / PDPA_CONTROLLER_CONTACT
 """
 import hashlib
+import threading
 import time
 from typing import Optional
 
 from .accounts import AccountError, _read, _tx
 from .config import settings
+
+_STATUS_TTL = 45.0
+_status_cache: dict[str, tuple[float, dict]] = {}
+_status_lock = threading.Lock()
 
 TERMS_VERSION = "2026-11-03"
 PRIVACY_VERSION = "2026-11-03"
@@ -117,19 +122,29 @@ def _latest(db, uid: str) -> dict[str, dict]:
 
 def status(uid: str) -> dict:
     """ยอมรับฉบับปัจจุบันครบไหม และค่าล่าสุดของแต่ละเรื่อง"""
+    now = time.time()
+    with _status_lock:
+        hit = _status_cache.get(uid)
+        if hit and hit[0] > now:
+            return hit[1]
     _init()
     from .accounts import _db, _lock
     with _lock:
         last = _latest(_db(), uid)
     ok = lambda k, v: bool(last.get(k)) and last[k]["accepted"] == 1 and last[k]["version"] == v  # noqa: E731
-    return {"current": ok("terms", TERMS_VERSION) and ok("privacy", PRIVACY_VERSION),
-            "marketing": bool(last.get("marketing")) and last["marketing"]["accepted"] == 1,
-            "terms": last.get("terms") and {"version": last["terms"]["version"], "at": last["terms"]["created_at"]},
-            "privacy": last.get("privacy") and {"version": last["privacy"]["version"], "at": last["privacy"]["created_at"]}}
+    out = {"current": ok("terms", TERMS_VERSION) and ok("privacy", PRIVACY_VERSION),
+           "marketing": bool(last.get("marketing")) and last["marketing"]["accepted"] == 1,
+           "terms": last.get("terms") and {"version": last["terms"]["version"], "at": last["terms"]["created_at"]},
+           "privacy": last.get("privacy") and {"version": last["privacy"]["version"], "at": last["privacy"]["created_at"]}}
+    with _status_lock:
+        _status_cache[uid] = (now + _STATUS_TTL, out)
+    return out
 
 
 def accept(uid: str, terms_version: str, privacy_version: str, marketing: Optional[bool], ip: str, ua: str) -> None:
     """ยอมรับข้อกำหนดและนโยบายฉบับปัจจุบัน (ต้องตรงเวอร์ชันที่ผู้ใช้เห็น) และตั้งค่ารับข่าวสาร (None = คงเดิม)"""
+    with _status_lock:
+        _status_cache.pop(uid, None)
     _init()
     if terms_version != TERMS_VERSION or privacy_version != PRIVACY_VERSION:
         raise AccountError(409, "ข้อกำหนดหรือนโยบายมีฉบับใหม่ โหลดหน้าใหม่แล้วอ่านอีกครั้ง")
