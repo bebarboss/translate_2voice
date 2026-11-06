@@ -1233,4 +1233,7 @@ export const EN: Record<string, string> = {
   "กราฟเครดิตที่ใช้ 14 วัน รวม {0}": "Chart of credits used over 14 days, {0} in total",
   "กราฟนาทีที่พากย์ 14 วัน รวม {0}": "Chart of minutes dubbed over 14 days, {0} in total",
   "ยังไม่มีการใช้งานในช่วงนี้": "No usage in this period",
+  "ค่าตอบแทนค้างจ่าย": "Earnings due",
+  "ค่าตอบแทนเดือนนี้": "Earnings this month",
+  "ค้างจ่ายนักพากย์เดือนนี้": "Voice actor payouts due this month",
 };

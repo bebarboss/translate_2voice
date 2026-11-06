@@ -5,12 +5,20 @@ import { useEffect, useState } from "react";
 import { PlusIcon } from "@/components/Icons";
 import StatusBadge from "@/components/StatusBadge";
 import UsageChart from "@/components/UsageChart";
-import { api, type Job, type PaymentOrder, type Project, type Wallet } from "@/lib/api";
+import { api, type ActorMe, type Job, type PaymentOrder, type Project, type Wallet } from "@/lib/api";
 import { TARGET_LABEL, fmtBaht, fmtDuration, fmtNum, fmtWhen, isActive, langName } from "@/lib/format";
-import { tx } from "@/lib/i18n";
+import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 
 const ATTENTION = new Set(["awaiting_review", "failed", "queued", "running"]);
+
+/** เดือนตามเวลาไทย ตรงกับที่ API ตัดรอบค่าตอบแทนนักพากย์ */
+function thaiMonth(now = Date.now()): string {
+  return new Date(now + 7 * 3600_000).toISOString().slice(0, 7);
+}
+
+const fmtMin = (sec: number) => tx("{0} นาที", { 0: (sec / 60).toLocaleString(locale(), { maximumFractionDigits: 1 }) });
+const fmtMonth = (m: string) => new Date(`${m}-01T00:00:00`).toLocaleDateString(locale(), { month: "short", year: "numeric" });
 
 function attentionRank(job: Job): number {
   if (job.status === "awaiting_review") return 0;
@@ -26,6 +34,8 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [slips, setSlips] = useState<PaymentOrder[]>([]);
+  const [actorMe, setActorMe] = useState<ActorMe | null>(null);
+  const [actorDue, setActorDue] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -51,6 +61,22 @@ export default function DashboardPage() {
     return () => { stop = true; clearInterval(timer); };
   }, [loaded, config, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    let stop = false;
+    const load = () => {
+      api.actorMe().then((me) => { if (!stop) setActorMe(me); }).catch(() => {});
+      if (user.admin) {
+        api.adminActorUsage(thaiMonth()).then((data) => {
+          if (!stop) setActorDue(data.rows.reduce((sum, row) => sum + Math.max(0, row.due), 0));
+        }).catch(() => {});
+      }
+    };
+    load();
+    const timer = setInterval(load, 60000);
+    return () => { stop = true; clearInterval(timer); };
+  }, [user]);
+
   if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
 
   const list = jobs ?? [];
@@ -63,6 +89,17 @@ export default function DashboardPage() {
   const dubbed = done.reduce((sum, j) => sum + (j.duration ?? 0), 0);
   const credits = wallet ? wallet.credits + (wallet.subscription?.minutes_left ?? 0) : null;
   const name = user?.name?.trim();
+  const actor = actorMe?.actor ?? null;
+  const actorOn = actor?.status === "approved";
+  const usage = actorOn ? actorMe?.usage ?? [] : [];
+  const due = usage.reduce((sum, row) => sum + Math.max(0, row.due), 0);
+  const monthUsage = usage.find((row) => row.month === thaiMonth());
+  const actorNotes = [
+    actor?.status === "pending" ? { key: "apply", title: tx("ส่งใบสมัครแล้ว"), detail: tx("รอผู้ดูแลอนุมัติใบสมัคร") } : null,
+    actorOn && actorMe && !actorMe.consent_current ? { key: "consent", title: tx("นักพากย์"), detail: tx("หนังสือยินยอมมีเวอร์ชันใหม่") } : null,
+    actorOn && actorMe && !actorMe.payment && due > 0
+      ? { key: "pay", title: tx("ค่าตอบแทน"), detail: tx("กรอกข้อมูลรับเงินก่อน ผู้ดูแลถึงจะจ่ายค่าตอบแทนให้ได้") } : null,
+  ].filter((item): item is { key: string; title: string; detail: string } => item !== null);
 
   return (
     <main className="page" style={{ maxWidth: 1080 }}>
@@ -103,15 +140,45 @@ export default function DashboardPage() {
             <span>{user.admin ? tx("บัญชีผู้ดูแล") : tx("เครดิตคงเหลือ")}</span>
           </Link>
         )}
+        {actorOn && (
+          <Link href="/actor" className={`card dash-stat${due > 0 ? " hot" : ""}`}>
+            <b>{fmtBaht(due)}</b>
+            <span>{tx("ค่าตอบแทนค้างจ่าย")}</span>
+          </Link>
+        )}
+        {actorOn && (
+          <Link href="/actor" className="card dash-stat">
+            <b>{fmtBaht(monthUsage?.amount ?? 0)}</b>
+            <span>
+              {tx("ค่าตอบแทนเดือนนี้")}
+              {monthUsage && monthUsage.seconds > 0 ? ` · ${fmtMin(monthUsage.seconds)}` : ""}
+            </span>
+          </Link>
+        )}
+        {user?.admin && (
+          <Link href="/actors" className={`card dash-stat${actorDue ? " hot" : ""}`}>
+            <b>{actorDue == null ? "…" : fmtBaht(actorDue)}</b>
+            <span>{tx("ค้างจ่ายนักพากย์เดือนนี้")}</span>
+          </Link>
+        )}
       </section>
 
       {jobs && (
         <UsageChart jobs={list} ledger={wallet?.ledger ?? null} credits={!!config?.billing && !!user && !user.admin} />
       )}
 
-      {(attention.length > 0 || slips.length > 0) && (
+      {(attention.length > 0 || slips.length > 0 || actorNotes.length > 0) && (
         <section className="card dash-block" aria-labelledby="attention-title">
           <h2 id="attention-title">{tx("ต้องดูแล")}</h2>
+          {actorNotes.map((item) => (
+            <Link key={item.key} href="/actor" className="dash-row">
+              <span className="sq" aria-hidden="true">฿</span>
+              <span className="dash-main">
+                <b>{item.title}</b>
+                <span>{item.detail}</span>
+              </span>
+            </Link>
+          ))}
           {slips.map((o) => (
             <Link key={o.id} href="/promotions" className="dash-row">
               <span className="sq" aria-hidden="true">฿</span>
@@ -160,6 +227,23 @@ export default function DashboardPage() {
         </section>
 
         <div className="dash-side">
+          {actorOn && (
+            <section className="card dash-block" aria-labelledby="earn-title">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2 id="earn-title">{tx("ค่าตอบแทน")}</h2>
+                <Link href="/actor" className="btn small">{tx("ทั้งหมด")}</Link>
+              </div>
+              {usage.length === 0 ? <div className="empty">{tx("ยังไม่มีการใช้เสียง")}</div>
+                : usage.slice(0, 4).map((row) => (
+                  <Link key={row.month} href="/actor" className="dash-row">
+                    <span className="dash-main">
+                      <b>{fmtMonth(row.month)}</b>
+                      <span>{tx("จ่ายแล้ว")} {fmtBaht(row.paid)} · {tx("ค้างจ่าย")} {fmtBaht(Math.max(0, row.due))}</span>
+                    </span>
+                  </Link>
+                ))}
+            </section>
+          )}
           <section className="card dash-block" aria-labelledby="projects-title">
             <div className="row" style={{ justifyContent: "space-between" }}>
               <h2 id="projects-title">{tx("โปรเจกต์")}</h2>
