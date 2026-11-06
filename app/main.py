@@ -231,13 +231,18 @@ app.include_router(account_router, dependencies=[Depends(require_key)])
 @app.post("/billing/webhooks/stripe")
 async def stripe_webhook(request: Request):
     """Stripe ยิงตรงมาที่ API (ไม่ใช้ X-API-Key) ตรวจลายเซ็นด้วย STRIPE_WEBHOOK_SECRET"""
+    import logging
     from .stripe_pay import StripeError, handle_webhook
     payload = await request.body()
+    sig = request.headers.get("stripe-signature") or request.headers.get("Stripe-Signature")
     try:
-        return handle_webhook(payload, request.headers.get("stripe-signature"))
+        return handle_webhook(payload, sig)
     except StripeError as e:
+        logging.getLogger("dubbing.stripe").warning(
+            "webhook reject %s payload=%sB sig=%s", e, len(payload), bool(sig))
         raise HTTPException(e.status, str(e))
     except accounts.AccountError as e:
+        logging.getLogger("dubbing.stripe").warning("webhook fulfill %s", e)
         raise HTTPException(e.status, str(e))
 
 

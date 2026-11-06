@@ -27,10 +27,17 @@ export default function PromotionsPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const q = new URLSearchParams(window.location.search);
-    if (q.get("paid")) {
-      setFlash(tx("ชำระเงินสำเร็จ เครดิตจะเข้าในไม่ช้า"));
-      reload();
+    const paidId = q.get("paid");
+    if (paidId) {
       window.history.replaceState({}, "", "/promotions");
+      api.confirmPayment(paidId)
+        .then((order) => {
+          setFlash(order.status === "paid"
+            ? tx("ชำระเงินสำเร็จ เครดิตเข้าแล้ว")
+            : tx("รอการยืนยันจาก Stripe ลองรีเฟรชในอีกสักครู่"));
+          reload();
+        })
+        .catch((e) => setFlash(e instanceof Error ? e.message : tx("ยืนยันการชำระเงินไม่สำเร็จ")));
     } else if (q.get("cancel")) {
       setFlash(tx("ยกเลิกการชำระเงินแล้ว"));
       window.history.replaceState({}, "", "/promotions");

@@ -31,6 +31,9 @@ class Result:
         self._rows = rows
         self.rowcount = rowcount
 
+    def __iter__(self):
+        return iter(self._rows)
+
     def fetchall(self) -> list[Row]:
         return self._rows
 

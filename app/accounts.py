@@ -654,6 +654,35 @@ def fulfill_stripe(topup_id: str, *, session_id: str = "", amount_total=None, cu
     mark_paid(topup_id)
 
 
+def confirm_stripe(uid: str, topup_id: str) -> dict:
+    """หลังกลับจาก Checkout (?paid=): ถาม Stripe เองว่าจ่ายแล้วหรือยัง แล้วเติมเครดิต
+    ใช้เมื่อ webhook มาไม่ถึงหรือลายเซ็นไม่ผ่าน"""
+    import stripe
+    with _lock:
+        row = _db().execute("SELECT * FROM topups WHERE id = ? AND user_id = ?", (topup_id, uid)).fetchone()
+    if row is None:
+        raise AccountError(404, "ไม่พบรายการนี้")
+    if row["status"] == "paid":
+        return _fetch_order(topup_id)
+    if row["provider"] != "stripe":
+        raise AccountError(400, "รายการนี้ไม่ใช่ Stripe")
+    sid = row["provider_ref"] if "provider_ref" in row.keys() else None
+    if not sid:
+        raise AccountError(409, "ยังไม่มีเซสชัน Stripe ของรายการนี้")
+    if not settings.stripe_secret_key.strip():
+        raise AccountError(503, "ยังไม่ได้ตั้ง STRIPE_SECRET_KEY")
+    stripe.api_key = settings.stripe_secret_key
+    try:
+        session = stripe.checkout.Session.retrieve(sid)
+    except stripe.StripeError as e:
+        raise AccountError(502, "ถามสถานะ Stripe ไม่สำเร็จ") from e
+    if getattr(session, "payment_status", None) != "paid":
+        return _fetch_order(topup_id)
+    fulfill_stripe(topup_id, session_id=sid, amount_total=getattr(session, "amount_total", None),
+                   currency=(getattr(session, "currency", None) or ""))
+    return _fetch_order(topup_id)
+
+
 def user_payments(uid: str) -> list[dict]:
     rows = _read("SELECT * FROM topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", uid)
     return [_order_out(r) for r in rows]

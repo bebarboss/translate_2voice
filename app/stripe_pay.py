@@ -82,8 +82,11 @@ def handle_webhook(payload: bytes, signature: Optional[str]) -> dict:
     try:
         event = stripe.Webhook.construct_event(payload, signature, secret)
     except ValueError as e:
+        log.warning("webhook payload invalid first_bytes=%r", payload[:80])
         raise StripeError(400, "payload ไม่ถูกต้อง") from e
     except stripe.SignatureVerificationError as e:
+        log.warning("webhook bad signature len=%s secret_prefix=%s",
+                    len(payload), secret[:6])
         raise StripeError(400, "ลายเซ็น webhook ไม่ถูกต้อง") from e
 
     etype = _field(event, "type")
@@ -93,13 +96,34 @@ def handle_webhook(payload: bytes, signature: Optional[str]) -> dict:
         return {"ok": True, "event": etype, "topup_id": None}
 
     meta = _field(obj, "metadata") or {}
-    if not isinstance(meta, dict):
-        meta = dict(meta) if meta else {}
+    if hasattr(meta, "to_dict"):
+        meta = meta.to_dict()
+    elif not isinstance(meta, dict):
+        try:
+            meta = dict(meta)
+        except TypeError:
+            meta = {}
     topup_id = meta.get("topup_id") or _field(obj, "client_reference_id")
     payment_status = _field(obj, "payment_status")
     amount_total = _field(obj, "amount_total")
     currency = (_field(obj, "currency") or "").lower()
     session_id = _field(obj, "id") or ""
+
+    # thin/summary event: อาจไม่มี object ครบ ดึง Session จาก Stripe อีกรอบ
+    if session_id and (not topup_id or payment_status not in (None, "paid")):
+        try:
+            stripe.api_key = _api_key()
+            session = stripe.checkout.Session.retrieve(str(session_id))
+            payment_status = getattr(session, "payment_status", payment_status)
+            amount_total = getattr(session, "amount_total", amount_total)
+            currency = (getattr(session, "currency", None) or currency or "").lower()
+            sm = getattr(session, "metadata", None)
+            if sm is not None:
+                sm = sm.to_dict() if hasattr(sm, "to_dict") else dict(sm)
+                topup_id = topup_id or sm.get("topup_id")
+            topup_id = topup_id or getattr(session, "client_reference_id", None)
+        except stripe.StripeError:
+            log.exception("ดึง Checkout Session %s ไม่สำเร็จ", session_id)
 
     if not topup_id:
         log.warning("Stripe event %s ไม่มี topup_id session=%s", etype, session_id)

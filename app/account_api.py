@@ -213,6 +213,15 @@ def my_topups(user=Depends(require_user)):
     return accounts.user_payments(user["id"])
 
 
+@router.post("/billing/topups/{topup_id}/confirm", dependencies=[Depends(_need_billing)])
+def confirm_topup(topup_id: str, user=Depends(require_user)):
+    """หลังกลับจาก Stripe Checkout: ตรวจสถานะกับ Stripe แล้วเติมเครดิต (สำรองเมื่อ webhook พลาด)"""
+    try:
+        return accounts.confirm_stripe(user["id"], topup_id)
+    except AccountError as e:
+        raise _fail(e)
+
+
 @router.post("/billing/topups/{topup_id}/slip", dependencies=[Depends(_need_billing)])
 async def upload_slip(topup_id: str, file: UploadFile = File(...), user=Depends(require_user)):
     """แนบรูปสลิป Typhoon OCR อ่านยอด ตรงกับรายการแล้วเติมให้ทันที"""

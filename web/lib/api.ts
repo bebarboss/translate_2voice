@@ -423,6 +423,7 @@ export const api = {
   addCard: (token: string) => request<{ card: Card; bonus: number }>("/billing/cards", json("POST", { token })),
   removeCard: (id: string) => request<void>(`/billing/cards/${id}`, { method: "DELETE" }),
   buyCredits: (credits: number) => request<PaymentOrder>("/billing/topups", json("POST", { credits })),
+  confirmPayment: (id: string) => request<PaymentOrder>(`/billing/topups/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
   myPayments: () => request<PaymentOrder[]>("/billing/topups"),
   /** แนบรูปสลิป JPG/PNG ให้ Typhoon OCR อ่านยอด */
   uploadSlip: (id: string, file: File) => {
