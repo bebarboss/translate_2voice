@@ -2,8 +2,8 @@
 
 // ชิ้นส่วนที่หน้าโปรไฟล์ (/account) หน้าแพ็กเกจและโปรโมชัน (/promotions) และหน้าผู้ดูแล (/admin) ใช้ร่วมกัน
 import { useEffect, useState } from "react";
-import { api, type Cards, type Plan, type Wallet } from "@/lib/api";
-import { fmtNum } from "@/lib/format";
+import { api, type Cards, type PaymentOrder, type Plan, type Wallet } from "@/lib/api";
+import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 
 export type Message = { kind: "error" | "info"; text: string } | null;
@@ -96,6 +96,76 @@ export function CardsSection({ onChange }: { onChange: () => void }) {
         <span className="dim">{tx("ยังไม่ได้เชื่อมช่องทางชำระเงิน ผูกบัตรได้เร็ว ๆ นี้")}</span>
       ) : null}
       <Alert m={message} />
+    </section>
+  );
+}
+
+const SLIP_STATUS: Record<string, string> = {
+  pending: "รอโอน", review: "รอตรวจสลิป", rejected: "สลิปไม่ผ่าน", paid: "เติมแล้ว",
+};
+
+/** รายการโอนที่ยังไม่จบ กดเพื่อเปิดกล่องแนบสลิป */
+export function OpenPayments({ orders, onOpen }: { orders: PaymentOrder[]; onOpen: (order: PaymentOrder) => void }) {
+  const open = orders.filter((o) => o.status === "pending" || o.status === "review" || o.status === "rejected");
+  if (!open.length) return null;
+  return (
+    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+      {open.map((o) => (
+        <button key={o.id} type="button" className="btn small" onClick={() => onOpen(o)}>
+          {fmtBaht(o.amount)} · {tx(SLIP_STATUS[o.status] ?? o.status)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** ยอดที่ต้องโอน บัญชีรับเงิน และช่องแนบรูปสลิป */
+export function SlipBox({ order, busy, onUpload }: { order: PaymentOrder; busy: string; onUpload: (file: File) => void }) {
+  const [copied, setCopied] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const payee = order.payee;
+  useEffect(() => { setFile(null); setCopied(false); }, [order.id]);
+  const copy = async () => {
+    if (!payee?.account) return;
+    try {
+      await navigator.clipboard.writeText(payee.account.replace(/\s/g, ""));
+      setCopied(true);
+    } catch { /* เบราว์เซอร์ไม่ให้คัดลอก ผู้ใช้ยังคัดจากข้อความบนจอได้ */ }
+  };
+  const canUpload = order.status === "pending" || order.status === "rejected";
+  return (
+    <section className="card" aria-labelledby="slip-title">
+      <h2 id="slip-title">{tx("โอนเงินแล้วแนบสลิป")}</h2>
+      <span className="muted">
+        {tx("ระบบอ่านสลิปด้วย Typhoon OCR ถ้ายอดและเลขบัญชีปลายทางตรง จะเติมให้ทันที ถ้าไม่ตรงจะส่งให้ผู้ดูแลตรวจ")}
+      </span>
+      <div className="row" style={{ gap: 20, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div>
+          <div className="dim">{tx("ยอดที่ต้องโอน")}</div>
+          <div style={{ fontSize: 26, fontWeight: 600 }}>{fmtBaht(order.amount)}</div>
+        </div>
+        {payee && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {payee.bank && <span>{tx("ธนาคาร")} {payee.bank}</span>}
+            {payee.name && <span>{tx("ชื่อบัญชี")} {payee.name}</span>}
+            <span className="mono">
+              {payee.account}{" "}
+              <button type="button" className="btn small" onClick={copy}>{copied ? tx("คัดลอกแล้ว") : tx("คัดลอก")}</button>
+            </span>
+          </div>
+        )}
+      </div>
+      {order.note && order.status !== "pending" && <div className="alert info">{order.note}</div>}
+      {order.status === "review" && <span className="dim">{tx("ส่งสลิปแล้ว รอผู้ดูแลตรวจ ส่งรูปใหม่ไม่ได้จนกว่าจะมีผลตรวจ")}</span>}
+      {canUpload && (
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <input key={order.id} type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" aria-label={tx("รูปสลิป (JPG หรือ PNG)")}
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          <button type="button" className="btn primary small" disabled={!file || !!busy} onClick={() => file && onUpload(file)}>
+            {busy === "slip" ? tx("กำลังอ่านสลิป...") : order.status === "rejected" ? tx("ส่งสลิปใหม่") : tx("ส่งสลิป")}
+          </button>
+        </div>
+      )}
     </section>
   );
 }

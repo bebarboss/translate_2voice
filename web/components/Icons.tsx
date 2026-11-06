@@ -62,6 +62,9 @@ export const PasteIcon = ({ size = 14, color = "currentColor" }: P) =>
 export const TrashIcon = ({ size = 14, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="M6 7l1 13h10l1-13" /></>);
 
+export const GridIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 4h7v7H4z" /><path d="M13 4h7v7h-7z" /><path d="M4 13h7v7H4z" /><path d="M13 13h7v7h-7z" /></>);
+
 export const ListIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M4 6h.01" /><path d="M4 12h.01" /><path d="M4 18h.01" /></>);
 

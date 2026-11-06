@@ -103,6 +103,8 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     store.update(job_id, speakers=res["speakers"])
     # เก็บเวลาของแต่ละคำไว้ เผื่อแบ่งท่อนใหม่ภายหลัง
     (d / "words.json").write_text(json.dumps([w.__dict__ for w in words], ensure_ascii=False), encoding="utf-8")
+    if res.get("recheck"):  # ผลถอดรอบสอง (ช่วง เวลา จำนวนคำที่กู้ได้) เก็บไว้เทียบเวลาปรับเกณฑ์
+        (d / "recheck.json").write_text(json.dumps(res["recheck"]), encoding="utf-8")
     store.update(job_id, detected_lang=lang)
     utterances = hallucination.clean(utterances)
     store.save_transcript(job_id, utterances)
@@ -157,6 +159,16 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
+    if settings.translate_review and not settings.mock_pipeline and settings.typhoon_api_key:
+        stage("review_translation", lo + span * 0.9)
+        try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว
+            translate_mod.review_translation(utterances, lang, job.target_lang, runtime_settings.get().max_speedup,
+                                             title, hints, cancel)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("translation review failed for job %s: %s", job_id, exc)
+        store.save_transcript(job_id, utterances)
     from .. import memory
     memory.save_ai_targets(store.dir(job_id), utterances)  # เทียบภายหลังว่าผู้ใช้แก้บรรทัดไหน
     from .. import quality
@@ -218,7 +230,7 @@ def run_translate(store: JobStore, job_id: str) -> None:
     job = store.get(job_id)
     utterances = hallucination.clean(store.load_transcript(job_id))
     for u in utterances:
-        u.target = ""
+        u.target, u.check_note = "", ""
     _translate_and_fit(store, job_id, utterances, job.detected_lang or job.source_lang or "", 0.0, 1.0)
 
 

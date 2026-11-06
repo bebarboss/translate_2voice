@@ -5,7 +5,8 @@ main.access_guard หาผู้ใช้จาก token แล้วเก็�
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from . import accounts, consent
@@ -93,13 +94,18 @@ class GrantPlan(BaseModel):
     plan_id: str
 
 
+class RejectSlip(BaseModel):
+    note: str = Field("", max_length=300, description="เหตุผลที่สลิปไม่ผ่าน ผู้ใช้เห็นข้อความนี้")
+
+
 # ---------------------------------------------------------------- บัญชี
 @router.get("/auth/config")
 def auth_config():
     """ระบบไหนเปิดอยู่ หน้าเว็บใช้ซ่อนหรือแสดงเมนูเข้าสู่ระบบ"""
     from .config import settings
     return {"auth": accounts.auth_enabled(), "billing": accounts.billing_enabled(),
-            "payments": bool(settings.payment_provider), "google_client_id": settings.google_client_id}
+            "payments": bool(settings.payment_provider), "payment_provider": settings.payment_provider,
+            "google_client_id": settings.google_client_id}
 
 
 @router.post("/auth/google", dependencies=[Depends(_need_auth)])
@@ -200,6 +206,39 @@ def topup(body: Topup, user=Depends(require_user)):
         raise _fail(e)
 
 
+@router.get("/billing/topups", dependencies=[Depends(_need_billing)])
+def my_topups(user=Depends(require_user)):
+    """รายการเติมเครดิตและแพ็กเกจล่าสุด รวมรายการที่รอสลิป"""
+    return accounts.user_payments(user["id"])
+
+
+@router.post("/billing/topups/{topup_id}/slip", dependencies=[Depends(_need_billing)])
+async def upload_slip(topup_id: str, file: UploadFile = File(...), user=Depends(require_user)):
+    """แนบรูปสลิป Typhoon OCR อ่านยอด ตรงกับรายการแล้วเติมให้ทันที"""
+    from .config import settings
+    limit = max(1, settings.slip_max_mb) * 1024 * 1024
+    chunks: list[bytes] = []
+    size = 0
+    while chunk := await file.read(1024 * 1024):
+        size += len(chunk)
+        if size > limit:
+            raise HTTPException(400, f"รูปสลิปใหญ่เกิน {settings.slip_max_mb} MB")
+        chunks.append(chunk)
+    try:
+        return accounts.submit_slip(user["id"], topup_id, b"".join(chunks))
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.get("/billing/topups/{topup_id}/slip", dependencies=[Depends(_need_billing)])
+def slip_image(topup_id: str, user=Depends(require_user)):
+    try:
+        path, mime, name = accounts.slip_file(topup_id, user["id"], accounts.is_admin(user))
+    except AccountError as e:
+        raise _fail(e)
+    return FileResponse(path, media_type=mime, filename=name)
+
+
 @router.get("/billing/cards", dependencies=[Depends(_need_billing)])
 def cards(user=Depends(require_user)):
     return accounts.cards(user["id"])
@@ -242,6 +281,31 @@ def admin_plan(user_id: str, body: GrantPlan, admin=Depends(require_admin)):
     """ให้แพ็กเกจโดยไม่ต้องชำระ"""
     try:
         accounts.grant_plan(user_id, body.plan_id, admin["email"])
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.get("/admin/payments", dependencies=[Depends(_need_billing)])
+def admin_payments(status: str = "review", _=Depends(require_admin)):
+    """คิวสลิป status ว่าง = รายการล่าสุดทุกสถานะ"""
+    try:
+        return accounts.admin_payments(status)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/admin/payments/{topup_id}/approve", dependencies=[Depends(_need_billing)])
+def admin_approve_payment(topup_id: str, admin=Depends(require_admin)):
+    try:
+        return accounts.approve_payment(topup_id, admin["email"])
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/admin/payments/{topup_id}/reject", dependencies=[Depends(_need_billing)])
+def admin_reject_payment(topup_id: str, body: RejectSlip, admin=Depends(require_admin)):
+    try:
+        return accounts.reject_payment(topup_id, admin["email"], body.note)
     except AccountError as e:
         raise _fail(e)
 

@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
-import { api, fileUrl, type AccountType, type AdminUser, type Backups, type Plan, type Quality, type QualityKind, type QualityLine } from "@/lib/api";
-import { fmtNum } from "@/lib/format";
+import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine } from "@/lib/api";
+import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 
@@ -132,6 +132,77 @@ function QualitySection() {
   );
 }
 
+/** ผู้ดูแล: คิวสลิปที่ Typhoon OCR อ่านแล้วยอดไม่ตรง หรืออ่านไม่ได้ */
+function PaymentsSection() {
+  const [status, setStatus] = useState("review");
+  const [rows, setRows] = useState<PaymentOrder[] | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const load = () => {
+    api.adminPayments(status).then(setRows).catch((e) => setMessage({ kind: "error", text: e.message }));
+  };
+  const { busy, message, setMessage, run } = useRunner(load);
+  useEffect(() => { load(); }, [status]);
+  return (
+    <section className="card" aria-labelledby="slips-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="slips-title" style={{ margin: 0 }}>{tx("สลิปโอนเงิน")}</h2>
+        <div className="seg" role="group" aria-label={tx("สถานะสลิป")}>
+          <button type="button" aria-pressed={status === "review"} onClick={() => setStatus("review")}>{tx("รอตรวจ")}</button>
+          <button type="button" aria-pressed={status === ""} onClick={() => setStatus("")}>{tx("ทั้งหมด")}</button>
+        </div>
+      </div>
+      <span className="muted" style={{ fontSize: 14 }}>
+        {tx("ยอดตรงและเลขบัญชีปลายทางอยู่ในสลิปจะเติมให้อัตโนมัติ รายการในคิวนี้คือรายการที่ต้องดูรูปเอง")}
+      </span>
+      <Alert m={message} />
+      {!rows ? null : rows.length === 0 ? <div className="empty">{tx(status === "review" ? "ยังไม่มีสลิปรอตรวจ" : "ยังไม่มีรายการ")}</div> : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="ledger">
+            <thead>
+              <tr>
+                <th>{tx("ผู้ใช้")}</th><th>{tx("รายการ")}</th><th>{tx("ยอดที่ต้องโอน")}</th><th>{tx("ยอดที่อ่านได้")}</th>
+                <th>{tx("สลิป")}</th><th>{tx("หมายเหตุ")}</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.email}<div className="dim">{p.name}</div></td>
+                  <td>{p.plan_id ? p.plan_id : tx("{0} เครดิต", { 0: fmtNum(p.credits) })}<div className="dim">{tx(p.status === "review" ? "รอตรวจสลิป" : p.status === "paid" ? "เติมแล้ว" : p.status === "rejected" ? "สลิปไม่ผ่าน" : "รอโอน")}</div></td>
+                  <td className="mono">{fmtBaht(p.amount)}</td>
+                  <td className="mono">{p.ocr?.amount ? fmtBaht(p.ocr.amount) : tx("อ่านไม่ได้")}</td>
+                  <td>
+                    {p.has_slip
+                      ? <a href={fileUrl.slip(p.id)} target="_blank" rel="noreferrer"><img src={fileUrl.slip(p.id)} alt={tx("ดูสลิป")} style={{ height: 72, borderRadius: 6 }} /></a>
+                      : <span className="dim">—</span>}
+                  </td>
+                  <td className="dim">{p.note}{p.ocr?.payer ? <div>{tx("ผู้โอน")} {p.ocr.payer}</div> : null}</td>
+                  <td>
+                    {p.status === "review" && (
+                      <div className="row" style={{ gap: 6 }}>
+                        <button type="button" className="btn small" disabled={!!busy}
+                          onClick={() => run(`ok-${p.id}`, () => api.adminApprovePayment(p.id), tx("อนุมัติสลิปแล้ว"))}>
+                          {busy === `ok-${p.id}` ? "..." : tx("อนุมัติ")}
+                        </button>
+                        <input className="input" style={{ width: 140 }} placeholder={tx("เหตุผล (ไม่บังคับ)")} aria-label={tx("เหตุผล (ไม่บังคับ)")}
+                          value={notes[p.id] ?? ""} onChange={(e) => setNotes({ ...notes, [p.id]: e.target.value })} />
+                        <button type="button" className="btn small" disabled={!!busy}
+                          onClick={() => run(`no-${p.id}`, () => api.adminRejectPayment(p.id, notes[p.id] ?? ""), tx("ไม่ผ่านสลิปแล้ว"))}>
+                          {busy === `no-${p.id}` ? "..." : tx("ไม่ผ่าน")}
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** ผู้ดูแล: ดูผู้ใช้ทุกคน เพิ่ม/หักเครดิต และให้แพ็กเกจ (รับโอนนอกระบบ ชดเชย ฯลฯ) */
 function UsersSection({ me, billing }: { me: string; billing: boolean }) {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
@@ -247,6 +318,7 @@ export default function AdminPage() {
         </div>
       </div>
       <UsersSection me={user.id} billing={config.billing} />
+      {config.billing && <PaymentsSection />}
       <QualitySection />
       <BackupSection />
     </main>

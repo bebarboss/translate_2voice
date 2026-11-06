@@ -51,6 +51,8 @@ class Utterance(BaseModel):
     # ตรวจเสียงพากย์ (gpu.speak_line): ถอดเสียงพากย์กลับแล้วไม่ตรงบทแม้พากย์ใหม่แล้ว → สิ่งที่ได้ยิน และคะแนน 0–1
     heard: str = ""
     heard_score: Optional[float] = None
+    unclear: bool = False  # ถอดเสียงสองรอบแล้วยังไม่มั่นใจ (เพลงดังทับ) ควรฟังต้นฉบับ (transcribe.recheck_noisy)
+    check_note: str = ""  # ตรวจหลังแปล (translate.review_translation): เหตุผลที่ควรให้คนตรวจบรรทัดนี้ ("" = ไม่มีป้าย)
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property

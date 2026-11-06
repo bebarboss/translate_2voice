@@ -42,6 +42,7 @@ REMOTE_FIELDS = (
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
     "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
     "diar_refine", "diar_exclusive", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
+    "retranscribe_noisy",
     "dub_check", "dub_check_min", "dub_check_retries",
 )
 
@@ -118,10 +119,26 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     speakers = sorted({t.speaker for t in turns})
 
     stage("transcribe", 0.4)
-    words, lang = transcribe(wav16k, source_lang)
-    if not settings.mock_pipeline:  # ช่วงที่มีคนพูดแต่ถอดไม่ออก (เพลงดังทับ) → ถอดซ้ำเฉพาะช่วงนั้น
+    confidence: dict[int, float] = {}
+    if settings.mock_pipeline:
+        words, lang = transcribe(wav16k, source_lang)
+    else:
+        words, lang = transcribe(wav16k, source_lang, confidence)
+        # ช่วงที่มีคนพูดแต่ถอดไม่ออก (เพลงดังทับ) → ถอดซ้ำเฉพาะช่วงนั้น
         from .transcribe import fill_gaps
-        words = fill_gaps(wav16k, words, turns, lang)
+        words = fill_gaps(wav16k, words, turns, lang, confidence=confidence)
+    unclear, recheck = [], None
+    if settings.retranscribe_noisy and not settings.mock_pipeline and words:
+        # รอบสอง: ช่วงน่าสงสัยถอดใหม่จากเสียงต้นฉบับ (เสียงพูดยังไม่ถูกตัดไปพร้อมเพลง) โมเดลเดิมใน container เดิม
+        from .transcribe import recheck_noisy
+        stage("transcribe", 0.45)
+        t0 = time.monotonic()
+        before = len(words)
+        mixed16k = audio.to_mono(mixed, work / "mixed16k.wav", 16000)
+        bgm16k = audio.to_mono(bgm, work / "bgm16k.wav", 16000) if bgm else None
+        words, unclear, recheck = recheck_noisy(mixed16k, wav16k, bgm16k, words, confidence, turns, lang)
+        recheck.update(words_before=before, words_after=len(words), seconds=round(time.monotonic() - t0, 1))
+        log.info("recheck noisy took %.1f s, words %d → %d", recheck["seconds"], before, len(words))
     release("transcribe")
     if not words:
         raise RuntimeError("ไม่พบคำพูดในคลิป")
@@ -166,8 +183,11 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
         for i, u in enumerate(utterances, 1):
             u.id = i
         speakers = sorted({*speakers, *(u.speaker for u in hidden)})
+    if unclear:
+        from .transcribe import mark_unclear
+        recheck["unclear_lines"] = mark_unclear(utterances, unclear)
     return {"vocals": vocals, "bgm": bgm, "turns": turns, "words": words, "lang": lang,
-            "utterances": utterances, "speakers": speakers}
+            "utterances": utterances, "speakers": speakers, "recheck": recheck}
 
 
 def features_core(utterances: list[Utterance], vocals: Path, lang: str) -> dict:
@@ -327,6 +347,7 @@ def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: O
             "utterances": [u.model_dump() for u in res["utterances"]],
             "speakers": res["speakers"],
             "features": features,
+            "recheck": res.get("recheck"),
         }
 
 
@@ -432,7 +453,7 @@ def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: O
     (work / ANALYSIS_FILE).write_text(json.dumps(res["features"]), encoding="utf-8")
     return {**out, "turns": [Turn(**t) for t in res["turns"]], "words": [Word(**w) for w in res["words"]],
             "lang": res["detected_lang"], "utterances": [Utterance.model_validate(u) for u in res["utterances"]],
-            "speakers": res["speakers"]}
+            "speakers": res["speakers"], "recheck": res.get("recheck")}  # Modal รุ่นเก่าไม่มี recheck
 
 
 def resplit_turns(vocals: Path, work: Path, utterances: list[Utterance], words: list[Word],

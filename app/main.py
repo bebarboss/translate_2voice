@@ -487,6 +487,8 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
         if u is None:
             raise HTTPException(400, f"ไม่พบประโยค id={edit.id}")
         if edit.target is not None:
+            if edit.target.strip() != u.target:
+                u.check_note = ""  # ผู้ใช้แก้บทแล้ว ป้ายควรตรวจหมดความหมาย
             u.target = edit.target.strip()
         if edit.speaker is not None:
             if edit.speaker not in job.speakers:

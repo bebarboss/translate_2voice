@@ -8,9 +8,10 @@ import { fmtNum } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
-import { FolderIcon, GearIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
+import { FolderIcon, GearIcon, GridIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
+  { href: "/dashboard", label: "ภาพรวม", icon: <GridIcon size={16} /> },
   { href: "/", label: "งานใหม่", icon: <PlusIcon size={16} /> },
   { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <ScissorsIcon size={16} /> },
   { href: "/jobs", label: "งานทั้งหมด", icon: <ListIcon /> },
@@ -66,7 +67,7 @@ export default function Sidebar() {
   if (bare) return null;
 
   const brand = (
-    <Link href="/" className="brand">
+    <Link href="/dashboard" className="brand">
       <span className="brand-mark"><MicIcon size={16} color="#1A0E06" /></span>
       Dubbing Studio
     </Link>

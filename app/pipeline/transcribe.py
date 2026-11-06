@@ -77,7 +77,9 @@ def detect_language(wav16k: Path) -> str:
     return lang
 
 
-def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word], str]:
+def transcribe(wav16k: Path, language: Optional[str] = None,
+               confidence: Optional[dict[int, float]] = None) -> tuple[list[Word], str]:
+    """confidence: ส่ง dict มาจะได้ avg_logprob ของแต่ละท่อน (คีย์ = Word.segment) ใช้หาช่วงที่ถอดไม่มั่นใจ"""
     model = _load()
     language = language or detect_language(wav16k)
     segments, info = model.transcribe(
@@ -90,6 +92,8 @@ def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word]
     )
     words: list[Word] = []
     for i, seg in enumerate(segments):
+        if confidence is not None:
+            confidence[i] = seg.avg_logprob
         if seg.words:
             words += [Word(w.start, w.end, w.word, i) for w in seg.words]
         elif seg.text.strip():
@@ -97,23 +101,19 @@ def transcribe(wav16k: Path, language: Optional[str] = None) -> tuple[list[Word]
     return words, info.language
 
 
-def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Optional[str],
-              min_gap: float = 1.0, max_window: float = 25.0) -> list[Word]:
-    """ถอดซ้ำเฉพาะช่วงที่ pyannote ได้ยินคนพูดแต่ Whisper ไม่ได้คำเลย
-
-    ถอดทั้งคลิปทีเดียว Whisper มักข้ามทั้งก้อนเมื่อมีเพลงดังทับเสียงพูด (VAD ตัดทิ้ง หรือโมเดลตัดสินว่าไม่มีเสียงพูด)
-    เช่น ตัวอย่างหนังที่ดนตรีขึ้นช่วงกลาง ทั้งที่ยังมีบทพูดอยู่ ถอดช่วงนั้นแยกโดยไม่ใช้ VAD มักได้ข้อความกลับมา
-    """
-    import numpy as np
-    import soundfile as sf
-
-    # ช่วงที่มีคนพูด (รวม turn ที่ห่างกันไม่ถึง 0.5 วินาที) แล้วตัดส่วนที่มีคำอยู่แล้วออก
+def _speech_spans(turns: list[Turn], join: float = 0.5) -> list[list[float]]:
+    """ช่วงที่มีคนพูด รวม turn ที่ห่างกันไม่ถึง join วินาที"""
     spans: list[list[float]] = []
     for t in sorted(turns, key=lambda t: t.start):
-        if spans and t.start - spans[-1][1] < 0.5:
+        if spans and t.start - spans[-1][1] < join:
             spans[-1][1] = max(spans[-1][1], t.end)
         else:
             spans.append([t.start, t.end])
+    return spans
+
+
+def _holes(words: list[Word], spans: list[list[float]], min_gap: float) -> list[tuple[float, float]]:
+    """ช่วงที่มีคนพูดแต่ไม่มีคำเลย ยาวอย่างน้อย min_gap วินาที"""
     covered = sorted((w.start, w.end) for w in words)
     holes: list[tuple[float, float]] = []
     for a, b in spans:
@@ -126,16 +126,35 @@ def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Opti
             cur = max(cur, we)
         if b - cur >= min_gap:
             holes.append((cur, b))
-    if not holes:
-        return words
+    return holes
 
-    # รวมช่วงที่ใกล้กันเป็นหน้าต่างเดียว (ได้บริบทมากขึ้น ถอดแม่นกว่า) ไม่เกิน max_window วินาที
+
+def _windows(spans, join: float, max_window: float) -> list[list[float]]:
+    """รวมช่วงที่ใกล้กันเป็นหน้าต่างเดียว (ได้บริบทมากขึ้น ถอดแม่นกว่า) ไม่เกิน max_window วินาที"""
     windows: list[list[float]] = []
-    for a, b in holes:
-        if windows and a - windows[-1][1] < 2.0 and b - windows[-1][0] <= max_window:
-            windows[-1][1] = b
+    for a, b in sorted(spans):
+        if windows and a - windows[-1][1] < join and b - windows[-1][0] <= max_window:
+            windows[-1][1] = max(windows[-1][1], b)
         else:
             windows.append([a, b])
+    return windows
+
+
+def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Optional[str],
+              min_gap: float = 1.0, max_window: float = 25.0,
+              confidence: Optional[dict[int, float]] = None) -> list[Word]:
+    """ถอดซ้ำเฉพาะช่วงที่ pyannote ได้ยินคนพูดแต่ Whisper ไม่ได้คำเลย
+
+    ถอดทั้งคลิปทีเดียว Whisper มักข้ามทั้งก้อนเมื่อมีเพลงดังทับเสียงพูด (VAD ตัดทิ้ง หรือโมเดลตัดสินว่าไม่มีเสียงพูด)
+    เช่น ตัวอย่างหนังที่ดนตรีขึ้นช่วงกลาง ทั้งที่ยังมีบทพูดอยู่ ถอดช่วงนั้นแยกโดยไม่ใช้ VAD มักได้ข้อความกลับมา
+    """
+    import numpy as np
+    import soundfile as sf
+
+    holes = _holes(words, _speech_spans(turns), min_gap)
+    if not holes:
+        return words
+    windows = _windows(holes, 2.0, max_window)
 
     audio, sr = sf.read(wav16k, dtype="float32")
     audio = audio.mean(axis=1) if audio.ndim > 1 else audio
@@ -155,12 +174,159 @@ def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Opti
                    if a - 0.3 <= lo + w.start <= b + 0.3]
             if new:
                 added += new
+                if confidence is not None:
+                    confidence[seg_id] = seg.avg_logprob
                 seg_id += 1
     if added:
         import logging
         logging.getLogger(__name__).info("filled %d transcription gaps: %r", len(windows),
                                          "".join(w.text for w in added)[:300])
     return sorted(words + added, key=lambda w: w.start)
+
+
+LOW_LOGPROB = -0.8  # ท่อนที่ Whisper ไม่มั่นใจ (avg_logprob ต่ำกว่านี้) → ถอดซ้ำจากเสียงต้นฉบับ
+UNCLEAR_LOGPROB = -1.0  # ถอดสองรอบแล้วยังต่ำกว่านี้ → ติดป้ายถอดไม่ชัด
+BGM_MARGIN_DB = -6.0  # เพลงเบากว่าเสียงพูดไม่ถึง 6 dB นับว่าเพลงดังทับ
+
+
+def _mono16k(path: Path):
+    import soundfile as sf
+
+    wav, sr = sf.read(path, dtype="float32")
+    return (wav.mean(axis=1) if wav.ndim > 1 else wav), sr
+
+
+def _loud_bgm(vocals, bgm, sr: int, spans: list[list[float]], frame: float = 0.5,
+              min_len: float = 1.0) -> list[tuple[float, float]]:
+    """ช่วงที่มีคนพูดแต่เพลงดังเกือบเท่าหรือดังกว่าเสียงพูด (เทียบความดังทีละ frame วินาที)"""
+    import numpy as np
+
+    n = int(frame * sr)
+    frames = min(len(vocals), len(bgm)) // n
+    if frames == 0:
+        return []
+    db = lambda x: 10 * np.log10(np.mean(x[: frames * n].reshape(frames, n) ** 2, axis=1) + 1e-10)  # noqa: E731
+    loud = db(bgm) - db(vocals) > BGM_MARGIN_DB
+    out: list[tuple[float, float]] = []
+    for a, b in spans:
+        k, end = int(a / frame), min(frames, int(b / frame) + 1)
+        while k < end:
+            if not loud[k]:
+                k += 1
+                continue
+            j = k
+            while j < end and loud[j]:
+                j += 1
+            lo, hi = max(a, k * frame), min(b, j * frame)
+            if hi - lo >= min_len:
+                out.append((lo, hi))
+            k = j
+    return out
+
+
+def _conf(pairs: list[tuple[Word, float]]) -> float:
+    """avg_logprob เฉลี่ยถ่วงด้วยจำนวนตัวอักษรของคำ ไม่มีคำ = -inf"""
+    weights = [max(1, len(_letters(w.text))) for w, _ in pairs]
+    if not weights:
+        return float("-inf")
+    return sum(k * p for k, (_, p) in zip(weights, pairs)) / sum(weights)
+
+
+def better_take(n_old: int, old_conf: float, n_new: int, new_conf: float) -> bool:
+    """ใช้ผลถอดรอบสองไหม: มั่นใจกว่าชัดเจนโดยคำไม่หายมาก หรือคำครบกว่ามากโดยความมั่นใจไม่ลดลง
+    n_* = จำนวนตัวอักษร (ภาษาที่ไม่เว้นวรรค Whisper ให้คำละตัวอักษร นับคำจึงไม่เท่ากัน)
+    รอบแรกไม่มีคำเลย ต้องมั่นใจพอสมควรถึงรับ กันเนื้อเพลงหรือคำที่เดาจากเสียงดนตรี"""
+    if n_new == 0:
+        return False
+    if new_conf > old_conf + 0.15 and n_new >= 0.7 * n_old:
+        return n_old > 0 or new_conf >= UNCLEAR_LOGPROB - 0.2
+    return n_new >= 1.3 * n_old + 2 and new_conf >= old_conf - 0.15 and (n_old > 0 or new_conf >= UNCLEAR_LOGPROB - 0.2)
+
+
+def recheck_noisy(mixed16k: Path, vocals16k: Path, bgm16k: Optional[Path], words: list[Word],
+                  confidence: dict[int, float], turns: list[Turn], language: Optional[str],
+                  max_window: float = 25.0) -> tuple[list[Word], list[tuple[float, float]], dict]:
+    """ถอดรอบสองจากเสียงต้นฉบับ (มีเพลง) เฉพาะช่วงน่าสงสัย คืน (คำทั้งหมด, ช่วงที่ยังถอดไม่ชัด, สถิติ)
+
+    ตอนเพลงดัง การแยกเสียงพูดมักกินเสียงพูดไปด้วย Whisper จึงถอด vocals ได้ไม่ครบหรือไม่มั่นใจ
+    แต่ในเสียงต้นฉบับเสียงพูดยังอยู่ครบ ช่วงน่าสงสัยมีสามแบบ
+    - ท่อนที่ Whisper ไม่มั่นใจ (avg_logprob ต่ำกว่า LOW_LOGPROB)
+    - ช่วงที่ pyannote ได้ยินคนพูดแต่ไม่มีคำเลย
+    - ช่วงที่มีคนพูดแต่เพลงดังเกือบเท่าเสียงพูด
+    ถอดใหม่แล้วเลือกผลตาม better_take กันเนื้อเพลงปน: รับเฉพาะคำที่อยู่ในช่วงที่มีผู้พูด
+    """
+    spans = _speech_spans(turns)
+    suspects: list[tuple[float, float]] = []
+    by_seg: dict[int, list[Word]] = {}
+    for w in words:
+        by_seg.setdefault(w.segment, []).append(w)
+    for seg, ws in by_seg.items():
+        if confidence.get(seg, 0.0) < LOW_LOGPROB:
+            suspects.append((ws[0].start, ws[-1].end))
+    low = len(suspects)
+    holes = _holes(words, spans, 1.0)
+    mixed, sr = _mono16k(mixed16k)
+    loud: list[tuple[float, float]] = []
+    if bgm16k is not None:
+        loud = _loud_bgm(_mono16k(vocals16k)[0], _mono16k(bgm16k)[0], sr, spans)
+    suspects += holes + loud
+    stats = {"low_conf": low, "holes": len(holes), "loud_bgm": len(loud), "windows": 0, "audio_sec": 0.0,
+             "replaced": 0, "letters_before": 0, "letters_after": 0, "unclear": 0}
+    if not suspects:
+        return words, [], stats
+
+    in_speech = lambda t: any(a - 0.1 <= t <= b + 0.1 for a, b in spans)  # noqa: E731
+    mid = lambda w: (w.start + w.end) / 2  # noqa: E731
+    seg_id = max((w.segment for w in words), default=-1) + 1
+    unclear: list[tuple[float, float]] = []
+    for a, b in _windows(suspects, 0.5, max_window):
+        lo, hi = max(0.0, a - 0.2), min(len(mixed) / sr, b + 0.2)
+        if hi - lo < 0.5:
+            continue
+        old = [w for w in words if a <= mid(w) <= b]
+        segments, _ = _load().transcribe(mixed[int(lo * sr): int(hi * sr)], language=language, vad_filter=False,
+                                         word_timestamps=True, beam_size=5, condition_on_previous_text=False)
+        new: list[tuple[Word, float]] = []
+        for seg in segments:
+            if seg.no_speech_prob > 0.6 or seg.compression_ratio > 2.4:
+                continue
+            kept = [Word(lo + w.start, lo + w.end, w.word, seg_id) for w in seg.words or []]
+            kept = [w for w in kept if a <= mid(w) <= b and in_speech(mid(w))]
+            if kept:
+                new += [(w, seg.avg_logprob) for w in kept]
+                confidence[seg_id] = seg.avg_logprob
+                seg_id += 1
+        old_conf = _conf([(w, confidence.get(w.segment, -2.0)) for w in old])
+        new_conf = _conf(new)
+        n_old = sum(len(_letters(w.text)) for w in old)
+        n_new = sum(len(_letters(w.text)) for w, _ in new)
+        use = better_take(n_old, old_conf, n_new, new_conf)
+        stats["windows"] += 1
+        stats["audio_sec"] += hi - lo
+        stats["letters_before"] += n_old
+        if use:
+            drop = {id(w) for w in old}
+            words = [w for w in words if id(w) not in drop] + [w for w, _ in new]
+            stats["replaced"] += 1
+        chosen, conf = (n_new, new_conf) if use else (n_old, old_conf)
+        stats["letters_after"] += chosen
+        speech = sum(max(0.0, min(b, y) - max(a, x)) for x, y in spans)
+        if conf < UNCLEAR_LOGPROB and (chosen > 0 or speech >= 1.0):
+            unclear.append((round(a, 3), round(b, 3)))
+    stats["unclear"] = len(unclear)
+    stats["audio_sec"] = round(stats["audio_sec"], 1)
+    log.info("recheck noisy: %s", stats)
+    return sorted(words, key=lambda w: w.start), unclear, stats
+
+
+def mark_unclear(utterances: list[Utterance], spans: list[tuple[float, float]]) -> int:
+    """ติดป้ายถอดไม่ชัดให้ประโยคที่ทับช่วงนั้นตั้งแต่ครึ่งวินาที หรือตั้งแต่ 30% ของประโยค คืนจำนวนที่ติด"""
+    n = 0
+    for u in utterances:
+        hit = sum(max(0.0, min(u.end, b) - max(u.start, a)) for a, b in spans)
+        u.unclear = hit >= 0.5 or (u.duration > 0 and hit / u.duration >= 0.3)
+        n += u.unclear
+    return n
 
 
 def clip_text(audio16k, language: Optional[str] = None) -> str:

@@ -57,7 +57,10 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ท่อนที่มี likely_said แปลว่าบทถอดเสียงน่าจะผิด ถ้า text อ่านไม่เป็นความหรือชื่อผิด ให้แปลตามความหมายของ likely_said ถ้า text มีความหมายอยู่แล้วให้แปลตาม text
 10. examples คือบทจากตอนก่อน ๆ ของเรื่องนี้ที่ผู้ใช้แก้เองแล้ว ให้ยึดสรรพนาม คำเรียก ชื่อ และสำนวนของแต่ละตัวละครตามนั้น (ไม่ต้องแปล examples)
    ท่อนที่มี previous_translation คือต้นฉบับประโยคเดียวกันที่เคยพากย์ไปแล้ว ให้ใช้คำแปลนั้นถ้าเข้ากับบริบท ปรับความยาวได้ตาม min_chars–max_chars
-11. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+11. previous_lines และ next_lines คือบทก่อนหน้าและถัดไปของ sentences ไว้ดูบริบทให้ความหมาย สรรพนาม และน้ำเสียงต่อกันเท่านั้น ห้ามแปลซ้ำ ห้ามใส่ในคำตอบ และห้ามดึงเนื้อหาจากบทเหล่านั้นมาเติมใน sentences
+   ถ้า content_type เป็น teaser บทข้างเคียงอาจเป็นคนละฉาก ห้ามตีความให้ต่อกัน
+12. sentence ที่มี continuity_issue คือบทที่ผู้ตรวจพบว่าคำแปลเดิมความหมายไม่ต่อกับบทข้างเคียง ให้แปลใหม่แก้จุดนั้น โดยยังตรงกับต้นฉบับ
+13. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
@@ -72,18 +75,23 @@ Rules:
 5. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
 6. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
 7. Some source parts contain "/": the points where the actor actually pauses or breathes. Put the same number of "/" in that part's translation, at the points that match the source meaning (the dub pauses there). Never add "/" to a part whose source has none, and never put "/" inside a word or name; use the nearest word boundary.
-8. Reply with JSON only, no explanations."""
+8. "previous_lines" and "next_lines" are the lines before and after "sentences", only so meaning, pronouns and tone connect. Never translate them again, never include them in your reply, and never pull their content into "sentences".
+   When "content_type" is "teaser", neighbouring lines may come from other scenes; do not force them to connect.
+9. A sentence with "continuity_issue" was found not to connect with its neighbours. Retranslate it to fix that, still matching the source.
+10. Reply with JSON only, no explanations."""
 
 SHORTEN_PROMPT_TH = """ย่อบทพากย์ภาษาไทยแต่ละบรรทัดให้ไม่เกิน max_chars ตัวอักษร (ไม่นับสระบน สระล่าง และวรรณยุกต์) เพื่อให้พูดจบทันใน seconds วินาทีด้วยความเร็วปกติ
 ใจความสำคัญต้องครบและตรงเดิม ห้ามตัดชื่อคน ชื่อสถานที่ ชื่องานหรือองค์กร ตัวเลข คำปฏิเสธ และคำถาม คงอารมณ์ของตัวละคร ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 ย่อด้วยการเรียบเรียงใหม่ให้สั้นแบบที่คนไทยพูดจริง (ตัดคำซ้ำ คำเสริม หรือส่วนที่ไม่สำคัญ) ผลต้องยังเป็นประโยคพูดที่ลื่นปาก ไม่ห้วนเป็นวลีโทรเลข ห้ามเติมคำลงท้าย (นะ ครับ ค่ะ สิ ล่ะ เลย)
 ห้ามใช้คำย่อหรือตัวย่อ (ชม. กม. กก. รพ. ฯลฯ) ให้เขียนเต็มตามที่อ่านออกเสียง
 ถ้าบทมีเครื่องหมาย / (จุดหยุดหายใจ) ให้คงไว้จำนวนเท่าเดิม ตรงตำแหน่งความหมายเดิม (ไม่นับเป็นตัวอักษร)
+before และ after คือบทก่อนหน้าและถัดไป (ถ้ามี) ห้ามย่อหรือใส่ในคำตอบ ย่อแล้วความหมายต้องยังเชื่อมกับบทเหล่านั้น คงคำเชื่อมและสิ่งที่บทถัดไปตอบหรืออ้างถึง
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 SHORTEN_PROMPT_EN = """Shorten each English dubbing line to at most "max_words" words so it can be spoken within its "seconds" value at a natural pace.
 Keep the meaning and the character's emotion, and keep it natural spoken English. Never drop names (people, places, events, organizations), numbers, negations or questions.
 Keep every "/" (a breathing pause) at the same point of meaning; it does not count as a word.
+"before" and "after", when given, are the neighbouring lines: never shorten or return them. The shortened line must still connect with them, so keep linking words and whatever the next line answers or refers to.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
 EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบรรทัดสั้นกว่าเวลาที่ตัวละครพูดจริงมาก เสียงพากย์จบก่อนตัวละครหยุดขยับปาก
@@ -94,6 +102,7 @@ EXPAND_PROMPT_TH = """บทพากย์ภาษาไทยบางบร�
 3. ใช้ภาษาพูดที่คนไทยพูดจริงแบบงานพากย์ ห้ามเปลี่ยนสรรพนามและชื่อเฉพาะ
 4. ถ้าขยายแล้วฟังไม่เป็นธรรมชาติ ให้คืนบทเดิม
 5. ถ้าบทมีเครื่องหมาย / (จุดหยุดหายใจ) ให้คงไว้จำนวนเท่าเดิม ตรงตำแหน่งความหมายเดิม
+6. before และ after คือบทก่อนหน้าและถัดไป (ถ้ามี) ห้ามขยายหรือใส่ในคำตอบ และห้ามดึงเนื้อหาจากบทเหล่านั้นมาเติม บทที่ขยายแล้วต้องยังเชื่อมกับบทเหล่านั้น
 ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"text":"..."}]} เท่านั้น"""
 
 EXPAND_PROMPT_EN = """Some English dubbing lines are much shorter than the time the character actually speaks, so the dub ends while the mouth is still moving.
@@ -101,6 +110,7 @@ Expand each line to roughly "min_words" to "max_words" words so it fills its "se
 Keep the meaning of the original ("source"); never add content it does not have. First restore what the translation left out,
 then use natural fillers, repetition or interjections that fit the character's emotion. If expanding would sound unnatural, return the line unchanged.
 Keep every "/" (a breathing pause) at the same point of meaning.
+"before" and "after", when given, are the neighbouring lines: never expand or return them, and never pull their content in. The expanded line must still connect with them.
 Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}."""
 
 TURN_PROMPT = """You segment transcribed dialogue. Speaker diarization often merges two characters with similar voices into one line.
@@ -135,6 +145,22 @@ MOOD_PROMPT_TH = """คุณคือผู้กำกับการพาก
 1. ตอบ normal เมื่อเป็นบทพูดทั่วไปหรือไม่แน่ใจ เลือกอารมณ์อื่นเฉพาะเมื่อบทและน้ำเสียงชัดเจน เพราะเสียงอารมณ์ที่ผิดฟังแย่กว่าเสียงปกติ
 2. เลือกได้เฉพาะ normal หรืออารมณ์ใน moods ของบรรทัดนั้น
 3. ตอบเป็น JSON รูปแบบ {"lines":[{"id":1,"mood":"normal"}]} ครบทุก id เท่านั้น"""
+
+CONTINUITY_PROMPT = """คุณคือผู้ตรวจบทพากย์ของเรื่องที่เล่าต่อเนื่อง lines คือบทที่ต้องตรวจตามลำดับเวลา (source = ต้นฉบับ, text = คำแปล) previous_lines คือบทก่อนหน้า ไว้ดูบริบท ไม่ต้องตรวจ
+หาบรรทัดที่คำแปลความหมายไม่ต่อกับบรรทัดก่อนหรือหลัง เช่น คำตอบไม่ตรงคำถาม ท่อนถัดไปไม่รับกับท่อนก่อน สรรพนามหรือคนที่ถูกเรียกสลับ เนื้อหาย้ายไปผิดท่อน
+กฎ:
+1. เทียบกับ source เสมอ ถ้าต้นฉบับก็ไม่ต่อกันตรงนั้น (ถอดเสียงขาด เปลี่ยนฉาก) ไม่นับ
+2. ไม่นับเรื่องสำนวน ความไพเราะ หรือความยาว ไม่แน่ใจไม่ต้องใส่
+ตอบเป็น JSON รูปแบบ {"breaks":[{"id":1,"note":"เหตุผลสั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"breaks":[]}"""
+
+TERMS_PROMPT = """คุณคือผู้ตรวจบทพากย์ของคลิปทีเซอร์หรือคลิปรวมฉาก บทแต่ละช่วงอาจเป็นคนละฉาก ไม่ต้องตรวจว่าเรื่องต่อกันไหม
+ตรวจอย่างเดียวว่าชื่อคนและศัพท์เฉพาะในคำแปล (text) ตรงกันทุกบรรทัด และตรงกับ glossary และ names (ถ้ามี) เช่น ชื่อเดียวกันแต่สะกดต่างกัน หรือต้นฉบับ (source) มีชื่อแต่คำแปลใช้ชื่ออื่น
+ไม่นับสำนวน สรรพนาม หรือความยาว ไม่แน่ใจไม่ต้องใส่ ห้ามเสนอคำแปลใหม่ทั้งบรรทัด
+ตอบเป็น JSON รูปแบบ {"issues":[{"id":1,"note":"ชื่อหรือศัพท์ที่ไม่ตรงกัน สั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"issues":[]}"""
+
+CONTEXT_BEFORE, CONTEXT_AFTER = 3, 2  # จำนวนประโยคข้างเคียงที่ส่งไปดูบริบทตอนแปล
+REVIEW_ROUNDS = 2  # แปลใหม่ได้ไม่เกินกี่รอบในขั้นตรวจความต่อเนื่อง
+TERMS_BATCH_SIZE = 60  # ตรวจชื่อต้องเห็นหลายบรรทัดพร้อมกันถึงจะเทียบตัวสะกดได้
 
 _client = None
 _local = None
@@ -268,6 +294,36 @@ def _group_lines(utts: list[Utterance], max_parts: int = 4) -> list[list[Utteran
     return groups
 
 
+def _with_order(utts: list[Utterance], hints: Optional[dict]) -> dict:
+    """เติมเวลาที่มีและลำดับประโยคทั้งเรื่องลง hints ใช้หาประโยคข้างเคียงของแต่ละชุด"""
+    groups = _group_lines(utts)
+    return {**(hints or {}), "budgets": budgets(utts), "sentences": groups,
+            "sentence_at": {u.id: i for i, g in enumerate(groups) for u in g}}
+
+
+def _neighbours(groups: list[list[Utterance]], hints: dict) -> tuple[list[list[Utterance]], list[list[Utterance]]]:
+    """ประโยคก่อนหน้าและถัดไปของชุดนี้ ไม่รวมบรรทัดที่กำลังแปล
+    ชุดที่ถูกแบ่งเป็นทีละท่อน ท่อนอื่นของประโยคเดียวกันนับเป็นข้างเคียงด้วย"""
+    order, at = hints["sentences"], hints["sentence_at"]
+    first, last = groups[0][0], groups[-1][-1]
+    i, j = at[first.id], at[last.id]
+    head = [u for u in order[i] if u.start < first.start]
+    tail = [u for u in order[j] if u.start > last.start]
+    return (order[max(0, i - CONTEXT_BEFORE):i] + ([head] if head else []),
+            ([tail] if tail else []) + order[j + 1:j + 1 + CONTEXT_AFTER])
+
+
+CONTEXT_NOTE_TH = "บริบท ห้ามแปล"
+CONTEXT_NOTE_EN = "context only, do not translate"
+
+
+def _sentence_brief(g: list[Utterance], hints: dict, with_text: bool = True) -> dict:
+    """with_text: ใส่คำแปลที่ได้แล้วด้วย (บทก่อนหน้า) บทถัดไปส่งแต่ต้นฉบับ"""
+    text = " ".join(u.target for u in g if u.target) if with_text else ""
+    return {"speaker": _speaker_label(g[0].speaker, hints), "source": " ".join(u.source for u in g),
+            **({"text": text} if text else {})}
+
+
 def _group_batches(groups: list[list[Utterance]], max_lines: int):
     batch: list[list[Utterance]] = []
     for g in groups:
@@ -290,8 +346,19 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     if hints.get("memory"):
         from ..memory import examples_for
         examples, fixed = examples_for(hints["memory"], [u for g in groups for u in g], hints.get("char_of") or {})
+    if settings.translate_neighbors and hints.get("sentences"):
+        before, after = _neighbours(groups, hints)
+        note = CONTEXT_NOTE_EN if target == "en" else CONTEXT_NOTE_TH
+        around = {"previous_lines_note": note,
+                  "previous_lines": [_sentence_brief(g, hints) for g in before],
+                  "next_lines_note": note,
+                  "next_lines": [_sentence_brief(g, hints, with_text=False) for g in after]}
+    else:
+        around = {"previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context]}
+    issues = hints.get("issues") or {}
     payload = {
         "title": title,
+        **({"content_type": hints["content_type"]} if hints.get("content_type") else {}),
         **({"examples": examples} if examples else {}),
         **({"genre": hints["genre"]} if hints.get("genre") else {}),
         **({"glossary": glossary} if glossary else {}),
@@ -299,8 +366,9 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
         **({"characters": {_speaker_label(sp, hints): info for sp, info in hints["characters"].items()
                            if any(sp == g[0].speaker for g in groups)}} if hints.get("characters") else {}),
         "source_language": names.get(lang, lang),
-        "previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context],
+        **around,
         "sentences": [{"id": g[0].id, "speaker": _speaker_label(g[0].speaker, hints),
+                       **({"continuity_issue": issues[g[0].id]} if g[0].id in issues else {}),
                        "parts": [{"seconds": round(budget.get(u.id, u.duration), 1),
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
@@ -313,12 +381,12 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     }
     if target == "en":
         return SYSTEM_PROMPT_EN, (
-            "Translate the sentences in \"sentences\" into English (\"title\" is the video title and \"previous_lines\" "
-            "are earlier lines, both for context only, do not translate them). Give exactly one translated part per source part.\n"
+            "Translate the sentences in \"sentences\" into English (\"title\" is the video title, \"previous_lines\" and \"next_lines\" "
+            "are the lines around them, all for context only, do not translate or return them). Give exactly one translated part per source part.\n"
             'Reply as {"sentences":[{"id":1,"parts":["part 1","part 2"]}]}\n\n'
             + json.dumps(payload, ensure_ascii=False))
     return SYSTEM_PROMPT_TH, (
-        "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines คือบทก่อนหน้า ไว้ดูบริบท ไม่ต้องแปล) "
+        "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines และ next_lines คือบทก่อนหน้าและถัดไป ไว้ดูบริบท ห้ามแปลซ้ำหรือใส่ในคำตอบ) "
         "ตอบท่อนแปลให้ครบหนึ่งต่อหนึ่งกับ parts ของต้นฉบับ\n"
         'ตอบรูปแบบ {"sentences":[{"id":1,"parts":["ท่อนที่ 1","ท่อนที่ 2"]}]}\n\n'
         + json.dumps(payload, ensure_ascii=False))
@@ -369,22 +437,28 @@ def _translate_groups(groups: list[list[Utterance]], lang: str, target: str, con
         for u in pending[0]:
             _translate_groups([[u]], lang, target, (context + done())[-6:], title, hints)
     else:
-        _translate_plain(pending[0][0], lang, target, context, foreign.get(pending[0][0].id))
+        _translate_plain(pending[0][0], lang, target, context, foreign.get(pending[0][0].id), hints)
 
 
 def _translate_plain(u: Utterance, lang: str, target: str, context: list[Utterance],
-                     foreign: Optional[list[str]] = None) -> None:
+                     foreign: Optional[list[str]] = None, hints: Optional[dict] = None) -> None:
     """ทางสุดท้ายของประโยคเดียวที่แปลแบบ JSON ไม่ผ่าน: ขอคำแปลเป็นข้อความเปล่า ไม่ต้องจัดรูปแบบ
     ถ้ายังไม่ได้ ใช้คำตอบที่ตัดอักษรต้นฉบับทิ้ง หรือปล่อยว่างให้ผู้ใช้แก้ในหน้าตรวจบท ดีกว่าให้ทั้งงานล้ม"""
     names = LANG_NAMES_EN if target == "en" else LANG_NAMES
-    before = " / ".join(x.target for x in context[-3:])
+    before, after = " / ".join(x.target for x in context[-3:]), ""
+    if settings.translate_neighbors and (hints or {}).get("sentences"):
+        near = _neighbours([[u]], hints)
+        before = " / ".join(x.target or x.source for g in near[0] for x in g)
+        after = " / ".join(x.source for g in near[1] for x in g)
     if target == "en":
         system = SYSTEM_PROMPT_EN
         user = (f"Earlier lines (context only): {before}\n"
+                + (f"Next lines (context only, do not translate): {after}\n" if after else "") +
                 f"Translate this {names.get(lang, lang)} line into English. Reply with the translation only.\n{u.source}")
     else:
         system = SYSTEM_PROMPT_TH
         user = (f"บทก่อนหน้า (ไว้ดูบริบท): {before}\n"
+                + (f"บทถัดไป (ไว้ดูบริบท ห้ามแปล): {after}\n" if after else "") +
                 f"แปลบทพูดภาษา{names.get(lang, lang)}นี้เป็นภาษาไทย ตอบเฉพาะคำแปลบรรทัดเดียว ไม่ต้องมีคำอธิบาย\n{u.source}")
     for temperature in (0.3, 0.8):
         try:
@@ -490,7 +564,7 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          check_cancel: Optional[Callable[[], None]] = None, title: str = "",
                          hints: Optional[dict] = None) -> None:
     """hints: genre (แนวเรื่อง), glossary (ชื่อเฉพาะ บรรทัดละคำ เช่น ドラえもん = โดราเอมอน), names (ผู้พูด → ชื่อตัวละคร)"""
-    hints = {**(hints or {}), "budgets": budgets(utts)}
+    hints = _with_order(utts, hints)
     if lang == target:
         for u in utts:
             u.target = u.target or u.source
@@ -509,7 +583,7 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         return
 
     done = 0
-    for batch in _group_batches(_group_lines(utts), settings.translate_batch_size):
+    for batch in _group_batches(hints["sentences"], settings.translate_batch_size):
         if check_cancel:
             check_cancel()
         context = [u for u in utts if u.target and u.id < batch[0][0].id][-6:]
@@ -543,6 +617,11 @@ STORY_PROMPT = """คุณคือผู้กำกับบทพากย�
   ใส่เฉพาะบรรทัดที่คิดว่าผิดจริง ห้ามใส่บรรทัดที่ speaker ถูกอยู่แล้ว
 ตอบเป็น JSON อย่างเดียว"""
 
+CONTENT_TYPE_RULE = """
+- content_type: continuous = เรื่องเดียวเล่าต่อเนื่อง บทแต่ละช่วงต่อกัน เช่น ตอนของละคร หนัง การ์ตูน
+  teaser = ทีเซอร์ ตัวอย่าง หรือคลิปรวมฉาก ตัดฉากสั้น ๆ มาเรียงกันจนบทไม่จำเป็นต้องต่อกัน ตอบค่าเดียว ไม่แน่ใจให้เว้นว่าง"""
+CONTENT_TYPES = ("continuous", "teaser")
+
 
 def _story_lines(utts: list[Utterance]) -> list[dict]:
     return [{"id": u.id, "speaker": u.speaker, "t": round(u.start, 1), "text": u.source} for u in utts if u.source.strip()]
@@ -575,9 +654,9 @@ def analyze_story(utts: list[Utterance], lang: str, target: str = "th", title: s
             **({"previous_analysis": result} if result else {}),
             "lines": part,
         }
-        reply = _chat(STORY_PROMPT, (
+        reply = _chat(STORY_PROMPT + (CONTENT_TYPE_RULE if settings.story_content_type else ""), (
             "วิเคราะห์บทนี้ (user_* คือข้อมูลที่ผู้ใช้ตั้งไว้ ให้ยึดตามนั้น previous_analysis คือผลจากช่วงก่อนหน้า ให้ต่อยอดและตอบผลรวมทั้งหมด)\n"
-            'ตอบรูปแบบ {"genre":"","setting":"","register":"","characters":[{"speaker":"speaker_01","name":"","gender":"",'
+            'ตอบรูปแบบ {' + ('"content_type":"",' if settings.story_content_type else "") + '"genre":"","setting":"","register":"","characters":[{"speaker":"speaker_01","name":"","gender":"",'
             '"role":"","self":"","addresses":""}],"glossary":["ต้นฉบับ = ปลายทาง"],"asr_fixes":[{"id":1,"likely":""}],'
             '"speaker_doubts":[{"id":1,"speaker":"","note":""}]}\n\n' + json.dumps(payload, ensure_ascii=False)),
             temperature=0.2, max_tokens=4096)
@@ -608,7 +687,9 @@ def clean_story(data: dict, speakers: set[str], ids: set[int], speaker_of: Optio
         sp = s(x.get("speaker"), 40) if x.get("speaker") in speakers else ""
         if not (sp and speaker_of and speaker_of.get(int(x["id"])) == sp):
             doubts.append({"id": int(x["id"]), "speaker": sp, "note": s(x.get("note"), 300)})
-    return {"genre": s(data.get("genre"), 120), "setting": s(data.get("setting")), "register": s(data.get("register"), 400),
+    kind = s(data.get("content_type"), 20).lower()
+    return {"content_type": kind if kind in CONTENT_TYPES else "",
+            "genre": s(data.get("genre"), 120), "setting": s(data.get("setting")), "register": s(data.get("register"), 400),
             "characters": chars, "glossary": gloss, "asr_fixes": pick("asr_fixes", "likely")[:40],
             "speaker_doubts": doubts[:40]}
 
@@ -629,6 +710,7 @@ def story_hints(story: Optional[dict], hints: dict) -> dict:
             names[c["speaker"]] = c["name"]
     out["names"] = names
     out["register"] = story.get("register") or ""
+    out["content_type"] = story.get("content_type", "") if settings.story_content_type else ""
     out["characters"] = {c["speaker"]: {k: c[k] for k in ("gender", "role", "self", "addresses") if c.get(k)}
                          for c in story.get("characters") or []}
     out["asr_fixes"] = {x["id"]: x["likely"] for x in story.get("asr_fixes") or []}
@@ -692,40 +774,63 @@ def proofread(utts: list[Utterance], target: str = "th",
             on_progress(done / len(utts))
 
 
-def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35) -> None:
+def _around(batch: list[Utterance], order: Optional[list[Utterance]]) -> dict[int, dict]:
+    """id → บทก่อนหน้าและถัดไปหนึ่งบรรทัด ใช้ตอนย่อหรือขยาย (แต่ละชุดรวมบรรทัดที่อยู่ห่างกัน โมเดลจึงไม่เห็นว่าบทต่อกันยังไง)"""
+    if not (settings.fit_neighbors and order):
+        return {}
+    at = {u.id: i for i, u in enumerate(order)}
+    brief = lambda u: {"speaker": u.speaker, "text": u.target}  # noqa: E731
+    out = {}
+    for u in batch:
+        i = at.get(u.id)
+        if i is None:
+            continue
+        out[u.id] = {**({"before": brief(order[i - 1])} if i > 0 and order[i - 1].target else {}),
+                     **({"after": brief(order[i + 1])} if i + 1 < len(order) and order[i + 1].target else {})}
+    return out
+
+
+def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35,
+                only: Optional[set[int]] = None) -> None:
     """ปรับความยาวบทให้พอดีเวลาที่ตัวละครพูด
     ย่อบทที่คาดว่ายาวเกินเวลาที่มี ให้พูดได้ด้วยความเร็วปกติ (สองรอบ รอบสองเฉพาะบรรทัดที่ยังยาวเกิน)
-    แล้วขยายบทที่สั้นกว่าเวลาพูดจริงมาก (ไม่ยืดเสียง เสียงยืดฟังยานไม่เป็นธรรมชาติ)"""
+    แล้วขยายบทที่สั้นกว่าเวลาพูดจริงมาก (ไม่ยืดเสียง เสียงยืดฟังยานไม่เป็นธรรมชาติ)
+    only: ปรับเฉพาะบรรทัดเหล่านี้ (บทที่เพิ่งแปลใหม่ในขั้นตรวจ)"""
     if not settings.typhoon_api_key:
         return
     tolerance = min(max_speedup, settings.fit_tolerance)
     budget = budgets(utts)
+    order = sorted(utts, key=lambda u: u.start)
     for _ in range(2):
-        too_long = [u for u in utts if u.duration > 0 and u.target
+        too_long = [u for u in utts if (only is None or u.id in only) and u.duration > 0 and u.target
                     and estimate_seconds(u.target, target) > budget[u.id] * tolerance]
         if not too_long:
             break
         log.info("shorten %d lines: %s", len(too_long), [u.id for u in too_long])
         for batch in _chunks(too_long, settings.translate_batch_size):
-            shorten(batch, target, target_ratio=tolerance, budgets=budget)
+            shorten(batch, target, target_ratio=tolerance, budgets=budget, order=order)
     # ท่อนสั้น ๆ (ไม่ถึง 1 วินาที) มักเป็นคำเดียว ขยายแล้วไม่เป็นธรรมชาติ
-    too_short = [u for u in utts if settings.fit_min_ratio > 0 and u.duration >= 1.0 and u.target.strip()
+    too_short = [u for u in utts if (only is None or u.id in only)
+                 and settings.fit_min_ratio > 0 and u.duration >= 1.0 and u.target.strip()
                  and estimate_seconds(u.target, target) < u.duration * settings.fit_min_ratio]
     if too_short:
         log.info("lengthen %d lines: %s", len(too_short), [u.id for u in too_short])
         for batch in _chunks(too_short, settings.translate_batch_size):
-            lengthen(batch, target, tolerance)
+            lengthen(batch, target, tolerance, order)
     if target == "th":  # บทที่ย่อหรือขยายแล้วอาจมีตัวย่อกลับมา
         for u in utts:
             u.target = spoken(u.target)
 
 
-def lengthen(batch: list[Utterance], target: str = "th", tolerance: float = 1.1) -> None:
+def lengthen(batch: list[Utterance], target: str = "th", tolerance: float = 1.1,
+             order: Optional[list[Utterance]] = None) -> None:
     """ขยายบทให้ยาวราว 80–100% ของเวลาที่ตัวละครพูด โดยความหมายตรงต้นฉบับ
     ใช้เฉพาะคำตอบที่ยาวขึ้นจริงและไม่เกินเวลาที่มี ขยายไม่ได้ก็ใช้บทเดิม"""
     lo_key, hi_key = ("min_words", "max_words") if target == "en" else ("min_chars", "max_chars")
+    around = _around(batch, order)
     payload = [{"id": u.id, "seconds": round(u.duration, 1), lo_key: max_length(u.duration * 0.8, target),
-                hi_key: max_length(u.duration, target), "source": u.source, "text": u.target} for u in batch]
+                hi_key: max_length(u.duration, target), "source": u.source, "text": u.target,
+                **around.get(u.id, {})} for u in batch]
     prompt = EXPAND_PROMPT_EN if target == "en" else EXPAND_PROMPT_TH
     try:
         result = _parse_json(_chat(prompt, json.dumps({"lines": payload}, ensure_ascii=False)))
@@ -740,12 +845,14 @@ def lengthen(batch: list[Utterance], target: str = "th", tolerance: float = 1.1)
 
 
 def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.0,
-            budgets: Optional[dict[int, float]] = None) -> None:
+            budgets: Optional[dict[int, float]] = None, order: Optional[list[Utterance]] = None) -> None:
     limit_key = "max_words" if target == "en" else "max_chars"
+    around = _around(batch, order)
     payload = []
     for u in batch:
         sec = (budgets or {}).get(u.id, u.duration) * target_ratio
-        payload.append({"id": u.id, "seconds": round(sec, 1), limit_key: max_length(sec, target), "text": u.target})
+        payload.append({"id": u.id, "seconds": round(sec, 1), limit_key: max_length(sec, target), "text": u.target,
+                        **around.get(u.id, {})})
     prompt = SHORTEN_PROMPT_EN if target == "en" else SHORTEN_PROMPT_TH
     try:
         result = _parse_json(_chat(prompt, json.dumps({"lines": payload}, ensure_ascii=False)))
@@ -758,6 +865,137 @@ def shorten(batch: list[Utterance], target: str = "th", target_ratio: float = 1.
                 u.target = text
     except Exception as exc:  # noqa: BLE001  ย่อไม่ได้ก็ใช้บทเดิม แล้วไปเร่งความเร็วแทน
         log.warning("shorten failed: %s", exc)
+
+
+# ---------------------------------------------------------------- ตรวจหลังแปล
+def _runs(indices: list[int]) -> list[list[int]]:
+    """ตำแหน่งที่เรียงแล้ว → ช่วงที่ติดกัน"""
+    out: list[list[int]] = []
+    for i in indices:
+        if out and out[-1][-1] == i - 1:
+            out[-1].append(i)
+        else:
+            out.append([i])
+    return out
+
+
+def _notes(items, allowed: set[int]) -> dict[int, str]:
+    out: dict[int, str] = {}
+    for x in items or []:
+        if isinstance(x, dict) and str(x.get("id", "")).isdigit() and int(x["id"]) in allowed:
+            out.setdefault(int(x["id"]), str(x.get("note") or "").strip()[:200])
+    return out
+
+
+def _continuity_breaks(order: list[Utterance], ids: Optional[set[int]] = None,
+                       check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """id → เหตุผล ของบรรทัดที่ความหมายไม่ต่อกับบทข้างเคียง ids: ตรวจเฉพาะบรรทัดเหล่านี้และบรรทัดที่ติดกัน
+    เรียกไม่สำเร็จถือว่าไม่พบ ขั้นตรวจไม่ควรทำให้งานล้ม"""
+    picked = list(range(len(order))) if ids is None else sorted(
+        {k for i, u in enumerate(order) if u.id in ids for k in range(max(0, i - 1), min(len(order), i + 2))})
+    out: dict[int, str] = {}
+    for run in _runs(picked):
+        for chunk in _chunks(run, settings.translate_batch_size):
+            if check_cancel:
+                check_cancel()
+            payload = {"previous_lines": [{"speaker": u.speaker, "source": u.source, "text": u.target}
+                                          for u in order[max(0, chunk[0] - 2):chunk[0]]],
+                       "lines": [{"id": order[i].id, "speaker": order[i].speaker, "source": order[i].source,
+                                  "text": order[i].target} for i in chunk]}
+            try:
+                result = _parse_json(_chat(CONTINUITY_PROMPT, json.dumps(payload, ensure_ascii=False), temperature=0.1,
+                                           max_tokens=min(4096, 200 + 60 * len(chunk))))
+                out.update(_notes(result.get("breaks"), {order[i].id for i in chunk}))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("continuity check failed: %s", exc)
+    return out
+
+
+def _retranslate(flagged: dict[int, str], lang: str, target: str, title: str, hints: dict) -> set[int]:
+    """แปลใหม่ทั้งประโยคของบรรทัดที่ไม่ต่อกัน พร้อมบอกเหตุผล คืน id ทุกบรรทัดที่ส่งไปแปล
+    ส่งทีละช่วงที่ติดกัน ประโยคข้างเคียงของแต่ละชุดจึงถูกต้อง แปลไม่ผ่านก็คงบทเดิม"""
+    order, at = hints["sentences"], hints["sentence_at"]
+    picked = sorted({at[i] for i in flagged})
+    issues = {order[k][0].id: "; ".join(flagged[u.id] for u in order[k] if u.id in flagged) for k in picked}
+    tried: set[int] = set()
+    for run in _runs(picked):
+        for batch in _group_batches([order[k] for k in run], settings.translate_batch_size):
+            context = [u for g in order[:at[batch[0][0].id]] for u in g][-6:]
+            _translate_groups(batch, lang, target, context, title, {**hints, "issues": issues})
+            for g in batch:
+                for u in g:
+                    tried.add(u.id)
+                    if target == "th":
+                        u.target = spoken(u.target)
+    return tried
+
+
+def _glossary_misses(hints: dict) -> dict[int, str]:
+    """ต้นฉบับมีคำใน glossary แต่คำแปลทั้งประโยคไม่มีคำที่กำหนด (เทียบตรง ๆ ไม่ต้องถามโมเดล)"""
+    out: dict[int, str] = {}
+    for line in _glossary(hints):
+        src, _, dst = line.partition("=")
+        src, dst = src.strip().lower(), dst.strip().lower()
+        if len(src) < 2 or not dst:
+            continue
+        for g in hints["sentences"]:
+            if dst in " ".join(u.target for u in g).lower():
+                continue
+            for u in g:
+                if src in u.source.lower():
+                    out.setdefault(u.id, f"คำแปลไม่ตรง glossary: {line}")
+    return out
+
+
+def _term_issues(order: list[Utterance], hints: dict, check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    out = _glossary_misses(hints)
+    for chunk in _chunks(order, TERMS_BATCH_SIZE):
+        if check_cancel:
+            check_cancel()
+        payload = {**({"glossary": _glossary(hints)} if _glossary(hints) else {}),
+                   **({"names": hints["names"]} if hints.get("names") else {}),
+                   "lines": [{"id": u.id, "speaker": u.speaker, "source": u.source, "text": u.target} for u in chunk]}
+        try:
+            result = _parse_json(_chat(TERMS_PROMPT, json.dumps(payload, ensure_ascii=False), temperature=0.1,
+                                       max_tokens=min(4096, 200 + 40 * len(chunk))))
+            for uid, note in _notes(result.get("issues"), {u.id for u in chunk}).items():
+                out.setdefault(uid, note)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("term check failed: %s", exc)
+    return out
+
+
+def review_translation(utts: list[Utterance], lang: str, target: str = "th", max_speedup: float = 1.35,
+                       title: str = "", hints: Optional[dict] = None,
+                       check_cancel: Optional[Callable[[], None]] = None) -> None:
+    """ตรวจบทหลังแปล บรรทัดที่ควรให้คนดูติดป้ายไว้ใน check_note
+    - continuous: หาบรรทัดที่ความหมายไม่ต่อกัน แปลใหม่ไม่เกิน REVIEW_ROUNDS รอบ ยังไม่ผ่านจึงติดป้าย
+    - อื่น ๆ (teaser หรือไม่รู้ประเภท): ตรวจชื่อและศัพท์อย่างเดียว ติดป้ายโดยไม่แก้บท เพราะฉากไม่ต้องต่อกัน"""
+    if lang == target:
+        return
+    hints = _with_order(utts, hints)
+    order = [u for g in hints["sentences"] for u in g]
+    if hints.get("content_type") != "continuous":
+        issues = _term_issues(order, hints, check_cancel)
+        log.info("term check: %d lines to review", len(issues))
+    else:
+        issues = _continuity_breaks(order, check_cancel=check_cancel)
+        for _ in range(REVIEW_ROUNDS):
+            if not issues:
+                break
+            log.info("continuity: retranslate %s", sorted(issues))
+            if check_cancel:
+                check_cancel()
+            try:
+                tried = _retranslate(issues, lang, target, title, hints)
+            except RuntimeError as exc:  # โควตาหมดหรือเรียกไม่ได้: คงบทเดิมแล้วติดป้าย
+                log.warning("retranslate failed: %s", exc)
+                break
+            fit_lengths(utts, target, max_speedup, only=tried)
+            issues = _continuity_breaks(order, tried, check_cancel)
+        issues = {uid: f"ความหมายอาจไม่ต่อกับบทข้างเคียง: {note}" for uid, note in issues.items()}
+    for u in order:
+        u.check_note = issues.get(u.id, "")
 
 
 def propose_turns(utts: list[Utterance], batch_size: int = 25) -> dict[int, list[str]]:

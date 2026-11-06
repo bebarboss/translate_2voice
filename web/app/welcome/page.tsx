@@ -68,10 +68,10 @@ function Demo() {
 
 export default function WelcomePage() {
   const { config, user } = useAuth();
-  const [next, setNext] = useState("/");
+  const [next, setNext] = useState("/dashboard");
   useEffect(() => {
-    const n = new URLSearchParams(window.location.search).get("next") ?? "/";
-    setNext(n.startsWith("/") && !n.startsWith("//") ? n : "/");
+    const n = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
+    setNext(n.startsWith("/") && !n.startsWith("//") ? n : "/dashboard");
   }, []);
   const authOn = !!config?.auth;
   const signedIn = !!user;

@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Alert, CardsSection, fmtCredits, fmtDate, useRunner, useWallet } from "@/components/Billing";
-import { api } from "@/lib/api";
+import { Alert, CardsSection, fmtCredits, fmtDate, OpenPayments, SlipBox, useRunner, useWallet } from "@/components/Billing";
+import { api, type PaymentOrder } from "@/lib/api";
 import { fmtBaht } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
@@ -13,7 +13,29 @@ export default function PromotionsPage() {
   const { config, user, loaded } = useAuth();
   const { wallet, plans, packs, error, reload } = useWallet();
   const [pack, setPack] = useState(30);
-  const { busy, message, run } = useRunner(reload);
+  const [order, setOrder] = useState<PaymentOrder | null>(null);
+  const [open, setOpen] = useState<PaymentOrder[]>([]);
+  const slip = config?.payment_provider === "slip";
+  const refresh = () => {
+    reload();
+    if (slip) api.myPayments().then(setOpen).catch(() => setOpen([]));
+  };
+  const { busy, message, run } = useRunner(refresh);
+  useEffect(() => { if (slip) api.myPayments().then(setOpen).catch(() => setOpen([])); }, [slip]);
+  const begin = (key: string, fn: () => Promise<PaymentOrder>) =>
+    run(key, async () => {
+      const created = await fn();
+      if (created.status !== "paid") setOrder(created);
+      return created;
+    }, (created) => created.status === "paid" ? tx("ชำระแล้ว") : tx("สร้างรายการแล้ว โอนตามยอดด้านล่าง แล้วแนบรูปสลิป"));
+  const sendSlip = (file: File) => {
+    if (!order) return;
+    run("slip", async () => {
+      const updated = await api.uploadSlip(order.id, file);
+      setOrder(updated.status === "paid" ? null : updated);
+      return updated;
+    }, (updated) => updated.note || tx("ส่งสลิปแล้ว"));
+  };
   useEffect(() => {
     if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/promotions";
   }, [loaded, config, user]);
@@ -41,7 +63,9 @@ export default function PromotionsPage() {
       {user.admin && <div className="alert info">{tx("บัญชีผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต")}</div>}
       <span className="dim">{tx("1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง (คลิป 1:15 นาที = 1.25 เครดิต) ตัดตอนเริ่มวิเคราะห์คลิป ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม พากย์ซ้ำหรือแก้บทไม่เสียเพิ่ม งานที่วิเคราะห์ไม่สำเร็จได้เครดิตคืน")}</span>
 
-      {!user.admin && <CardsSection onChange={reload} />}
+      {!user.admin && !slip && <CardsSection onChange={reload} />}
+      {slip && <OpenPayments orders={open} onOpen={setOrder} />}
+      {slip && order && <SlipBox order={order} busy={busy} onUpload={sendSlip} />}
 
       <section aria-labelledby="plans-title" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{tx("แพ็กเกจรายเดือน")}</h2>
@@ -53,8 +77,10 @@ export default function PromotionsPage() {
               <span className="muted">{fmtBaht(p.price)}  {tx("· ตกเครดิตละ")} {fmtBaht(Math.round(p.price / p.minutes))}</span>
               <button type="button" className="btn small" disabled={!payments || !!busy}
                 onClick={() => window.confirm(tx("ซื้อแพ็กเกจ{0} {1}? เครดิตแพ็กเกจที่เหลือของรอบเดิมจะไม่ทบ", { 0: p.name, 1: fmtBaht(p.price) }))
-                  && run(p.id, () => api.subscribe(p.id), tx("เริ่มแพ็กเกจ{0}แล้ว", { 0: p.name }))}>
-                {busy === p.id ? tx("กำลังซื้อ...") : p.id === sub?.plan_id ? tx("ต่ออายุ") : tx("ซื้อแพ็กเกจนี้")}
+                  && (slip
+                    ? begin(p.id, () => api.subscribe(p.id))
+                    : run(p.id, () => api.subscribe(p.id), tx("เริ่มแพ็กเกจ{0}แล้ว", { 0: p.name })))}>
+                {busy === p.id ? (slip ? tx("กำลังสร้างรายการ...") : tx("กำลังซื้อ...")) : p.id === sub?.plan_id ? tx("ต่ออายุ") : slip ? tx("โอน {0}", { 0: fmtBaht(p.price) }) : tx("ซื้อแพ็กเกจนี้")}
               </button>
             </article>
           ))}
@@ -72,8 +98,12 @@ export default function PromotionsPage() {
               ))}
             </div>
             <button type="button" className="btn primary small" disabled={!payments || !!busy}
-              onClick={() => run("topup", () => api.buyCredits(pack), tx("ได้ {0} แล้ว", { 0: fmtCredits(pack) }))}>
-              {busy === "topup" ? tx("กำลังซื้อ...") : tx("ซื้อ {0}", { 0: fmtBaht(pack * wallet.credit_price) })}
+              onClick={() => slip
+                ? begin("topup", () => api.buyCredits(pack))
+                : run("topup", () => api.buyCredits(pack), tx("ได้ {0} แล้ว", { 0: fmtCredits(pack) }))}>
+              {busy === "topup" ? (slip ? tx("กำลังสร้างรายการ...") : tx("กำลังซื้อ...")) : slip
+                ? tx("โอน {0}", { 0: fmtBaht(pack * wallet.credit_price) })
+                : tx("ซื้อ {0}", { 0: fmtBaht(pack * wallet.credit_price) })}
             </button>
           </div>
           {!payments && <span className="dim">{tx("ยังไม่ได้เชื่อมช่องทางชำระเงิน ติดต่อผู้ดูแลเพื่อเติมเครดิต")}</span>}

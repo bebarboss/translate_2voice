@@ -61,7 +61,14 @@ class Settings:
     billing_enabled: bool = _bool("BILLING_ENABLED")  # กระเป๋าเงิน แพ็กเกจ และตัดนาทีต่องาน (ต้องเปิด AUTH_ENABLED ด้วย)
     google_client_id: str = _env("GOOGLE_CLIENT_ID")  # OAuth Client ID (Web) สำหรับปุ่มเข้าสู่ระบบด้วย Google
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
-    payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ)
+    payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ), slip = โอนแล้วแนบสลิป
+    # บัญชีรับโอนเมื่อ PAYMENT_PROVIDER=slip (เลขบัญชีอย่างน้อย 8 หลัก ใช้ตรวจว่าสลิปโอนมาบัญชีนี้)
+    payee_name: str = _env("PAYEE_NAME")
+    payee_bank: str = _env("PAYEE_BANK")
+    payee_account: str = _env("PAYEE_ACCOUNT")
+    typhoon_ocr_model: str = _env("TYPHOON_OCR_MODEL", "typhoon-ocr")
+    slip_max_mb: int = _int("SLIP_MAX_MB", 8)
+    slip_max_age_hours: int = _int("SLIP_MAX_AGE_HOURS", 72)  # สลิปที่อ่านวันเวลาได้และเก่ากว่านี้ไม่เติมอัตโนมัติ
     # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
     actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
     # ภาษีหัก ณ ที่จ่ายค่าตอบแทนนักพากย์: กี่เปอร์เซ็นต์ (0 = ไม่หัก) หักเมื่อจ่ายครั้งละตั้งแต่กี่สตางค์ และประเภทเงินได้ในรายงาน
@@ -148,6 +155,11 @@ class Settings:
     # เพราะตอนพากย์ยังบีบเสียงให้พอดีช่วงที่นักแสดงพูด ถ้าเผื่อตรงนี้เสียงจะเร็วขึ้นแทน)
     fit_slack: float = _float("FIT_SLACK", 0.0)
     story_analysis: bool = _bool("STORY_ANALYSIS", True)  # อ่านบททั้งเรื่องก่อนแปล สรุปแนวเรื่อง ตัวละคร ชื่อเฉพาะ (translate.analyze_story)
+    story_content_type: bool = _bool("STORY_CONTENT_TYPE", True)  # ให้ขั้นอ่านบทบอกประเภทคลิป: เรื่องต่อเนื่อง หรือทีเซอร์/รวมฉาก
+    translate_neighbors: bool = _bool("TRANSLATE_NEIGHBORS", True)  # ส่งประโยคก่อนหน้า 3 และถัดไป 2 ไปดูบริบทตอนแปล (ปิด = บทแปลก่อนหน้า 6 ท่อนแบบเดิม)
+    fit_neighbors: bool = _bool("FIT_NEIGHBORS", True)  # ส่งบทข้างเคียงไปด้วยตอนย่อหรือขยายบท ให้ความหมายยังเชื่อมกัน
+    # ตรวจหลังแปล: เรื่องต่อเนื่องแปลใหม่บรรทัดที่ไม่ต่อกัน (ไม่เกิน 2 รอบ) ทีเซอร์ตรวจชื่อและศัพท์แล้วติดป้าย "ควรตรวจ" อย่างเดียว
+    translate_review: bool = _bool("TRANSLATE_REVIEW", True)
     pause_match: bool = _bool("PAUSE_MATCH", True)  # เว้นจังหวะหยุดกลางประโยคตามต้นฉบับ (pauses.py)
     min_pause_sec: float = _float("MIN_PAUSE_SEC", 0.3)  # ช่วงเงียบสั้นกว่านี้ไม่นับเป็นจังหวะหยุด
     # ความดังของเสียงร้อง กรี๊ด อุทานจากต้นฉบับในช่วงที่ไม่มีบท (0 = ตัดทิ้ง)
@@ -163,6 +175,8 @@ class Settings:
     diar_exclusive: bool = _bool("DIAR_EXCLUSIVE", True)  # ให้คำเป็นของผู้พูดตามช่วงแบบ exclusive ของ pyannote
     # ช่วงที่สองคนพูดพร้อมกัน แยกเสียงแล้วถอดคำพูดของคนที่ถูกกลบเป็นประโยคแยก (overlap.py)
     overlap_recover: bool = _bool("OVERLAP_RECOVER", True)
+    # ถอดรอบสองจากเสียงต้นฉบับ (มีเพลง) เฉพาะช่วงที่ถอดไม่มั่นใจ ไม่มีคำ หรือเพลงดังทับ (transcribe.recheck_noisy)
+    retranscribe_noisy: bool = _bool("RETRANSCRIBE_NOISY", False)
     # สองคนพูดต่อกันแต่ระบบแยกผู้พูดรวมเป็นท่อนเดียว (เสียงคล้ายกัน เช่น การ์ตูน): ให้ Typhoon/Gemini อ่านบทแล้วเสนอจุดเปลี่ยนคน
     # ตัดจริงเฉพาะจุดที่ลายเสียงสองฝั่งคล้ายกันต่ำกว่า TURN_SPLIT_SIM แล้วจัดกลุ่มผู้พูดใหม่ (turns.py)
     turn_split: bool = _bool("TURN_SPLIT", True)

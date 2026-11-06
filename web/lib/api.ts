@@ -101,7 +101,8 @@ export type TimelineFormat = "xml" | "fcpxml" | "stems" | "mix" | "srt";
 
 // ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที (ทศนิยมได้ 2 ตำแหน่ง) เงินเป็นสตางค์
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
-export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; google_client_id: string }
+/** payment_provider: ว่าง = ยังไม่รับชำระ, mock = ทดสอบเติมทันที, slip = โอนแล้วแนบสลิป */
+export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; payment_provider: string; google_client_id: string }
 /** owner = ผู้ดูแลหลักจาก ADMIN_EMAILS (ถอดสิทธิ์ไม่ได้) */
 export type AccountType = "personal" | "creator" | "business";
 /** ข้อมูลเบื้องต้นที่ผู้ใช้กรอกหลังล็อกอินครั้งแรก (account_type ว่าง = ยังไม่กรอก) */
@@ -124,6 +125,19 @@ export interface Subscription { plan_id: string; minutes_left: number; started_a
 /** credits = เครดิตเติมที่เปลี่ยน, minutes = เครดิตแพ็กเกจที่เปลี่ยน, amount = เงินที่จ่าย */
 export interface LedgerEntry { kind: string; credits: number; minutes: number; amount: number; ref: string | null; note: string; created_at: number }
 export interface Wallet { credits: number; subscription: Subscription | null; credit_price: number; ledger: LedgerEntry[] }
+export interface Payee { name: string; bank: string; account: string }
+/** amount ของ ocr เป็นสตางค์ เท่ากับ amount ของรายการ (null = อ่านยอดไม่ได้) */
+export interface SlipOcr {
+  amount: number | null; ref: string | null; payer: string | null; payee: string | null;
+  payee_account: string | null; transferred_at: string | null;
+}
+/** สถานะ slip: pending รอโอน, review รอผู้ดูแล, paid เติมแล้ว, rejected ส่งสลิปใหม่ได้ */
+export interface PaymentOrder {
+  id: string; status: string; amount: number; credits: number; plan_id: string | null; provider: string;
+  created_at: number; paid_at: number | null; note: string; has_slip: boolean;
+  payee: Payee | null; ocr: SlipOcr | null;
+  email?: string; name?: string; ocr_text?: string;
+}
 export interface Card { id: string; brand: string; last4: string; exp_month: number; exp_year: number; created_at: number }
 /** bonus = เครดิตฟรีเมื่อผูกบัตรครั้งแรก, provider = ผู้ให้บริการชำระเงิน (ว่าง = ยังไม่เชื่อม, mock = ทดสอบ) */
 export interface Cards { cards: Card[]; bonus: number; bonus_available: boolean; provider: string }
@@ -399,12 +413,23 @@ export const api = {
     request<QualityLine[]>(`/admin/quality/lines?days=${days}&kind=${kind}&limit=${limit}`),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
-  subscribe: (planId: string) => request<{ id: string; status: string }>("/billing/subscribe", json("POST", { plan_id: planId })),
+  subscribe: (planId: string) => request<PaymentOrder>("/billing/subscribe", json("POST", { plan_id: planId })),
   cards: () => request<Cards>("/billing/cards"),
   /** token จากสคริปต์ของผู้ให้บริการชำระเงิน (เลขบัตรไม่ผ่านเซิร์ฟเวอร์เรา) */
   addCard: (token: string) => request<{ card: Card; bonus: number }>("/billing/cards", json("POST", { token })),
   removeCard: (id: string) => request<void>(`/billing/cards/${id}`, { method: "DELETE" }),
-  buyCredits: (credits: number) => request<{ id: string; status: string }>("/billing/topups", json("POST", { credits })),
+  buyCredits: (credits: number) => request<PaymentOrder>("/billing/topups", json("POST", { credits })),
+  myPayments: () => request<PaymentOrder[]>("/billing/topups"),
+  /** แนบรูปสลิป JPG/PNG ให้ Typhoon OCR อ่านยอด */
+  uploadSlip: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    return request<PaymentOrder>(`/billing/topups/${id}/slip`, { method: "POST", body: form });
+  },
+  adminPayments: (status = "review") => request<PaymentOrder[]>(`/admin/payments?status=${encodeURIComponent(status)}`),
+  adminApprovePayment: (id: string) => request<PaymentOrder>(`/admin/payments/${id}/approve`, { method: "POST" }),
+  adminRejectPayment: (id: string, note: string) =>
+    request<PaymentOrder>(`/admin/payments/${id}/reject`, json("POST", { note })),
   adminUsers: () => request<AdminUser[]>("/admin/users"),
   adminCredit: (userId: string, credits: number, note = "") =>
     request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
@@ -561,6 +586,7 @@ export type Backups = {
 
 export const fileUrl = {
   myData: () => `${BASE}/auth/export`,
+  slip: (id: string) => `${BASE}/billing/topups/${id}/slip`,
   timelineExport: (id: string, formats: TimelineFormat[], mediaDir = "") =>
     `${BASE}/jobs/${id}/timeline/export?formats=${formats.join(",")}${mediaDir ? `&media_dir=${encodeURIComponent(mediaDir)}` : ""}`,
   source: (id: string) => `${BASE}/jobs/${id}/source`,

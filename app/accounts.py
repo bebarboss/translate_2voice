@@ -4,6 +4,8 @@ AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำข
 (GOOGLE_CLIENT_ID) เท่านั้น ไม่มีรหัสผ่าน
 BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (ตัดเครดิตเมื่อเริ่มวิเคราะห์งาน) ต้องเปิดคู่กับ AUTH_ENABLED
 ผู้ดูแลระบบ (ADMIN_EMAILS) พากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต
+PAYMENT_PROVIDER=slip ให้ผู้ใช้โอนตามยอดแล้วแนบสลิป Typhoon OCR อ่านยอด (slip_ocr.py) ตรงจึงเติมให้
+ไม่ตรงหรืออ่านไม่ได้เข้าคิวผู้ดูแล  PAYMENT_PROVIDER=mock เติมทันทีสำหรับทดสอบ
 
 1 เครดิต = คลิป 1 นาที คิดตามความยาวจริงละเอียดถึงทศนิยม 2 ตำแหน่ง (ปัดขึ้น) มีสองแบบ:
 - เครดิตแพ็กเกจ (subscriptions.minutes_left) ได้จากแพ็กเกจรายเดือน หมดอายุพร้อมแพ็กเกจ ใช้ก่อน
@@ -13,6 +15,7 @@ BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (
 ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน กันตัดซ้ำ
 """
 import hashlib
+import json
 import math
 import re
 import secrets
@@ -20,11 +23,13 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 from .config import settings
+from .slip_ocr import SlipOcrError, image_mime, read_slip, verdict
 
 SESSION_DAYS = 30
 TOPUP_MIN, TOPUP_MAX = 5, 2000  # ซื้อเครดิตเติมได้ครั้งละกี่เครดิต
@@ -143,6 +148,16 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE users ADD COLUMN deleted_at REAL")
     if "notify_email" not in cols("users"):  # อีเมลแจ้งเมื่องานรอตรวจบท พากย์เสร็จ หรือล้มเหลว (notify.py)
         db.execute("ALTER TABLE users ADD COLUMN notify_email INTEGER NOT NULL DEFAULT 1")
+    # สลิปโอน (PAYMENT_PROVIDER=slip): ไฟล์รูปอยู่ใน data/slips/ แฮชกันใช้สลิปเดิมซ้ำอยู่ใน slip_uses
+    if "note" not in cols("topups"):
+        db.execute("ALTER TABLE topups ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+    for col in ("slip_hash", "ocr_text", "ocr_json"):
+        if col not in cols("topups"):
+            db.execute(f"ALTER TABLE topups ADD COLUMN {col} TEXT")
+    if "ocr_amount" not in cols("topups"):
+        db.execute("ALTER TABLE topups ADD COLUMN ocr_amount INTEGER")
+    db.execute("CREATE TABLE IF NOT EXISTS slip_uses ("
+               "hash TEXT PRIMARY KEY, topup_id TEXT NOT NULL, created_at REAL NOT NULL)")
 
 
 class _tx:
@@ -507,17 +522,198 @@ def refund_job(uid: str, job_id: str) -> None:
 
 
 # ---------------------------------------------------------------- ชำระเงิน (ซื้อเครดิตเติม หรือแพ็กเกจ)
+_SLIP_OPEN = ("pending", "rejected")  # แนบสลิปได้ตอนรอโอน และหลังผู้ดูแลไม่ผ่าน (ส่งรูปใหม่ได้)
+
+
+def _payee() -> dict:
+    return {"name": settings.payee_name, "bank": settings.payee_bank, "account": settings.payee_account}
+
+
+def _order_out(row, email: str = "", name: str = "", admin: bool = False) -> dict:
+    raw = {}
+    if row["ocr_json"]:
+        try:
+            raw = json.loads(row["ocr_json"])
+        except json.JSONDecodeError:
+            raw = {}
+    ocr = None
+    if row["ocr_amount"] is not None or raw:
+        ocr = {
+            "amount": row["ocr_amount"], "ref": raw.get("ref"), "payer": raw.get("payer"),
+            "payee": raw.get("payee"), "payee_account": raw.get("payee_account"),
+            "transferred_at": raw.get("transferred_at"),
+        }
+    out = {
+        "id": row["id"], "status": row["status"], "amount": row["amount"], "credits": row["credits"] or 0,
+        "plan_id": row["plan_id"], "provider": row["provider"], "created_at": row["created_at"],
+        "paid_at": row["paid_at"], "note": row["note"] or "", "has_slip": bool(row["slip_hash"]),
+        "payee": _payee() if row["status"] != "paid" else None, "ocr": ocr,
+    }
+    if admin:
+        out["email"] = email
+        out["name"] = name
+        out["ocr_text"] = (row["ocr_text"] or "")[:4000]
+    return out
+
+
+def _fetch_order(topup_id: str, admin: bool = False) -> dict:
+    with _lock:
+        row = _db().execute(
+            "SELECT t.*, u.email AS email, u.name AS user_name FROM topups t "
+            "JOIN users u ON u.id = t.user_id WHERE t.id = ?", (topup_id,)).fetchone()
+    if row is None:
+        raise AccountError(404, "ไม่พบรายการนี้")
+    return _order_out(row, row["email"], row["user_name"], admin=admin)
+
+
 def _start_payment(uid: str, amount: int, credits: int = 0, plan_id: Optional[str] = None) -> dict:
-    """PAYMENT_PROVIDER=mock จ่ายสำเร็จทันที (ใช้ทดสอบ) ยังไม่ได้เชื่อมช่องทางชำระเงินจริง"""
+    """mock = จ่ายสำเร็จทันที (ทดสอบ)  slip = สร้างรายการรอโอน แล้วให้ผู้ใช้แนบสลิป"""
     provider = settings.payment_provider
-    if provider != "mock":
+    if provider not in ("mock", "slip"):
         raise AccountError(503, "ยังไม่ได้เชื่อมช่องทางชำระเงิน ติดต่อผู้ดูแลเพื่อเติมเครดิต")
+    if provider == "slip" and len(re.sub(r"\D", "", settings.payee_account)) < 8:
+        raise AccountError(503, "ยังไม่ได้ตั้งบัญชีรับโอน (PAYEE_ACCOUNT)")
     tid = secrets.token_hex(8)
     with _tx() as db:
+        if db.execute("SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL", (uid,)).fetchone() is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
         db.execute("INSERT INTO topups (id, user_id, amount, provider, status, created_at, credits, plan_id) "
                    "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)", (tid, uid, amount, provider, time.time(), credits, plan_id))
-    mark_paid(tid)
-    return {"id": tid, "status": "paid", "amount": amount}
+    if provider == "mock":
+        mark_paid(tid)
+    return _fetch_order(tid)
+
+
+def user_payments(uid: str) -> list[dict]:
+    rows = _read("SELECT * FROM topups WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", uid)
+    return [_order_out(r) for r in rows]
+
+
+def _write_slip(uid: str, topup_id: str, data: bytes, mime: str, digest: str, slip, note: str) -> None:
+    """เก็ปรูปและผลอ่าน ตั้งสถานะรอตรวจ แฮชซ้ำของรายการอื่นใช้ไม่ได้"""
+    ext = ".jpg" if mime == "image/jpeg" else ".png"
+    folder = Path(settings.data_dir) / "slips"
+    folder.mkdir(parents=True, exist_ok=True)
+    tmp = folder / f"{topup_id}{ext}.part"
+    dest = folder / f"{topup_id}{ext}"
+    tmp.write_bytes(data)
+    try:
+        with _tx() as db:
+            row = db.execute("SELECT status FROM topups WHERE id = ? AND user_id = ?", (topup_id, uid)).fetchone()
+            if row is None:
+                raise AccountError(404, "ไม่พบรายการนี้")
+            if row["status"] not in _SLIP_OPEN:
+                raise AccountError(409, "รายการนี้แนบสลิปเพิ่มไม่ได้")
+            used = db.execute("SELECT topup_id FROM slip_uses WHERE hash = ?", (digest,)).fetchone()
+            if used and used["topup_id"] != topup_id:
+                raise AccountError(409, "สลิปนี้เคยใช้แล้ว")
+            db.execute("INSERT OR IGNORE INTO slip_uses (hash, topup_id, created_at) VALUES (?, ?, ?)",
+                       (digest, topup_id, time.time()))
+            public = json.dumps(slip.public(), ensure_ascii=False) if slip else ""
+            db.execute(
+                "UPDATE topups SET slip_hash = ?, ocr_text = ?, ocr_amount = ?, ocr_json = ?, note = ?, status = 'review' "
+                "WHERE id = ?",
+                (digest, (slip.text if slip else "")[:8000], None if slip is None else slip.amount,
+                 public, note[:500], topup_id))
+        (folder / f"{topup_id}{'.png' if ext == '.jpg' else '.jpg'}").unlink(missing_ok=True)
+        tmp.replace(dest)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def submit_slip(uid: str, topup_id: str, data: bytes) -> dict:
+    """อ่านสลิปด้วย Typhoon OCR ยอดและบัญชีตรงแล้วเติมให้เลย ไม่ตรงหรืออ่านไม่ได้เข้าคิวผู้ดูแล"""
+    mime = image_mime(data)
+    if mime is None:
+        raise AccountError(400, "รับเฉพาะรูปสลิป JPG หรือ PNG")
+    if len(data) > max(1, settings.slip_max_mb) * 1024 * 1024:
+        raise AccountError(400, f"รูปสลิปใหญ่เกิน {settings.slip_max_mb} MB")
+    digest = hashlib.sha256(data).hexdigest()
+    with _lock:
+        db = _db()
+        row = db.execute("SELECT * FROM topups WHERE id = ? AND user_id = ?", (topup_id, uid)).fetchone()
+        used = db.execute("SELECT topup_id FROM slip_uses WHERE hash = ?", (digest,)).fetchone()
+    if row is None:
+        raise AccountError(404, "ไม่พบรายการนี้")
+    if row["provider"] != "slip":
+        raise AccountError(400, "รายการนี้ไม่ต้องแนบสลิป")
+    if row["status"] not in _SLIP_OPEN:
+        raise AccountError(409, "รายการนี้แนบสลิปเพิ่มไม่ได้")
+    if used and used["topup_id"] != topup_id:
+        raise AccountError(409, "สลิปนี้เคยใช้แล้ว")
+    force_review = row["status"] == "rejected"
+    try:
+        slip = read_slip(data, mime)
+        ok, note = verdict(row["amount"], slip, payee_account=settings.payee_account,
+                           max_age_hours=settings.slip_max_age_hours)
+    except SlipOcrError as exc:
+        slip, ok, note = None, False, str(exc)
+    if ok and force_review:
+        note = "ส่งสลิปใหม่หลังไม่ผ่าน ยอดตรง รอผู้ดูแลตรวจอีกครั้ง"
+    _write_slip(uid, topup_id, data, mime, digest, slip, note)
+    if ok and not force_review:
+        mark_paid(topup_id)
+        done = "ยอดตรงกับสลิป เริ่มแพ็กเกจแล้ว" if row["plan_id"] else "ยอดตรงกับสลิป เติมเครดิตแล้ว"
+        with _tx() as db:
+            db.execute("UPDATE topups SET note = ? WHERE id = ? AND status = 'paid'", (done, topup_id))
+    return _fetch_order(topup_id)
+
+
+def admin_payments(status: str = "review") -> list[dict]:
+    if status and status not in ("pending", "review", "paid", "rejected"):
+        raise AccountError(400, "สถานะไม่ถูกต้อง")
+    sql = ("SELECT t.*, u.email AS email, u.name AS user_name FROM topups t JOIN users u ON u.id = t.user_id ")
+    if status:
+        rows = _read(sql + "WHERE t.status = ? ORDER BY t.created_at DESC LIMIT 100", status)
+    else:
+        rows = _read(sql + "ORDER BY t.created_at DESC LIMIT 100")
+    return [_order_out(r, r["email"], r["user_name"], admin=True) for r in rows]
+
+
+def approve_payment(topup_id: str, admin_email: str) -> dict:
+    """ผู้ดูแลยืนยันสลิปที่ระบบไม่กล้าเติมเอง"""
+    with _lock:
+        row = _db().execute("SELECT status, slip_hash FROM topups WHERE id = ?", (topup_id,)).fetchone()
+    if row is None:
+        raise AccountError(404, "ไม่พบรายการนี้")
+    if row["status"] == "paid":
+        raise AccountError(409, "รายการนี้เติมเครดิตไปแล้ว")
+    if row["status"] != "review" or not row["slip_hash"]:
+        raise AccountError(400, "รายการนี้ยังไม่มีสลิปให้ตรวจ")
+    with _tx() as db:
+        db.execute("UPDATE topups SET note = ? WHERE id = ? AND status = 'review'",
+                   (f"ผู้ดูแล {admin_email} ตรวจสลิปแล้วอนุมัติ", topup_id))
+    mark_paid(topup_id)
+    return _fetch_order(topup_id, admin=True)
+
+
+def reject_payment(topup_id: str, admin_email: str, note: str = "") -> dict:
+    text = note.strip() or f"ผู้ดูแล {admin_email} ไม่ผ่านสลิป"
+    with _tx() as db:
+        row = db.execute("SELECT status FROM topups WHERE id = ?", (topup_id,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบรายการนี้")
+        if row["status"] == "paid":
+            raise AccountError(409, "รายการนี้เติมเครดิตไปแล้ว")
+        if row["status"] != "review":
+            raise AccountError(400, "รายการนี้ไม่อยู่ในคิวตรวจ")
+        db.execute("UPDATE topups SET status = 'rejected', note = ? WHERE id = ?", (text[:300], topup_id))
+    return _fetch_order(topup_id, admin=True)
+
+
+def slip_file(topup_id: str, uid: str, admin: bool) -> tuple[Path, str, str]:
+    """ไฟล์สลิปของเจ้าของรายการหรือผู้ดูแล"""
+    with _lock:
+        row = _db().execute("SELECT user_id FROM topups WHERE id = ?", (topup_id,)).fetchone()
+    if row is None or (not admin and row["user_id"] != uid):
+        raise AccountError(404, "ไม่พบสลิปนี้")
+    folder = Path(settings.data_dir) / "slips"
+    for ext, mime in ((".jpg", "image/jpeg"), (".png", "image/png")):
+        path = folder / f"{topup_id}{ext}"
+        if path.is_file():
+            return path, mime, f"slip-{topup_id}{ext}"
+    raise AccountError(404, "ยังไม่มีไฟล์สลิป")
 
 
 def buy_credits(uid: str, credits: int) -> dict:

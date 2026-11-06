@@ -14,8 +14,8 @@ const TYPES: { id: AccountType; label: string; hint: string }[] = [
 ];
 
 function nextPath(): string {
-  const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-  return next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/onboarding") ? next : "/";
+  const next = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
+  return next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/onboarding") ? next : "/dashboard";
 }
 
 /** ข้อมูลเบื้องต้นที่ต้องกรอกหลังล็อกอินด้วย Google ครั้งแรก (แก้ภายหลังได้จากหน้าบัญชี) */

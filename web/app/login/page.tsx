@@ -86,8 +86,8 @@ function Showcase({ bonus }: { bonus: number }) {
 
 /** หน้าที่จะกลับไปหลังล็อกอิน (เฉพาะในเว็บนี้) */
 function nextPath(): string {
-  const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-  return next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  const next = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
+  return next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
 }
 
 /** สมัครและเข้าสู่ระบบด้วยบัญชี Google เท่านั้น ครั้งแรกระบบสร้างบัญชีให้เลย */
