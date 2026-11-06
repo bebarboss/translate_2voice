@@ -734,6 +734,10 @@ body { background: var(--bg); }
 .project-match:last-child { border-bottom: none; }
 
 /* ภาพรวมของผู้ใช้ */
+.dash-modes { display: flex; }
+.dash-modes .seg { display: flex; }
+.dash-modes .seg button { min-width: 132px; justify-content: center; display: inline-flex; align-items: center; gap: 8px; }
+.dash-modes .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .dash-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .dash-stat { display: flex; flex-direction: column; gap: 2px; padding: 16px 18px; text-decoration: none; color: var(--text); }
 .dash-stat b { font-size: 26px; font-weight: 600; letter-spacing: -.02em; }

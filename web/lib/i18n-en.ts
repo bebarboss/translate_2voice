@@ -1236,4 +1236,9 @@ export const EN: Record<string, string> = {
   "ค่าตอบแทนค้างจ่าย": "Earnings due",
   "ค่าตอบแทนเดือนนี้": "Earnings this month",
   "ค้างจ่ายนักพากย์เดือนนี้": "Voice actor payouts due this month",
+  "โหมดภาพรวม": "Overview mode",
+  "จ่ายนักพากย์": "Actor payouts",
+  "ค่าตอบแทนของฉัน": "My earnings",
+  "เปิดหน้านักพากย์": "Open the voice actor page",
+  "ยังไม่ได้กรอกบัญชีรับเงิน": "Payout account not filled in",
 };

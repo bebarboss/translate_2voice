@@ -5,12 +5,13 @@ import { useEffect, useState } from "react";
 import { PlusIcon } from "@/components/Icons";
 import StatusBadge from "@/components/StatusBadge";
 import UsageChart from "@/components/UsageChart";
-import { api, type ActorMe, type Job, type PaymentOrder, type Project, type Wallet } from "@/lib/api";
+import { api, type ActorMe, type Job, type PaymentOrder, type Project, type UsageSummary, type Wallet } from "@/lib/api";
 import { TARGET_LABEL, fmtBaht, fmtDuration, fmtNum, fmtWhen, isActive, langName } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 
 const ATTENTION = new Set(["awaiting_review", "failed", "queued", "running"]);
+type DashMode = "work" | "earn" | "payout";
 
 /** เดือนตามเวลาไทย ตรงกับที่ API ตัดรอบค่าตอบแทนนักพากย์ */
 function thaiMonth(now = Date.now()): string {
@@ -35,7 +36,8 @@ export default function DashboardPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [slips, setSlips] = useState<PaymentOrder[]>([]);
   const [actorMe, setActorMe] = useState<ActorMe | null>(null);
-  const [actorDue, setActorDue] = useState<number | null>(null);
+  const [payoutRows, setPayoutRows] = useState<UsageSummary[] | null>(null);
+  const [mode, setMode] = useState<DashMode>("work");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -68,7 +70,7 @@ export default function DashboardPage() {
       api.actorMe().then((me) => { if (!stop) setActorMe(me); }).catch(() => {});
       if (user.admin) {
         api.adminActorUsage(thaiMonth()).then((data) => {
-          if (!stop) setActorDue(data.rows.reduce((sum, row) => sum + Math.max(0, row.due), 0));
+          if (!stop) setPayoutRows(data.rows);
         }).catch(() => {});
       }
     };
@@ -96,10 +98,17 @@ export default function DashboardPage() {
   const monthUsage = usage.find((row) => row.month === thaiMonth());
   const actorNotes = [
     actor?.status === "pending" ? { key: "apply", title: tx("ส่งใบสมัครแล้ว"), detail: tx("รอผู้ดูแลอนุมัติใบสมัคร") } : null,
+    actor?.status === "rejected" ? { key: "rejected", title: tx("ใบสมัครไม่ผ่าน"), detail: actor.note || tx("แก้ไขแล้วสมัครใหม่ได้") } : null,
     actorOn && actorMe && !actorMe.consent_current ? { key: "consent", title: tx("นักพากย์"), detail: tx("หนังสือยินยอมมีเวอร์ชันใหม่") } : null,
     actorOn && actorMe && !actorMe.payment && due > 0
       ? { key: "pay", title: tx("ค่าตอบแทน"), detail: tx("กรอกข้อมูลรับเงินก่อน ผู้ดูแลถึงจะจ่ายค่าตอบแทนให้ได้") } : null,
   ].filter((item): item is { key: string; title: string; detail: string } => item !== null);
+  const payoutDue = payoutRows ? payoutRows.reduce((sum, row) => sum + Math.max(0, row.due), 0) : null;
+  const modes: { id: DashMode; label: string; flag: boolean }[] = [{ id: "work", label: tx("งาน"), flag: false }];
+  if (actor) modes.push({ id: "earn", label: tx("ค่าตอบแทน"), flag: due > 0 || actor.status === "pending" });
+  if (user?.admin) modes.push({ id: "payout", label: tx("จ่ายนักพากย์"), flag: (payoutDue ?? 0) > 0 });
+  const shown = modes.some((item) => item.id === mode) ? mode : "work";
+  const payoutList = [...(payoutRows ?? [])].sort((a, b) => Math.max(0, b.due) - Math.max(0, a.due));
 
   return (
     <main className="page" style={{ maxWidth: 1080 }}>
@@ -107,16 +116,35 @@ export default function DashboardPage() {
         <div>
           <h1>{name ? tx("สวัสดี {0}", { 0: name }) : tx("ภาพรวม")}</h1>
           <span className="muted">
-            {review > 0 ? tx("{0} งานรอตรวจบท", { 0: review })
-              : active > 0 ? tx("{0} งานกำลังทำ", { 0: active })
-                : tx("ส่งคลิปใหม่ หรือเปิดงานที่ทำค้างไว้")}
+            {shown === "earn" ? (actor?.stage_name ? `${actor.stage_name} · ${tx("ค่าตอบแทนของฉัน")}` : tx("ค่าตอบแทนของฉัน"))
+              : shown === "payout" ? tx("ค้างจ่ายนักพากย์เดือนนี้")
+                : review > 0 ? tx("{0} งานรอตรวจบท", { 0: review })
+                  : active > 0 ? tx("{0} งานกำลังทำ", { 0: active })
+                    : tx("ส่งคลิปใหม่ หรือเปิดงานที่ทำค้างไว้")}
           </span>
         </div>
-        <Link href="/" className="btn primary"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
+        {shown === "earn" ? <Link href="/actor" className="btn primary">{tx("เปิดหน้านักพากย์")}</Link>
+          : shown === "payout" ? <Link href="/actors" className="btn primary">{tx("ตรวจนักพากย์")}</Link>
+            : <Link href="/" className="btn primary"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>}
       </div>
+
+      {modes.length > 1 && (
+        <div className="dash-modes">
+          <div className="seg" role="tablist" aria-label={tx("โหมดภาพรวม")}>
+            {modes.map((item) => (
+              <button key={item.id} type="button" role="tab" aria-selected={shown === item.id} aria-pressed={shown === item.id}
+                onClick={() => setMode(item.id)}>
+                {item.label}
+                {item.flag && <span className="dot" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && <div className="alert error" role="alert">{error}</div>}
 
+      {shown === "work" && (
       <section className="dash-stats" aria-label={tx("สรุปงาน")}>
         <Link href="/jobs" className="card dash-stat">
           <b>{jobs ? list.length : "…"}</b>
@@ -140,45 +168,16 @@ export default function DashboardPage() {
             <span>{user.admin ? tx("บัญชีผู้ดูแล") : tx("เครดิตคงเหลือ")}</span>
           </Link>
         )}
-        {actorOn && (
-          <Link href="/actor" className={`card dash-stat${due > 0 ? " hot" : ""}`}>
-            <b>{fmtBaht(due)}</b>
-            <span>{tx("ค่าตอบแทนค้างจ่าย")}</span>
-          </Link>
-        )}
-        {actorOn && (
-          <Link href="/actor" className="card dash-stat">
-            <b>{fmtBaht(monthUsage?.amount ?? 0)}</b>
-            <span>
-              {tx("ค่าตอบแทนเดือนนี้")}
-              {monthUsage && monthUsage.seconds > 0 ? ` · ${fmtMin(monthUsage.seconds)}` : ""}
-            </span>
-          </Link>
-        )}
-        {user?.admin && (
-          <Link href="/actors" className={`card dash-stat${actorDue ? " hot" : ""}`}>
-            <b>{actorDue == null ? "…" : fmtBaht(actorDue)}</b>
-            <span>{tx("ค้างจ่ายนักพากย์เดือนนี้")}</span>
-          </Link>
-        )}
       </section>
+      )}
 
-      {jobs && (
+      {shown === "work" && jobs && (
         <UsageChart jobs={list} ledger={wallet?.ledger ?? null} credits={!!config?.billing && !!user && !user.admin} />
       )}
 
-      {(attention.length > 0 || slips.length > 0 || actorNotes.length > 0) && (
+      {shown === "work" && (attention.length > 0 || slips.length > 0) && (
         <section className="card dash-block" aria-labelledby="attention-title">
           <h2 id="attention-title">{tx("ต้องดูแล")}</h2>
-          {actorNotes.map((item) => (
-            <Link key={item.key} href="/actor" className="dash-row">
-              <span className="sq" aria-hidden="true">฿</span>
-              <span className="dash-main">
-                <b>{item.title}</b>
-                <span>{item.detail}</span>
-              </span>
-            </Link>
-          ))}
           {slips.map((o) => (
             <Link key={o.id} href="/promotions" className="dash-row">
               <span className="sq" aria-hidden="true">฿</span>
@@ -201,7 +200,92 @@ export default function DashboardPage() {
         </section>
       )}
 
-      <div className="dash-split">
+      {shown === "earn" && (
+        <>
+          {actorOn && (
+            <section className="dash-stats" aria-label={tx("ค่าตอบแทนของฉัน")}>
+              <Link href="/actor" className={`card dash-stat${due > 0 ? " hot" : ""}`}>
+                <b>{fmtBaht(due)}</b>
+                <span>{tx("ค่าตอบแทนค้างจ่าย")}</span>
+              </Link>
+              <Link href="/actor" className="card dash-stat">
+                <b>{fmtBaht(monthUsage?.amount ?? 0)}</b>
+                <span>{tx("ค่าตอบแทนเดือนนี้")}</span>
+              </Link>
+              <Link href="/actor" className="card dash-stat">
+                <b>{fmtMin(monthUsage?.seconds ?? 0)}</b>
+                <span>{tx("เวลาที่ใช้")}</span>
+              </Link>
+              <Link href="/actor" className="card dash-stat">
+                <b>{fmtBaht(monthUsage?.paid ?? 0)}</b>
+                <span>{tx("จ่ายแล้ว")}</span>
+              </Link>
+            </section>
+          )}
+          {actorNotes.length > 0 && (
+            <section className="card dash-block" aria-label={tx("ต้องดูแล")}>
+              {actorNotes.map((item) => (
+                <Link key={item.key} href="/actor" className="dash-row">
+                  <span className="sq" aria-hidden="true">฿</span>
+                  <span className="dash-main">
+                    <b>{item.title}</b>
+                    <span>{item.detail}</span>
+                  </span>
+                </Link>
+              ))}
+            </section>
+          )}
+          {actorOn && (
+            <section className="card dash-block" aria-labelledby="earn-title">
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2 id="earn-title">{tx("ค่าตอบแทน")}</h2>
+                <Link href="/actor" className="btn small">{tx("ทั้งหมด")}</Link>
+              </div>
+              {usage.length === 0 ? <div className="empty">{tx("ยังไม่มีการใช้เสียง")}</div>
+                : usage.map((row) => (
+                  <Link key={row.month} href="/actor" className="dash-row">
+                    <span className="dash-main">
+                      <b>{fmtMonth(row.month)}</b>
+                      <span>{fmtMin(row.seconds)} · {tx("จ่ายแล้ว")} {fmtBaht(row.paid)} · {tx("ค้างจ่าย")} {fmtBaht(Math.max(0, row.due))}</span>
+                    </span>
+                  </Link>
+                ))}
+            </section>
+          )}
+        </>
+      )}
+
+      {shown === "payout" && (
+        <>
+          <section className="dash-stats" aria-label={tx("จ่ายนักพากย์")}>
+            <Link href="/actors" className={`card dash-stat${payoutDue ? " hot" : ""}`}>
+              <b>{payoutDue == null ? "…" : fmtBaht(payoutDue)}</b>
+              <span>{tx("ค้างจ่ายนักพากย์เดือนนี้")}</span>
+            </Link>
+          </section>
+          <section className="card dash-block" aria-labelledby="payout-title">
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2 id="payout-title">{fmtMonth(thaiMonth())}</h2>
+              <Link href="/actors" className="btn small">{tx("ทั้งหมด")}</Link>
+            </div>
+            {payoutRows === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
+              : payoutList.length === 0 ? <div className="empty">{tx("เดือนนี้ยังไม่มีการใช้เสียงนักพากย์")}</div>
+                : payoutList.map((row) => (
+                  <Link key={row.actor_id} href="/actors" className="dash-row">
+                    <span className="dash-main">
+                      <b>{row.stage_name}</b>
+                      <span>
+                        {fmtMin(row.seconds)} · {tx("จ่ายแล้ว")} {fmtBaht(row.paid)} · {tx("ค้างจ่าย")} {fmtBaht(Math.max(0, row.due))}
+                        {!row.payee && row.due > 0 ? ` · ${tx("ยังไม่ได้กรอกบัญชีรับเงิน")}` : ""}
+                      </span>
+                    </span>
+                  </Link>
+                ))}
+          </section>
+        </>
+      )}
+
+      {shown === "work" && <div className="dash-split">
         <section className="card dash-block" aria-labelledby="recent-title">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h2 id="recent-title">{tx("งานล่าสุด")}</h2>
@@ -227,23 +311,6 @@ export default function DashboardPage() {
         </section>
 
         <div className="dash-side">
-          {actorOn && (
-            <section className="card dash-block" aria-labelledby="earn-title">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <h2 id="earn-title">{tx("ค่าตอบแทน")}</h2>
-                <Link href="/actor" className="btn small">{tx("ทั้งหมด")}</Link>
-              </div>
-              {usage.length === 0 ? <div className="empty">{tx("ยังไม่มีการใช้เสียง")}</div>
-                : usage.slice(0, 4).map((row) => (
-                  <Link key={row.month} href="/actor" className="dash-row">
-                    <span className="dash-main">
-                      <b>{fmtMonth(row.month)}</b>
-                      <span>{tx("จ่ายแล้ว")} {fmtBaht(row.paid)} · {tx("ค้างจ่าย")} {fmtBaht(Math.max(0, row.due))}</span>
-                    </span>
-                  </Link>
-                ))}
-            </section>
-          )}
           <section className="card dash-block" aria-labelledby="projects-title">
             <div className="row" style={{ justifyContent: "space-between" }}>
               <h2 id="projects-title">{tx("โปรเจกต์")}</h2>
@@ -270,7 +337,7 @@ export default function DashboardPage() {
             </div>
           </section>
         </div>
-      </div>
+      </div>}
     </main>
   );
 }
