@@ -4,32 +4,12 @@
 """
 from __future__ import annotations
 
-import json
-import threading
 from typing import Optional
 
-import psycopg
-from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from .pgstore import _dsn
+from .pgstore import borrow
 from .schemas import Job, Project, Utterance, now
-
-# connection เดียวต่อโปรเซส + ล็อก (เดิมเธรดละเส้น ชนเพดาน session pooler = 15)
-_lock = threading.RLock()
-_shared: Optional[psycopg.Connection] = None
-
-
-def _conn() -> psycopg.Connection:
-    global _shared
-    with _lock:
-        if _shared is None or _shared.closed:
-            _shared = psycopg.connect(
-                _dsn(), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
-            )
-            _shared.execute("SET search_path TO studio")
-            _shared.commit()
-        return _shared
 
 
 def _ts(dt) -> float:
@@ -45,10 +25,10 @@ def project_doc(p: Project) -> dict:
 
 
 def load_jobs() -> list[Job]:
-    with _lock:
-        cur = _conn().execute("SELECT doc FROM jobs")
+    with borrow() as db:
+        cur = db.raw.execute("SELECT doc FROM jobs")
         rows = cur.fetchall()
-        _conn().commit()
+        db.raw.commit()
     out: list[Job] = []
     for r in rows:
         try:
@@ -60,8 +40,8 @@ def load_jobs() -> list[Job]:
 
 def upsert_job(job: Job) -> None:
     doc = job_doc(job)
-    with _lock:
-        _conn().execute(
+    with borrow() as db:
+        db.raw.execute(
             """INSERT INTO jobs (id, owner, status, created_at, updated_at, doc)
                VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET
@@ -72,19 +52,19 @@ def upsert_job(job: Job) -> None:
             (job.id, job.owner, job.status.value if hasattr(job.status, "value") else str(job.status),
              _ts(job.created_at), _ts(job.updated_at), Jsonb(doc)),
         )
-        _conn().commit()
+        db.raw.commit()
 
 
 def delete_job(job_id: str) -> None:
-    with _lock:
-        _conn().execute("DELETE FROM jobs WHERE id = %s", (job_id,))
-        _conn().commit()
+    with borrow() as db:
+        db.raw.execute("DELETE FROM jobs WHERE id = %s", (job_id,))
+        db.raw.commit()
 
 
 def save_transcript(job_id: str, utterances: list[Utterance]) -> None:
     data = [u.model_dump(mode="json") for u in utterances]
-    with _lock:
-        _conn().execute(
+    with borrow() as db:
+        db.raw.execute(
             """INSERT INTO transcripts (job_id, utterances, updated_at)
                VALUES (%s, %s, %s)
                ON CONFLICT (job_id) DO UPDATE SET
@@ -92,31 +72,31 @@ def save_transcript(job_id: str, utterances: list[Utterance]) -> None:
                  updated_at = EXCLUDED.updated_at""",
             (job_id, Jsonb(data), _ts(now())),
         )
-        _conn().commit()
+        db.raw.commit()
 
 
 def load_transcript(job_id: str) -> Optional[list[Utterance]]:
     """None = ยังไม่มีแถวในฐาน (ให้เรียกฝั่งไฟล์ต่อได้) [] = มีแถวแต่บทว่าง"""
-    with _lock:
-        cur = _conn().execute("SELECT utterances FROM transcripts WHERE job_id = %s", (job_id,))
+    with borrow() as db:
+        cur = db.raw.execute("SELECT utterances FROM transcripts WHERE job_id = %s", (job_id,))
         row = cur.fetchone()
-        _conn().commit()
+        db.raw.commit()
     if row is None:
         return None
     return [Utterance.model_validate(u) for u in (row["utterances"] or [])]
 
 
 def delete_transcript(job_id: str) -> None:
-    with _lock:
-        _conn().execute("DELETE FROM transcripts WHERE job_id = %s", (job_id,))
-        _conn().commit()
+    with borrow() as db:
+        db.raw.execute("DELETE FROM transcripts WHERE job_id = %s", (job_id,))
+        db.raw.commit()
 
 
 def load_projects() -> list[Project]:
-    with _lock:
-        cur = _conn().execute("SELECT doc FROM projects")
+    with borrow() as db:
+        cur = db.raw.execute("SELECT doc FROM projects")
         rows = cur.fetchall()
-        _conn().commit()
+        db.raw.commit()
     out: list[Project] = []
     for r in rows:
         try:
@@ -128,8 +108,8 @@ def load_projects() -> list[Project]:
 
 def upsert_project(p: Project) -> None:
     doc = project_doc(p)
-    with _lock:
-        _conn().execute(
+    with borrow() as db:
+        db.raw.execute(
             """INSERT INTO projects (id, owner, updated_at, doc)
                VALUES (%s, %s, %s, %s)
                ON CONFLICT (id) DO UPDATE SET
@@ -138,10 +118,10 @@ def upsert_project(p: Project) -> None:
                  doc = EXCLUDED.doc""",
             (p.id, p.owner, _ts(p.updated_at), Jsonb(doc)),
         )
-        _conn().commit()
+        db.raw.commit()
 
 
 def delete_project(pid: str) -> None:
-    with _lock:
-        _conn().execute("DELETE FROM projects WHERE id = %s", (pid,))
-        _conn().commit()
+    with borrow() as db:
+        db.raw.execute("DELETE FROM projects WHERE id = %s", (pid,))
+        db.raw.commit()

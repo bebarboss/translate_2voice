@@ -3,23 +3,31 @@
 คำสั่ง SQL ใน accounts.py / actors.py / consent.py เขียนแบบ SQLite (`?`, INSERT OR REPLACE)
 ตัวนี้แปลให้พอใช้กับ Postgres
 
-ใช้ connection ร่วมในโปรเซส (accounts/_lock กันอยู่แล้ว) + พอร์ต transaction pooler (6543)
-เพื่อไม่ให้เธรดละ connection ชนเพดาน session pool (15)
+ใช้พอร์ต transaction pooler (6543) + pool เล็กในโปรเซส
+กันทั้ง EMAXCONNSESSION (เธรดละเส้น) และ InFailedSqlTransaction / คิวรอ connection เดียว
 """
+import queue
 import re
 import threading
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, Optional
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
 import psycopg
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 
 from .config import settings
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_conn_lock = threading.Lock()
-_shared: Optional[psycopg.Connection] = None
-_in_tx = False
+_POOL_SIZE = 8
+_pool: queue.LifoQueue = queue.LifoQueue(maxsize=_POOL_SIZE)
+_created = 0
+_created_lock = threading.Lock()
+
+# connection สำหรับ _tx / with _lock+_db() ฝั่ง accounts (เขียนเงินต้องคนละธุรกรรมชัด)
+_write_lock = threading.Lock()
+_write_conn: Optional[psycopg.Connection] = None
 
 
 class Row(dict):
@@ -46,10 +54,7 @@ class Result:
         return self._rows[0] if self._rows else None
 
 
-# โฮสต์ db.<ref>.supabase.co เป็น IPv6 ล้วน คอนเทนเนอร์ Docker ต่อไม่ถึง
-# พูลเลอร์โหมดเซสชันของโปรเจกต์นี้อยู่ eu-west-1 และมี IPv4
 _POOLER_HOST = "aws-0-eu-west-1.pooler.supabase.com"
-# โหมด transaction (6543) แชร์ backend ได้หลาย client — session (5432) จำกัด pool_size=15
 _POOLER_PORT = 6543
 
 
@@ -69,7 +74,6 @@ def _dsn() -> str:
         host = _POOLER_HOST
         port = _POOLER_PORT
     elif host == _POOLER_HOST or host.endswith(".pooler.supabase.com"):
-        # .env ชี้อ session :5432 อยู่ → ย้ายไป transaction เพื่อไม่ชน EMAXCONNSESSION
         port = _POOLER_PORT
     user = quote(user, safe=".")
     netloc = f"{user}:{password}@{host}:{port or _POOLER_PORT}"
@@ -85,7 +89,6 @@ def _dsn() -> str:
 
 
 def _rewrite(sql: str) -> str:
-    """INSERT OR IGNORE / OR REPLACE ของ SQLite → ON CONFLICT ของ Postgres"""
     ignore = re.sub(r"\bINSERT\s+OR\s+IGNORE\b", "INSERT", sql, count=1, flags=re.IGNORECASE)
     if ignore != sql:
         return ignore.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
@@ -112,33 +115,129 @@ def _sql(sql: str) -> str:
     return _rewrite(sql).replace("?", "%s")
 
 
+def _open() -> psycopg.Connection:
+    raw = psycopg.connect(
+        _dsn(), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
+    )
+    raw.execute("SET search_path TO studio")
+    raw.commit()
+    return raw
+
+
+def _clean(raw: psycopg.Connection) -> None:
+    """เคลียร์ transaction ที่พัง — ไม่งั้นคำขอถัดไปได้ InFailedSqlTransaction"""
+    try:
+        if raw.closed:
+            return
+        if raw.info.transaction_status != TransactionStatus.IDLE:
+            raw.rollback()
+    except Exception:
+        try:
+            raw.close()
+        except Exception:
+            pass
+
+
+def checkout() -> psycopg.Connection:
+    global _created
+    try:
+        raw = _pool.get_nowait()
+    except queue.Empty:
+        create = False
+        with _created_lock:
+            if _created < _POOL_SIZE:
+                _created += 1
+                create = True
+        if create:
+            try:
+                return _open()  # อย่าเปิดตอนถือ lock — ไม่งั้นเธรดอื่นรอ SSL ไป EU เป็นคิว
+            except Exception:
+                with _created_lock:
+                    _created = max(0, _created - 1)
+                raise
+        raw = _pool.get(timeout=20)
+    if raw.closed:
+        try:
+            return _open()
+        except Exception:
+            with _created_lock:
+                _created = max(0, _created - 1)
+            raise
+    _clean(raw)
+    if raw.closed:
+        try:
+            return _open()
+        except Exception:
+            with _created_lock:
+                _created = max(0, _created - 1)
+            raise
+    return raw
+
+
+def checkin(raw: psycopg.Connection) -> None:
+    global _created
+    if raw is None:
+        return
+    if raw.closed:
+        with _created_lock:
+            _created = max(0, _created - 1)
+        return
+    try:
+        _clean(raw)
+        if raw.closed:
+            with _created_lock:
+                _created = max(0, _created - 1)
+            return
+        _pool.put_nowait(raw)
+    except queue.Full:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        with _created_lock:
+            _created = max(0, _created - 1)
+
+
+@contextmanager
+def borrow() -> Iterator["Conn"]:
+    raw = checkout()
+    conn = Conn(raw)
+    try:
+        yield conn
+    except Exception:
+        _clean(raw)
+        raise
+    finally:
+        checkin(raw)
+
+
 class Conn:
     def __init__(self, raw: psycopg.Connection):
         self.raw = raw
+        self._in_tx = False
 
     @property
     def closed(self) -> bool:
         return self.raw.closed
 
     def execute(self, sql: str, params=()) -> Result:
-        global _in_tx
         head = sql.strip().rstrip(";").upper()
         if head.startswith("PRAGMA"):
             return self._pragma(head)
         if head.startswith("BEGIN"):
-            if not _in_tx:
+            if not self._in_tx:
                 self.raw.execute("BEGIN")
-                _in_tx = True
+                self._in_tx = True
             return Result([])
         if head == "COMMIT":
             self.raw.commit()
-            _in_tx = False
+            self._in_tx = False
             return Result([])
         if head == "ROLLBACK":
             self.raw.rollback()
-            _in_tx = False
+            self._in_tx = False
             return Result([])
-        in_tx = _in_tx
+        in_tx = self._in_tx
         try:
             cur = self.raw.execute(_sql(sql), params)
             rows = [Row(r) for r in cur.fetchall()] if cur.description else []
@@ -146,8 +245,11 @@ class Conn:
                 self.raw.commit()
             return Result(rows, cur.rowcount)
         except Exception:
-            if not in_tx:
+            try:
                 self.raw.rollback()
+            except Exception:
+                pass
+            self._in_tx = False
             raise
 
     def executemany(self, sql: str, seq) -> Result:
@@ -156,7 +258,6 @@ class Conn:
         return Result([])
 
     def executescript(self, _script: str) -> "Conn":
-        """ตารางสร้างจาก migration แล้ว ไม่รัน DDL ของ SQLite ซ้ำ"""
         return self
 
     def close(self) -> None:
@@ -171,7 +272,7 @@ class Conn:
                 "SELECT column_name AS name FROM information_schema.columns "
                 "WHERE table_schema = 'studio' AND table_name = %s ORDER BY ordinal_position", (name,))
             rows = [Row(r) for r in cur.fetchall()]
-            if not _in_tx:
+            if not self._in_tx:
                 self.raw.commit()
             return Result(rows)
         if head.startswith("PRAGMA USER_VERSION"):
@@ -179,23 +280,17 @@ class Conn:
         return Result([])
 
 
-def _open() -> psycopg.Connection:
-    # prepare_threshold=None: โหมด transaction pooler ไม่เก็บ prepared statement ข้าม transaction
-    raw = psycopg.connect(
-        _dsn(), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
-    )
-    raw.execute("SET search_path TO studio")
-    raw.commit()
-    return raw
-
-
 def connect() -> Conn:
-    """connection เดียวต่อโปรเซส — accounts._lock / jobstore lock กันใช้พร้อมกัน"""
-    global _shared
-    with _conn_lock:
-        if _shared is None or _shared.closed:
-            _shared = _open()
-        return Conn(_shared)
+    """connection สำหรับเขียนภายใต้ accounts._lock — คนละเส้นกับ pool อ่าน"""
+    global _write_conn
+    with _write_lock:
+        if _write_conn is None or _write_conn.closed:
+            _write_conn = _open()
+        else:
+            _clean(_write_conn)
+            if _write_conn.closed:
+                _write_conn = _open()
+        return Conn(_write_conn)
 
 
 def is_pg(db) -> bool:

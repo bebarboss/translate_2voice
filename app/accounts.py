@@ -191,6 +191,11 @@ class _tx:
 
 
 def _read(sql: str, *args) -> list[sqlite3.Row]:
+    # อ่านขนานได้ผ่าน pool — ไม่รอ accounts._lock (กันหน้าเว็บยิงพร้อมกันแล้วคิว 10–20 วิ)
+    if settings.db_backend == "supabase":
+        from . import pgstore
+        with pgstore.borrow() as db:
+            return db.execute(sql, args).fetchall()
     with _lock:
         return _db().execute(sql, args).fetchall()
 
