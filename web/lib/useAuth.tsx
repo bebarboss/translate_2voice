@@ -25,13 +25,23 @@ let cache: Snapshot | null = null;
 let inflight: Promise<Snapshot> | null = null;
 const CACHE_MS = 3_000;
 
+const AUTH_TIMEOUT_MS = 12_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("auth timeout")), ms);
+    p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  });
+}
+
 async function fetchAuth(): Promise<Snapshot> {
   try {
-    const config = await api.authConfig();
-    const user = config.auth ? await api.me().catch(() => null) : null;
+    const config = await withTimeout(api.authConfig(), AUTH_TIMEOUT_MS);
+    const user = config.auth ? await withTimeout(api.me().catch(() => null), AUTH_TIMEOUT_MS) : null;
     return { config, user, at: Date.now() };
   } catch {
-    return { config: EMPTY, user: null, at: Date.now() };
+    // tunnel/API ค้าง → อย่าค้าง "กำลังโหลด" ทั้งหน้า; สมมติว่าต้องล็อกอินเพื่อพาไป /welcome|/login
+    return { config: { ...EMPTY, auth: true }, user: null, at: Date.now() };
   }
 }
 
