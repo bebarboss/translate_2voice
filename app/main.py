@@ -105,12 +105,15 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
     request.state.user = None
     if not accounts.auth_enabled():
         return
+    path = request.url.path
+    # /auth/config ไม่ต้องมี session — ตอบจาก settings อย่างเดียว ไม่แย่ง Postgres ตอนโหลดหน้า
+    if path == "/auth/config" or path == "/health" or path.startswith(("/docs", "/redoc", "/openapi.json", "/billing/webhooks/")):
+        return
     user = accounts.user_by_token(x_user_token)
     if user is None and x_upload_token:
         uid = _upload_ticket(x_upload_token)
         user = accounts.user_by_id(uid) if uid else None
     request.state.user = user
-    path = request.url.path
     if path.startswith(OPEN_PATHS):
         return
     if user is None:

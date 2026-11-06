@@ -1,7 +1,10 @@
 """เชื่อม Postgres ของ Supabase สำหรับบัญชี (schema studio)
 
 คำสั่ง SQL ใน accounts.py / actors.py / consent.py เขียนแบบ SQLite (`?`, INSERT OR REPLACE)
-ตัวนี้แปลให้พอใช้กับ Postgres และเปิดคนละการเชื่อมต่อต่อเธรด
+ตัวนี้แปลให้พอใช้กับ Postgres
+
+ใช้ connection ร่วมในโปรเซส (accounts/_lock กันอยู่แล้ว) + พอร์ต transaction pooler (6543)
+เพื่อไม่ให้เธรดละ connection ชนเพดาน session pool (15)
 """
 import re
 import threading
@@ -13,8 +16,10 @@ from psycopg.rows import dict_row
 
 from .config import settings
 
-_local = threading.local()
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_conn_lock = threading.Lock()
+_shared: Optional[psycopg.Connection] = None
+_in_tx = False
 
 
 class Row(dict):
@@ -44,6 +49,8 @@ class Result:
 # โฮสต์ db.<ref>.supabase.co เป็น IPv6 ล้วน คอนเทนเนอร์ Docker ต่อไม่ถึง
 # พูลเลอร์โหมดเซสชันของโปรเจกต์นี้อยู่ eu-west-1 และมี IPv4
 _POOLER_HOST = "aws-0-eu-west-1.pooler.supabase.com"
+# โหมด transaction (6543) แชร์ backend ได้หลาย client — session (5432) จำกัด pool_size=15
+_POOLER_PORT = 6543
 
 
 def _dsn() -> str:
@@ -52,17 +59,28 @@ def _dsn() -> str:
         raise RuntimeError("ตั้ง SUPABASE_DB_URL ก่อนใช้บัญชีบน Supabase")
     parts = urlparse(url)
     host = parts.hostname or ""
+    port = parts.port
+    user = parts.username or "postgres"
+    password = quote(unquote(parts.password or ""), safe="")
     if host.startswith("db.") and host.endswith(".supabase.co"):
         ref = host.split(".", 2)[1]
-        user = parts.username or "postgres"
         if "." not in user:
             user = f"{user}.{ref}"
-        # env ในคอนเทนเนอร์เก็บ %20 แบบตัวอักษร urlparse ไม่ได้ถอดรหัสให้ ต้องถอดครั้งเดียวก่อนใส่กลับ
-        password = quote(unquote(parts.password or ""), safe="")
-        user = quote(user, safe=".")
-        url = urlunparse(parts._replace(netloc=f"{user}:{password}@{_POOLER_HOST}:5432"))
+        host = _POOLER_HOST
+        port = _POOLER_PORT
+    elif host == _POOLER_HOST or host.endswith(".pooler.supabase.com"):
+        # .env ชี้อ session :5432 อยู่ → ย้ายไป transaction เพื่อไม่ชน EMAXCONNSESSION
+        port = _POOLER_PORT
+    user = quote(user, safe=".")
+    netloc = f"{user}:{password}@{host}:{port or _POOLER_PORT}"
+    url = urlunparse(parts._replace(netloc=netloc))
+    q = []
     if "sslmode=" not in url:
-        url += ("&" if "?" in url else "?") + "sslmode=require"
+        q.append("sslmode=require")
+    if "options=" not in url:
+        q.append("options=-csearch_path%3Dstudio")
+    if q:
+        url += ("&" if "?" in url else "?") + "&".join(q)
     return url
 
 
@@ -98,24 +116,29 @@ class Conn:
     def __init__(self, raw: psycopg.Connection):
         self.raw = raw
 
+    @property
+    def closed(self) -> bool:
+        return self.raw.closed
+
     def execute(self, sql: str, params=()) -> Result:
+        global _in_tx
         head = sql.strip().rstrip(";").upper()
         if head.startswith("PRAGMA"):
             return self._pragma(head)
         if head.startswith("BEGIN"):
-            if not getattr(_local, "in_tx", False):
+            if not _in_tx:
                 self.raw.execute("BEGIN")
-                _local.in_tx = True
+                _in_tx = True
             return Result([])
         if head == "COMMIT":
             self.raw.commit()
-            _local.in_tx = False
+            _in_tx = False
             return Result([])
         if head == "ROLLBACK":
             self.raw.rollback()
-            _local.in_tx = False
+            _in_tx = False
             return Result([])
-        in_tx = getattr(_local, "in_tx", False)
+        in_tx = _in_tx
         try:
             cur = self.raw.execute(_sql(sql), params)
             rows = [Row(r) for r in cur.fetchall()] if cur.description else []
@@ -148,7 +171,7 @@ class Conn:
                 "SELECT column_name AS name FROM information_schema.columns "
                 "WHERE table_schema = 'studio' AND table_name = %s ORDER BY ordinal_position", (name,))
             rows = [Row(r) for r in cur.fetchall()]
-            if not getattr(_local, "in_tx", False):
+            if not _in_tx:
                 self.raw.commit()
             return Result(rows)
         if head.startswith("PRAGMA USER_VERSION"):
@@ -156,15 +179,23 @@ class Conn:
         return Result([])
 
 
+def _open() -> psycopg.Connection:
+    # prepare_threshold=None: โหมด transaction pooler ไม่เก็บ prepared statement ข้าม transaction
+    raw = psycopg.connect(
+        _dsn(), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
+    )
+    raw.execute("SET search_path TO studio")
+    raw.commit()
+    return raw
+
+
 def connect() -> Conn:
-    conn = getattr(_local, "conn", None)
-    if conn is None or conn.closed:
-        raw = psycopg.connect(_dsn(), autocommit=False, row_factory=dict_row, connect_timeout=15)
-        raw.execute("SET search_path TO studio")
-        raw.commit()
-        conn = raw
-        _local.conn = conn
-    return Conn(conn)
+    """connection เดียวต่อโปรเซส — accounts._lock / jobstore lock กันใช้พร้อมกัน"""
+    global _shared
+    with _conn_lock:
+        if _shared is None or _shared.closed:
+            _shared = _open()
+        return Conn(_shared)
 
 
 def is_pg(db) -> bool:
