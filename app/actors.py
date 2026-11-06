@@ -495,6 +495,7 @@ def report(month: Optional[str], uid: Optional[str] = None) -> list[dict]:
         where.append("u.month = ?"), args.append(month)
     if uid:
         where.append("u.actor_id = ?"), args.append(uid)
+    # Postgres บังคับให้คอลัมน์ที่ไม่ aggregate อยู่ใน GROUP BY (SQLite ยอมแบบเดิม)
     sql = ("SELECT u.actor_id, u.month, a.stage_name, us.email, "
            "SUM(CASE WHEN u.user_id != u.actor_id THEN u.seconds ELSE 0 END) AS seconds, "
            "SUM(CASE WHEN u.user_id = u.actor_id THEN u.seconds ELSE 0 END) AS self_seconds, "
@@ -503,7 +504,8 @@ def report(month: Optional[str], uid: Optional[str] = None) -> list[dict]:
            ", (SELECT COUNT(*) FROM actor_payment p WHERE p.user_id = u.actor_id) AS payee "
            "FROM voice_usage u LEFT JOIN actors a ON a.user_id = u.actor_id LEFT JOIN users us ON us.id = u.actor_id "
            + (f"WHERE {' AND '.join(where)} " if where else "") +
-           "GROUP BY u.actor_id, u.month ORDER BY u.month DESC, seconds DESC")
+           "GROUP BY u.actor_id, u.month, a.stage_name, us.email "
+           "ORDER BY u.month DESC, seconds DESC")
     paid = {(r["actor_id"], r["month"]): r["paid"] for r in
             _read("SELECT actor_id, month, SUM(amount) AS paid FROM actor_payouts GROUP BY actor_id, month")}
     out = []
