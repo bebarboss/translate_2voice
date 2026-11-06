@@ -62,7 +62,12 @@ export default function Sidebar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
   useEffect(() => {
-    if (canLoad) api.listJobs().then((j) => setRecent(j.slice(0, RECENT))).catch(() => setRecent([]));
+    if (!canLoad) return;
+    // รอหลัง auth เสร็จเล็กน้อย ไม่แย่งคิวกับ /me ตอนเปิดหน้า
+    const t = window.setTimeout(() => {
+      api.listJobs().then((j) => setRecent(j.slice(0, RECENT))).catch(() => setRecent([]));
+    }, 100);
+    return () => clearTimeout(t);
   }, [canLoad, path]);
   if (bare) return null;
 

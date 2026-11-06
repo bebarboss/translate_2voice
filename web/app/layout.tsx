@@ -9,6 +9,7 @@ import LangInit from "@/components/LangInit";
 import ProfileGate from "@/components/ProfileGate";
 import Sidebar from "@/components/Sidebar";
 import { isLang, isTheme, LANG_COOKIE, THEME_COOKIE } from "@/lib/i18n";
+import { AuthProvider } from "@/lib/useAuth";
 
 export const metadata: Metadata = {
   title: "Dubbing Studio",
@@ -23,13 +24,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang={isLang(lang) ? lang : "th"} data-theme={isTheme(theme) && theme !== "system" ? theme : undefined}>
       <body>
         <LangInit lang={isLang(lang) ? lang : "th"} />
-        <div className="shell">
-          <ProfileGate />
-          <Sidebar />
-          <div className="shell-main">
-            {children}
+        <AuthProvider>
+          <div className="shell">
+            <ProfileGate />
+            <Sidebar />
+            <div className="shell-main">
+              {children}
+            </div>
           </div>
-        </div>
+        </AuthProvider>
       </body>
     </html>
   );
