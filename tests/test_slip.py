@@ -50,8 +50,9 @@ def test_verdict_requires_exact_amount_and_account():
 def book(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "_conn", None)
     monkeypatch.setattr(accounts, "settings", replace(
-        settings, data_dir=tmp_path, payment_provider="slip", payee_name="สตูดิโอ", payee_bank="กสิกรไทย",
-        payee_account="123-4-56789-0", auth_enabled=True, billing_enabled=True, slip_max_mb=8, slip_max_age_hours=72))
+        settings, data_dir=tmp_path, db_backend="files", payment_provider="slip", payee_name="สตูดิโอ",
+        payee_bank="กสิกรไทย", payee_account="123-4-56789-0", auth_enabled=True, billing_enabled=True,
+        slip_max_mb=8, slip_max_age_hours=72))
     accounts._db().execute(
         "INSERT INTO users (id, email, name, pw_hash, created_at) VALUES ('u1', 'a@b.c', 'Ann', 'x', 0)")
     yield accounts

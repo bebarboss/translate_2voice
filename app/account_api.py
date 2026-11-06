@@ -105,7 +105,8 @@ def auth_config():
     from .config import settings
     return {"auth": accounts.auth_enabled(), "billing": accounts.billing_enabled(),
             "payments": bool(settings.payment_provider), "payment_provider": settings.payment_provider,
-            "google_client_id": settings.google_client_id}
+            "google_client_id": settings.google_client_id,
+            "stripe_publishable_key": settings.stripe_publishable_key if settings.payment_provider == "stripe" else ""}
 
 
 @router.post("/auth/google", dependencies=[Depends(_need_auth)])

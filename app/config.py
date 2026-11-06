@@ -50,18 +50,20 @@ class Settings:
     mock_pipeline: bool = _bool("MOCK_PIPELINE")  # ทดสอบ API โดยไม่โหลดโมเดลจริง
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")  # การ์ดจอเล็ก: ปล่อยโมเดลทิ้งหลังใช้แต่ละขั้น ไม่โหลดค้างพร้อมกัน
-    # ที่เก็บข้อมูล: files = ไฟล์ JSON ใน data/ (เดิม), supabase = ฐานข้อมูล Supabase (supabase_db.py)
-    # ตอนนี้ย้ายแล้ว: ค่าตั้งระบบ และคลังเสียง (ยังเขียนไฟล์ JSON ไว้ด้วยเป็นสำรอง)
+    # ที่เก็บข้อมูล: files = ไฟล์ JSON ใน data/ (เดิม), supabase = ฐานข้อมูล Supabase
+    # ย้ายแล้ว: ค่าตั้งระบบ คลังเสียง ความจำคำแปล และบัญชี (schema studio ผ่าน SUPABASE_DB_URL)
+    # งานและโปรเจกต์ยังเป็นไฟล์ JSON ค่าตั้งกับคลังเสียงยังเขียนไฟล์สำรองไว้ด้วย
     db_backend: str = _env("DB_BACKEND", "files").lower()
     supabase_url: str = _env("SUPABASE_URL")
     supabase_key: str = _env("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_db_url: str = _env("SUPABASE_DB_URL")  # Postgres โดยตรง สำหรับบัญชี/งาน/โปรเจกต์ (schema studio)
 
     # บัญชีผู้ใช้และการเก็บเงิน (accounts.py) ยังไม่เปิดใช้งาน
     auth_enabled: bool = _bool("AUTH_ENABLED")  # ต้องล็อกอิน แต่ละคนเห็นเฉพาะงานของตัวเอง
     billing_enabled: bool = _bool("BILLING_ENABLED")  # กระเป๋าเงิน แพ็กเกจ และตัดนาทีต่องาน (ต้องเปิด AUTH_ENABLED ด้วย)
     google_client_id: str = _env("GOOGLE_CLIENT_ID")  # OAuth Client ID (Web) สำหรับปุ่มเข้าสู่ระบบด้วย Google
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
-    payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง = ยังไม่รับชำระ, mock = เติมทันที (ทดสอบ), slip = โอนแล้วแนบสลิป
+    payment_provider: str = _env("PAYMENT_PROVIDER").lower()  # ว่าง/mock/slip/stripe
     # บัญชีรับโอนเมื่อ PAYMENT_PROVIDER=slip (เลขบัญชีอย่างน้อย 8 หลัก ใช้ตรวจว่าสลิปโอนมาบัญชีนี้)
     payee_name: str = _env("PAYEE_NAME")
     payee_bank: str = _env("PAYEE_BANK")
@@ -69,6 +71,10 @@ class Settings:
     typhoon_ocr_model: str = _env("TYPHOON_OCR_MODEL", "typhoon-ocr")
     slip_max_mb: int = _int("SLIP_MAX_MB", 8)
     slip_max_age_hours: int = _int("SLIP_MAX_AGE_HOURS", 72)  # สลิปที่อ่านวันเวลาได้และเก่ากว่านี้ไม่เติมอัตโนมัติ
+    # Stripe Checkout (https://docs.stripe.com/keys): secret + webhook signing secret อยู่ฝั่งเซิร์ฟเวอร์เท่านั้น
+    stripe_secret_key: str = _env("STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str = _env("STRIPE_WEBHOOK_SECRET")
+    stripe_publishable_key: str = _env("STRIPE_PUBLISHABLE_KEY")  # ไม่จำเป็นสำหรับ Checkout แบบ redirect
     # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
     actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
     # ภาษีหัก ณ ที่จ่ายค่าตอบแทนนักพากย์: กี่เปอร์เซ็นต์ (0 = ไม่หัก) หักเมื่อจ่ายครั้งละตั้งแต่กี่สตางค์ และประเภทเงินได้ในรายงาน

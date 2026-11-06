@@ -93,7 +93,8 @@ def require_key_or_upload_token(x_api_key: Optional[str] = Header(default=None),
     require_key(x_api_key)
 
 
-OPEN_PATHS = ("/health", "/auth/", "/legal", "/billing/plans", "/docs", "/openapi.json", "/redoc")
+OPEN_PATHS = ("/health", "/auth/", "/legal", "/billing/plans", "/billing/webhooks/",
+              "/docs", "/openapi.json", "/redoc")
 ADMIN_WRITES = ("/settings", "/voices")  # เปิดระบบบัญชีแล้ว คลังเสียงและค่าตั้งระบบแก้ได้เฉพาะผู้ดูแล
 
 
@@ -225,6 +226,19 @@ def video_for_download(job: Job, with_subs: bool) -> Path:
 
 
 app.include_router(account_router, dependencies=[Depends(require_key)])
+
+
+@app.post("/billing/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    """Stripe ยิงตรงมาที่ API (ไม่ใช้ X-API-Key) ตรวจลายเซ็นด้วย STRIPE_WEBHOOK_SECRET"""
+    from .stripe_pay import StripeError, handle_webhook
+    payload = await request.body()
+    try:
+        return handle_webhook(payload, request.headers.get("stripe-signature"))
+    except StripeError as e:
+        raise HTTPException(e.status, str(e))
+    except accounts.AccountError as e:
+        raise HTTPException(e.status, str(e))
 
 
 # ---------------------------------------------------------------- ระบบ

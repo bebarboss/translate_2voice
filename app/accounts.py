@@ -1,4 +1,6 @@
-"""บัญชีผู้ใช้ เครดิต และแพ็กเกจ เก็บใน data/accounts.db (SQLite)
+"""บัญชีผู้ใช้ เครดิต และแพ็กเกจ
+DB_BACKEND=supabase เก็บใน schema studio บน Postgres (pgstore.py, ต้องมี SUPABASE_DB_URL)
+ไม่งั้นเก็บใน data/accounts.db (SQLite)
 
 AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำขอต้องล็อกอิน เห็นเฉพาะงานของตัวเอง) สมัครและเข้าสู่ระบบด้วยบัญชี Google
 (GOOGLE_CLIENT_ID) เท่านั้น ไม่มีรหัสผ่าน
@@ -6,6 +8,7 @@ BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (
 ผู้ดูแลระบบ (ADMIN_EMAILS) พากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต
 PAYMENT_PROVIDER=slip ให้ผู้ใช้โอนตามยอดแล้วแนบสลิป Typhoon OCR อ่านยอด (slip_ocr.py) ตรงจึงเติมให้
 ไม่ตรงหรืออ่านไม่ได้เข้าคิวผู้ดูแล  PAYMENT_PROVIDER=mock เติมทันทีสำหรับทดสอบ
+PAYMENT_PROVIDER=stripe เปิด Stripe Checkout (stripe_pay.py) แล้ว webhook เรียก mark_paid
 
 1 เครดิต = คลิป 1 นาที คิดตามความยาวจริงละเอียดถึงทศนิยม 2 ตำแหน่ง (ปัดขึ้น) มีสองแบบ:
 - เครดิตแพ็กเกจ (subscriptions.minutes_left) ได้จากแพ็กเกจรายเดือน หมดอายุพร้อมแพ็กเกจ ใช้ก่อน
@@ -103,7 +106,10 @@ CREATE INDEX IF NOT EXISTS cards_user ON cards(user_id);
 """
 
 
-def _db() -> sqlite3.Connection:
+def _db():
+    if settings.db_backend == "supabase":
+        from . import pgstore
+        return pgstore.connect()
     global _conn
     if _conn is None:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -119,6 +125,9 @@ def _db() -> sqlite3.Connection:
 
 def _migrate(db: sqlite3.Connection) -> None:
     """ฐานข้อมูลรุ่นก่อนเก็บยอดเป็นเงินบาท (users.balance): แปลงเป็นเครดิตเติมตามราคาเครดิต"""
+    from .pgstore import is_pg
+    if is_pg(db):
+        return  # schema studio สร้างครบจาก migration แล้ว และข้อมูลที่ย้ายมาคูณหน่วยย่อยไว้แล้ว
     cols = lambda t: {r["name"] for r in db.execute(f"PRAGMA table_info({t})")}
     if "credits" not in cols("users"):
         db.execute("ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 0")
@@ -156,6 +165,8 @@ def _migrate(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE topups ADD COLUMN {col} TEXT")
     if "ocr_amount" not in cols("topups"):
         db.execute("ALTER TABLE topups ADD COLUMN ocr_amount INTEGER")
+    if "provider_ref" not in cols("topups"):  # Stripe Checkout Session id หรืออ้างอิงผู้ให้บริการ
+        db.execute("ALTER TABLE topups ADD COLUMN provider_ref TEXT")
     db.execute("CREATE TABLE IF NOT EXISTS slip_uses ("
                "hash TEXT PRIMARY KEY, topup_id TEXT NOT NULL, created_at REAL NOT NULL)")
 
@@ -543,11 +554,14 @@ def _order_out(row, email: str = "", name: str = "", admin: bool = False) -> dic
             "payee": raw.get("payee"), "payee_account": raw.get("payee_account"),
             "transferred_at": raw.get("transferred_at"),
         }
+    keys = row.keys() if hasattr(row, "keys") else []
     out = {
         "id": row["id"], "status": row["status"], "amount": row["amount"], "credits": row["credits"] or 0,
         "plan_id": row["plan_id"], "provider": row["provider"], "created_at": row["created_at"],
         "paid_at": row["paid_at"], "note": row["note"] or "", "has_slip": bool(row["slip_hash"]),
-        "payee": _payee() if row["status"] != "paid" else None, "ocr": ocr,
+        "payee": _payee() if row["status"] != "paid" and row["provider"] == "slip" else None, "ocr": ocr,
+        "checkout_url": None,
+        "provider_ref": row["provider_ref"] if "provider_ref" in keys and row["provider_ref"] else None,
     }
     if admin:
         out["email"] = email
@@ -566,22 +580,78 @@ def _fetch_order(topup_id: str, admin: bool = False) -> dict:
     return _order_out(row, row["email"], row["user_name"], admin=admin)
 
 
+def _payment_label(credits: int, plan_id: Optional[str]) -> str:
+    if plan_id:
+        p = plan(plan_id)
+        return f"แพ็กเกจ{p.name}" if p else f"แพ็กเกจ {plan_id}"
+    return f"เครดิตเติม {credits:,} เครดิต"
+
+
 def _start_payment(uid: str, amount: int, credits: int = 0, plan_id: Optional[str] = None) -> dict:
-    """mock = จ่ายสำเร็จทันที (ทดสอบ)  slip = สร้างรายการรอโอน แล้วให้ผู้ใช้แนบสลิป"""
+    """mock = จ่ายสำเร็จทันที  slip = รอโอนแนบสลิป  stripe = เปิด Checkout แล้ว webhook เติมเครดิต"""
     provider = settings.payment_provider
-    if provider not in ("mock", "slip"):
+    if provider not in ("mock", "slip", "stripe"):
         raise AccountError(503, "ยังไม่ได้เชื่อมช่องทางชำระเงิน ติดต่อผู้ดูแลเพื่อเติมเครดิต")
     if provider == "slip" and len(re.sub(r"\D", "", settings.payee_account)) < 8:
         raise AccountError(503, "ยังไม่ได้ตั้งบัญชีรับโอน (PAYEE_ACCOUNT)")
     tid = secrets.token_hex(8)
+    email = ""
     with _tx() as db:
-        if db.execute("SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL", (uid,)).fetchone() is None:
+        user = db.execute("SELECT email FROM users WHERE id = ? AND deleted_at IS NULL", (uid,)).fetchone()
+        if user is None:
             raise AccountError(404, "ไม่พบผู้ใช้นี้")
-        db.execute("INSERT INTO topups (id, user_id, amount, provider, status, created_at, credits, plan_id) "
-                   "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)", (tid, uid, amount, provider, time.time(), credits, plan_id))
+        email = user["email"] or ""
+        db.execute(
+            "INSERT INTO topups (id, user_id, amount, provider, status, created_at, credits, plan_id) "
+            "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (tid, uid, amount, provider, time.time(), credits, plan_id))
     if provider == "mock":
         mark_paid(tid)
+        return _fetch_order(tid)
+    if provider == "stripe":
+        from .stripe_pay import StripeError, create_checkout
+        try:
+            sid, url = create_checkout(
+                topup_id=tid, user_id=uid, amount=amount, label=_payment_label(credits, plan_id),
+                email=email)
+        except StripeError as e:
+            with _tx() as db:
+                db.execute("UPDATE topups SET status = 'rejected', note = ? WHERE id = ?",
+                           (str(e)[:300], tid))
+            raise AccountError(e.status, str(e))
+        with _tx() as db:
+            db.execute("UPDATE topups SET provider_ref = ? WHERE id = ?", (sid, tid))
+        order = _fetch_order(tid)
+        order["checkout_url"] = url
+        return order
     return _fetch_order(tid)
+
+
+def fulfill_stripe(topup_id: str, *, session_id: str = "", amount_total=None, currency: str = "") -> None:
+    """webhook ยืนยันแล้ว: ตรวจยอดแล้ว mark_paid (เรียกซ้ำได้)"""
+    with _lock:
+        row = _db().execute("SELECT * FROM topups WHERE id = ?", (topup_id,)).fetchone()
+    if row is None:
+        log = __import__("logging").getLogger("dubbing.stripe")
+        log.warning("Stripe fulfill ไม่พบ topup %s", topup_id)
+        return
+    if row["status"] == "paid":
+        return
+    if row["provider"] != "stripe":
+        raise AccountError(400, "รายการนี้ไม่ใช่ Stripe")
+    if currency and currency != "thb":
+        raise AccountError(400, "สกุลเงินไม่ตรง")
+    if amount_total is not None and int(amount_total) != int(row["amount"]):
+        raise AccountError(400, "ยอดเงินไม่ตรงกับรายการ")
+    pref = row["provider_ref"] if "provider_ref" in row.keys() else None
+    if session_id and pref and pref != session_id:
+        raise AccountError(400, "รหัสเซสชัน Stripe ไม่ตรง")
+    with _tx() as db:
+        note = "ชำระผ่าน Stripe แล้ว เริ่มแพ็กเกจ" if row["plan_id"] else "ชำระผ่าน Stripe แล้ว"
+        db.execute("UPDATE topups SET note = ? WHERE id = ? AND status != 'paid'", (note, topup_id))
+        if session_id and not pref:
+            db.execute("UPDATE topups SET provider_ref = ? WHERE id = ?", (session_id, topup_id))
+    mark_paid(topup_id)
 
 
 def user_payments(uid: str) -> list[dict]:

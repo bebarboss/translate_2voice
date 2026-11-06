@@ -2,7 +2,7 @@
 คลิปที่ส่งเข้าโปรเจกต์ จับคู่ผู้พูดกับตัวละครด้วยลายเสียง แล้วตั้งชื่อและเสียงพากย์ให้เอง (เฉพาะที่มั่นใจ)
 ผู้ใช้กด "บันทึกเข้าโปรเจกต์" จากงานไหน ตัวละครในโปรเจกต์ถึงจะเปลี่ยน (ไม่บันทึกเองอัตโนมัติ กันตอนที่แยกเสียงผิดไปกระทบทั้งเรื่อง)
 
-เก็บเป็นไฟล์ JSON ใน data/projects/<id>.json แบบเดียวกับงาน (jobs.py)
+เมื่อ DB_BACKEND=supabase เก็บบน Postgres (schema studio) ไม่เช่นนั้นเป็นไฟล์ JSON ใน data/projects/<id>.json
 """
 import json
 import logging
@@ -13,6 +13,7 @@ from typing import Optional
 
 import numpy as np
 
+from .config import settings
 from .jobs import _atomic_write
 from .schemas import Project, ProjectCharacter, now
 
@@ -29,16 +30,32 @@ class ProjectStore:
     def __init__(self, data_dir: Path):
         self.root = data_dir / "projects"
         self.root.mkdir(parents=True, exist_ok=True)
+        self._pg = settings.db_backend == "supabase"
         self._lock = threading.RLock()
         self._items: dict[str, Project] = {}
-        for f in self.root.glob("*.json"):
+        loaded: list[Project] = []
+        from_files = True
+        if self._pg:
+            from . import jobstore_pg
             try:
-                p = Project.model_validate_json(f.read_text(encoding="utf-8"))
-                self._items[p.id] = p
+                loaded = jobstore_pg.load_projects()
+                from_files = False
             except Exception:  # noqa: BLE001
-                log.warning("skip broken project file %s", f)
+                log.exception("โหลดโปรเจกต์จาก Supabase ไม่ได้ ลองจากไฟล์ในเครื่อง")
+        if from_files:
+            for f in self.root.glob("*.json"):
+                try:
+                    loaded.append(Project.model_validate_json(f.read_text(encoding="utf-8")))
+                except Exception:  # noqa: BLE001
+                    log.warning("skip broken project file %s", f)
+        for p in loaded:
+            self._items[p.id] = p
 
     def _write(self, p: Project) -> None:
+        if self._pg:
+            from . import jobstore_pg
+            jobstore_pg.upsert_project(p)
+            return
         _atomic_write(self.root / f"{p.id}.json", p.model_dump_json(indent=2))
 
     def all(self) -> list[Project]:
@@ -66,6 +83,13 @@ class ProjectStore:
     def delete(self, pid: str) -> None:
         with self._lock:
             self._items.pop(pid, None)
+            if self._pg:
+                from . import jobstore_pg
+                try:
+                    jobstore_pg.delete_project(pid)
+                except Exception:  # noqa: BLE001
+                    log.exception("ลบโปรเจกต์ %s จาก Supabase ไม่สำเร็จ", pid)
+                return
             (self.root / f"{pid}.json").unlink(missing_ok=True)
 
     @staticmethod

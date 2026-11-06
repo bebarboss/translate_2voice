@@ -8,6 +8,10 @@ numpy>=1.26
 soundfile>=0.12
 openai>=1.30
 requests>=2.31
+# บัญชี เครดิต นักพากย์ บน Postgres (schema studio) เมื่อ DB_BACKEND=supabase
+psycopg[binary]>=3.2
+# ชำระเงิน Stripe Checkout (PAYMENT_PROVIDER=stripe)
+stripe>=11.0
 # รับลิงก์คลิป (อัปเดตบ่อย: pip install -U yt-dlp)
 # [default] มี yt-dlp-ejs ที่ใช้แก้โจทย์ JavaScript ของ YouTube (คู่กับ deno ใน Dockerfile) ไม่งั้นบางคลิปได้แค่ภาพปก
 yt-dlp[default]>=2025.1.1

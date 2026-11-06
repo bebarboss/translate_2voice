@@ -38,11 +38,13 @@ _ready = False
 
 def _init() -> None:
     global _ready
-    if not _ready:
-        from .accounts import _db, _lock
-        with _lock:
-            _db().executescript(SCHEMA)
-        _ready = True
+    if _ready or sdb.enabled():
+        _ready = True  # โหมด Supabase เขียนผ่าน REST ไม่ใช้ตาราง SQLite
+        return
+    from .accounts import _db, _lock
+    with _lock:
+        _db().executescript(SCHEMA)
+    _ready = True
 
 
 def norm(text: str) -> str:

@@ -101,8 +101,11 @@ export type TimelineFormat = "xml" | "fcpxml" | "stems" | "mix" | "srt";
 
 // ---- บัญชีผู้ใช้ เครดิต แพ็กเกจ (เปิดหรือไม่ ดู AuthConfig) 1 เครดิต = คลิป 1 นาที (ทศนิยมได้ 2 ตำแหน่ง) เงินเป็นสตางค์
 /** google_client_id ว่าง = ยังไม่ได้ตั้งปุ่มเข้าสู่ระบบด้วย Google ที่ API */
-/** payment_provider: ว่าง = ยังไม่รับชำระ, mock = ทดสอบเติมทันที, slip = โอนแล้วแนบสลิป */
-export interface AuthConfig { auth: boolean; billing: boolean; payments: boolean; payment_provider: string; google_client_id: string }
+/** payment_provider: ว่าง = ยังไม่รับชำระ, mock = ทดสอบเติมทันที, slip = โอนแล้วแนบสลิป, stripe = Stripe Checkout */
+export interface AuthConfig {
+  auth: boolean; billing: boolean; payments: boolean; payment_provider: string; google_client_id: string;
+  stripe_publishable_key?: string;
+}
 /** owner = ผู้ดูแลหลักจาก ADMIN_EMAILS (ถอดสิทธิ์ไม่ได้) */
 export type AccountType = "personal" | "creator" | "business";
 /** ข้อมูลเบื้องต้นที่ผู้ใช้กรอกหลังล็อกอินครั้งแรก (account_type ว่าง = ยังไม่กรอก) */
@@ -131,11 +134,12 @@ export interface SlipOcr {
   amount: number | null; ref: string | null; payer: string | null; payee: string | null;
   payee_account: string | null; transferred_at: string | null;
 }
-/** สถานะ slip: pending รอโอน, review รอผู้ดูแล, paid เติมแล้ว, rejected ส่งสลิปใหม่ได้ */
+/** สถานะ: pending รอชำระ/โอน, review รอผู้ดูแล (slip), paid เติมแล้ว, rejected ไม่ผ่าน */
 export interface PaymentOrder {
   id: string; status: string; amount: number; credits: number; plan_id: string | null; provider: string;
   created_at: number; paid_at: number | null; note: string; has_slip: boolean;
   payee: Payee | null; ocr: SlipOcr | null;
+  checkout_url?: string | null; provider_ref?: string | null;
   email?: string; name?: string; ocr_text?: string;
 }
 export interface Card { id: string; brand: string; last4: string; exp_month: number; exp_year: number; created_at: number }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type Fonts, type RuntimeSettings, type SubtitleStyle, type SystemInfo, type TargetLang } from "@/lib/api";
+import { api, type Fonts, type RuntimeSettings, type SubtitleStyle, type TargetLang } from "@/lib/api";
 import { TARGET_LABEL } from "@/lib/format";
 import { SubtitlePreview, fontOptions } from "@/components/SubtitleStylePanel";
 
@@ -13,33 +13,15 @@ const QUALITY = [
   { steps: 64, label: "ละเอียด (64 steps)" },
 ];
 
-const MODEL_LABEL: Record<string, string> = {
-  separation: "แยกเสียง",
-  diarization: "แยกผู้พูด",
-  transcription: "ถอดเสียง",
-  translation: "แปลภาษา",
-  tts_th: "พากย์ไทย",
-  tts_en: "พากย์อังกฤษ",
-};
-
 export default function SettingsPage() {
   const [saved, setSaved] = useState<RuntimeSettings | null>(null);
   const [form, setForm] = useState<RuntimeSettings | null>(null);
-  const [system, setSystem] = useState<SystemInfo | null>(null);
   const [fonts, setFonts] = useState<Fonts | null>(null);
-  const [conn, setConn] = useState<"checking" | "ok" | "fail">("checking");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [previewLang, setPreviewLang] = useState<TargetLang>("th");
 
-  const check = () => {
-    setConn("checking");
-    api.health().then(() => setConn("ok")).catch(() => setConn("fail"));
-    api.system().then(setSystem).catch(() => setSystem(null));
-  };
-
   useEffect(() => {
-    check();
     api.getSettings().then((s) => { setSaved(s); setForm(s); }).catch((e) => setMessage({ kind: "error", text: e.message }));
     api.fonts().then(setFonts).catch(() => setFonts({ thai: [], english: [] }));
   }, []);
@@ -90,45 +72,6 @@ export default function SettingsPage() {
       {redubAll && <div className="alert info">{tx("เปลี่ยนความเร็วหรือคุณภาพเสียงแล้ว งานที่สั่งพากย์ใหม่ครั้งถัดไปจะพากย์ใหม่ทุกประโยค")}</div>}
 
       <div className="grid-2">
-        <section className="card" aria-labelledby="conn">
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <h2 id="conn">{tx("การเชื่อมต่อเซิร์ฟเวอร์")}</h2>
-            <span className={`badge ${conn === "ok" ? "done" : conn === "fail" ? "failed" : "queued"}`}>
-              {conn === "ok" ? tx("เชื่อมต่อแล้ว") : conn === "fail" ? tx("เชื่อมต่อไม่ได้") : tx("กำลังตรวจ...")}
-            </span>
-          </div>
-          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
-            
-            {tx("ที่อยู่ API และคีย์ตั้งไว้ฝั่งเซิร์ฟเวอร์ของหน้าเว็บ ในไฟล์")} <code className="mono">web/.env.local</code>  {tx("ด้วยค่า")}
-            <code className="mono"> BACKEND_URL</code>  {tx("และ")} <code className="mono">API_KEY</code>  {tx("เพื่อไม่ให้คีย์หลุดไปที่เบราว์เซอร์")}
-          </p>
-          {system?.mock && <div className="alert info">{tx("API เปิดอยู่ในโหมดทดสอบ (MOCK_PIPELINE) เสียงและบทเป็นข้อมูลจำลอง")}</div>}
-          {system && (!system.keys.hf_token || !system.keys.typhoon) && !system.mock && (
-            <div className="alert error">
-              
-              {tx("ยังไม่ได้ตั้ง")} {[!system.keys.hf_token && "HF_TOKEN", !system.keys.typhoon && "TYPHOON_API_KEY"].filter(Boolean).join(tx(" และ "))}  {tx("ในไฟล์ .env ของ API")}
-            </div>
-          )}
-          <button type="button" className="btn small" style={{ alignSelf: "flex-start" }} onClick={check}>{tx("ทดสอบการเชื่อมต่อ")}</button>
-        </section>
-
-        <section className="card" aria-labelledby="srv" style={{ gap: 4 }}>
-          <h2 id="srv" style={{ marginBottom: 8 }}>{tx("ข้อมูลเครื่องประมวลผล")}</h2>
-          {!system ? <span className="muted">{tx("ไม่มีข้อมูล")}</span> : (
-            <>
-              <div className="kv"><span>{tx("การ์ดจอ")}</span><span>{system.gpu ?? tx("ไม่พบ (ใช้ CPU)")}</span></div>
-              {Object.entries(system.models).map(([k, v]) => (
-                <div className="kv" key={k}><span>{MODEL_LABEL[k] ?? k}</span><span className="mono" style={{ fontSize: 13, textAlign: "right" }}>{v}</span></div>
-              ))}
-              <div className="kv"><span>{tx("งานในคิว")}</span><span>{system.queue.queued}{(system.queue.running_jobs?.length ?? (system.queue.running ? 1 : 0)) ? tx(" · กำลังทำ {0} งาน", { 0: system.queue.running_jobs?.length ?? 1 }) : ""}</span></div>
-              {system.queue.slots != null && (
-                <div className="kv"><span>{tx("รันพร้อมกัน")}</span><span>{tx("งานหนัก")} {system.queue.slots}  {tx("· งานเบา")} {system.queue.light_slots}{system.queue.user_max_jobs ? tx(" · ต่อผู้ใช้ไม่เกิน {0}", { 0: system.queue.user_max_jobs }) : ""}</span></div>
-              )}
-              <div className="kv"><span>{tx("จำกัดขนาด")}</span><span>{tx("ไฟล์")} {system.limits.max_upload_mb}  {tx("MB · ลิงก์")} {system.limits.max_url_minutes}  {tx("นาที")}</span></div>
-            </>
-          )}
-        </section>
-
         {form && (
           <>
             <section className="card" aria-labelledby="def">

@@ -15,19 +15,42 @@ export default function PromotionsPage() {
   const [pack, setPack] = useState(30);
   const [order, setOrder] = useState<PaymentOrder | null>(null);
   const [open, setOpen] = useState<PaymentOrder[]>([]);
+  const [flash, setFlash] = useState("");
   const slip = config?.payment_provider === "slip";
+  const stripe = config?.payment_provider === "stripe";
   const refresh = () => {
     reload();
     if (slip) api.myPayments().then(setOpen).catch(() => setOpen([]));
   };
   const { busy, message, run } = useRunner(refresh);
   useEffect(() => { if (slip) api.myPayments().then(setOpen).catch(() => setOpen([])); }, [slip]);
-  const begin = (key: string, fn: () => Promise<PaymentOrder>) =>
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("paid")) {
+      setFlash(tx("ชำระเงินสำเร็จ เครดิตจะเข้าในไม่ช้า"));
+      reload();
+      window.history.replaceState({}, "", "/promotions");
+    } else if (q.get("cancel")) {
+      setFlash(tx("ยกเลิกการชำระเงินแล้ว"));
+      window.history.replaceState({}, "", "/promotions");
+    }
+  }, [reload]);
+  const beginSlip = (key: string, fn: () => Promise<PaymentOrder>) =>
     run(key, async () => {
       const created = await fn();
       if (created.status !== "paid") setOrder(created);
       return created;
     }, (created) => created.status === "paid" ? tx("ชำระแล้ว") : tx("สร้างรายการแล้ว โอนตามยอดด้านล่าง แล้วแนบรูปสลิป"));
+  const beginStripe = (key: string, fn: () => Promise<PaymentOrder>) =>
+    run(key, async () => {
+      const created = await fn();
+      if (created.checkout_url) {
+        window.location.href = created.checkout_url;
+        return created;
+      }
+      throw new Error(tx("ไม่ได้รับลิงก์ชำระเงินจาก Stripe"));
+    }, tx("กำลังไปหน้าชำระเงิน..."));
   const sendSlip = (file: File) => {
     if (!order) return;
     run("slip", async () => {
@@ -47,6 +70,12 @@ export default function PromotionsPage() {
   const payments = config.payments;
   const sub = wallet?.subscription;
   const current = plans.find((p) => p.id === sub?.plan_id);
+  const pay = (key: string, fn: () => Promise<PaymentOrder>, done: string) => {
+    if (slip) return beginSlip(key, fn);
+    if (stripe) return beginStripe(key, fn);
+    return run(key, fn, done);
+  };
+  const paying = busy ? (slip ? tx("กำลังสร้างรายการ...") : stripe ? tx("กำลังไปหน้าชำระเงิน...") : tx("กำลังซื้อ...")) : null;
   return (
     <main className="page" style={{ maxWidth: 960 }}>
       <div className="page-head">
@@ -60,10 +89,11 @@ export default function PromotionsPage() {
         <Link href="/account" className="btn small">{tx("ดูประวัติเครดิต")}</Link>
       </div>
       {error && <div className="alert error" role="alert">{error}</div>}
+      {flash && <div className="alert info" role="status">{flash}</div>}
       {user.admin && <div className="alert info">{tx("บัญชีผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต")}</div>}
       <span className="dim">{tx("1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง (คลิป 1:15 นาที = 1.25 เครดิต) ตัดตอนเริ่มวิเคราะห์คลิป ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม พากย์ซ้ำหรือแก้บทไม่เสียเพิ่ม งานที่วิเคราะห์ไม่สำเร็จได้เครดิตคืน")}</span>
 
-      {!user.admin && !slip && <CardsSection onChange={reload} />}
+      {!user.admin && !slip && !stripe && <CardsSection onChange={reload} />}
       {slip && <OpenPayments orders={open} onOpen={setOrder} />}
       {slip && order && <SlipBox order={order} busy={busy} onUpload={sendSlip} />}
 
@@ -77,10 +107,8 @@ export default function PromotionsPage() {
               <span className="muted">{fmtBaht(p.price)}  {tx("· ตกเครดิตละ")} {fmtBaht(Math.round(p.price / p.minutes))}</span>
               <button type="button" className="btn small" disabled={!payments || !!busy}
                 onClick={() => window.confirm(tx("ซื้อแพ็กเกจ{0} {1}? เครดิตแพ็กเกจที่เหลือของรอบเดิมจะไม่ทบ", { 0: p.name, 1: fmtBaht(p.price) }))
-                  && (slip
-                    ? begin(p.id, () => api.subscribe(p.id))
-                    : run(p.id, () => api.subscribe(p.id), tx("เริ่มแพ็กเกจ{0}แล้ว", { 0: p.name })))}>
-                {busy === p.id ? (slip ? tx("กำลังสร้างรายการ...") : tx("กำลังซื้อ...")) : p.id === sub?.plan_id ? tx("ต่ออายุ") : slip ? tx("โอน {0}", { 0: fmtBaht(p.price) }) : tx("ซื้อแพ็กเกจนี้")}
+                  && pay(p.id, () => api.subscribe(p.id), tx("เริ่มแพ็กเกจ{0}แล้ว", { 0: p.name }))}>
+                {busy === p.id ? paying : p.id === sub?.plan_id ? tx("ต่ออายุ") : slip ? tx("โอน {0}", { 0: fmtBaht(p.price) }) : stripe ? tx("ชำระ {0}", { 0: fmtBaht(p.price) }) : tx("ซื้อแพ็กเกจนี้")}
               </button>
             </article>
           ))}
@@ -98,12 +126,12 @@ export default function PromotionsPage() {
               ))}
             </div>
             <button type="button" className="btn primary small" disabled={!payments || !!busy}
-              onClick={() => slip
-                ? begin("topup", () => api.buyCredits(pack))
-                : run("topup", () => api.buyCredits(pack), tx("ได้ {0} แล้ว", { 0: fmtCredits(pack) }))}>
-              {busy === "topup" ? (slip ? tx("กำลังสร้างรายการ...") : tx("กำลังซื้อ...")) : slip
+              onClick={() => pay("topup", () => api.buyCredits(pack), tx("ได้ {0} แล้ว", { 0: fmtCredits(pack) }))}>
+              {busy === "topup" ? paying : slip
                 ? tx("โอน {0}", { 0: fmtBaht(pack * wallet.credit_price) })
-                : tx("ซื้อ {0}", { 0: fmtBaht(pack * wallet.credit_price) })}
+                : stripe
+                  ? tx("ชำระ {0}", { 0: fmtBaht(pack * wallet.credit_price) })
+                  : tx("ซื้อ {0}", { 0: fmtBaht(pack * wallet.credit_price) })}
             </button>
           </div>
           {!payments && <span className="dim">{tx("ยังไม่ได้เชื่อมช่องทางชำระเงิน ติดต่อผู้ดูแลเพื่อเติมเครดิต")}</span>}

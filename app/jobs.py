@@ -1,4 +1,8 @@
-"""เก็บสถานะงาน และคิวงาน (การ์ดจอใบเดียวรันทีละงาน โหมด modal รันพร้อมกันได้หลายงาน)"""
+"""เก็บสถานะงาน และคิวงาน (การ์ดจอใบเดียวรันทีละงาน โหมด modal รันพร้อมกันได้หลายงาน)
+
+เมื่อ DB_BACKEND=supabase เมตาดาต้างานและบทอยู่บน Postgres (schema studio)
+โฟลเดอร์ data/jobs/<id>/ ยังเก็บไฟล์มีเดีย (อินพุต tts ผลลัพธ์) เหมือนเดิม
+"""
 import json
 import logging
 import shutil
@@ -45,6 +49,7 @@ class JobStore:
     def __init__(self, data_dir: Path):
         self.root = data_dir / "jobs"
         self.root.mkdir(parents=True, exist_ok=True)
+        self._pg = settings.db_backend == "supabase"
         self._lock = threading.RLock()
         self._jobs: dict[str, Job] = {}
         self._cancel: set[str] = set()
@@ -52,12 +57,22 @@ class JobStore:
 
     # ---------- โหลดและบันทึก ----------
     def _load(self) -> None:
-        for job_file in self.root.glob("*/job.json"):
+        jobs: list[Job] = []
+        from_files = True
+        if self._pg:
+            from . import jobstore_pg
             try:
-                job = Job.model_validate_json(job_file.read_text(encoding="utf-8"))
+                jobs = jobstore_pg.load_jobs()
+                from_files = False
             except Exception:
-                log.warning("skip broken job file %s", job_file)
-                continue
+                log.exception("โหลดงานจาก Supabase ไม่ได้ ลองจากไฟล์ในเครื่อง")
+        if from_files:
+            for job_file in self.root.glob("*/job.json"):
+                try:
+                    jobs.append(Job.model_validate_json(job_file.read_text(encoding="utf-8")))
+                except Exception:
+                    log.warning("skip broken job file %s", job_file)
+        for job in jobs:
             changed = False
             if job.status == JobStatus.running:  # งานที่รอคิวอยู่ Worker.start เอาเข้าคิวต่อให้
                 job.status = JobStatus.failed
@@ -65,7 +80,7 @@ class JobStore:
                 changed = True
             # งานที่สร้างบนเครื่องอื่น (เช่น Windows แล้วย้ายมารันใน Docker) เก็บ path เดิมไว้ ชี้กลับมาที่โฟลเดอร์งานนี้
             if job.input_path and not Path(job.input_path).exists():
-                local = job_file.parent / PureWindowsPath(job.input_path).name
+                local = self.dir(job.id) / PureWindowsPath(job.input_path).name
                 if local.exists():
                     job.input_path = str(local)
                     changed = True
@@ -75,10 +90,15 @@ class JobStore:
                 try:
                     self._write(job)
                 except OSError as e:
-                    log.warning("could not update %s at startup: %s", job_file, e)
+                    log.warning("could not update job %s at startup: %s", job.id, e)
             self._jobs[job.id] = job
 
     def _write(self, job: Job) -> None:
+        if self._pg:
+            from . import jobstore_pg
+            jobstore_pg.upsert_job(job)
+            return
+        self.dir(job.id).mkdir(parents=True, exist_ok=True)
         _atomic_write(self.dir(job.id) / "job.json", job.model_dump_json(indent=2))
 
     # ---------- งาน ----------
@@ -118,6 +138,12 @@ class JobStore:
         with self._lock:
             self._jobs.pop(job_id, None)
             self._cancel.discard(job_id)
+            if self._pg:
+                from . import jobstore_pg
+                try:
+                    jobstore_pg.delete_job(job_id)
+                except Exception:
+                    log.exception("ลบงาน %s จาก Supabase ไม่สำเร็จ", job_id)
             shutil.rmtree(self.dir(job_id), ignore_errors=True)
 
     # ---------- ยกเลิก ----------
@@ -140,10 +166,19 @@ class JobStore:
         return self.dir(job_id) / "transcript.json"
 
     def save_transcript(self, job_id: str, utterances: list[Utterance]) -> None:
+        if self._pg:
+            from . import jobstore_pg
+            jobstore_pg.save_transcript(job_id, utterances)
+            return
         data = [u.model_dump() for u in utterances]
         _atomic_write(self.transcript_path(job_id), json.dumps(data, ensure_ascii=False, indent=2))
 
     def load_transcript(self, job_id: str) -> list[Utterance]:
+        if self._pg:
+            from . import jobstore_pg
+            rows = jobstore_pg.load_transcript(job_id)
+            if rows is not None:
+                return rows
         path = self.transcript_path(job_id)
         if not path.exists():
             return []
