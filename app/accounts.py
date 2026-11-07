@@ -1016,7 +1016,21 @@ def claim_trial(uid: str) -> dict:
             raise AccountError(400, "บัญชีผู้ดูแลไม่ต้องใช้แพ็กทดลอง")
         _activate(db, uid, p, "trial", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิตฟรี")
         sub = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
-    return {"plan": p.public_dict(), "subscription": _sub_out(sub), "entitlements": entitlements(uid)}
+    # รูปแบบคล้าย PaymentOrder เพื่อหน้าเว็บเดิมที่เรียก /billing/subscribe แล้วมองหา status=paid
+    return {
+        "id": f"trial-{uid}",
+        "status": "paid",
+        "amount": 0,
+        "credits": p.minutes,
+        "plan_id": p.id,
+        "provider": "trial",
+        "created_at": time.time(),
+        "paid_at": time.time(),
+        "note": f"เริ่มแพ็กเกจ{p.name} ฟรี",
+        "plan": p.public_dict(),
+        "subscription": _sub_out(sub),
+        "entitlements": entitlements(uid),
+    }
 
 
 def subscribe(uid: str, plan_id: str) -> dict:

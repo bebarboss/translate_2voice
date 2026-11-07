@@ -1,4 +1,4 @@
-# Dubbing Studio — หน้าเว็บ
+# Pakdee — หน้าเว็บ
 
 หน้าเว็บ Next.js สำหรับ Dubbing API
 

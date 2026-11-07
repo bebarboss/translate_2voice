@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import "@fontsource/ibm-plex-sans-thai/300.css";
 import "@fontsource/ibm-plex-sans-thai/700.css";
+import { BrandLink, BRAND_NAME } from "@/components/Brand";
 import { MicIcon } from "@/components/Icons";
 import { useAuth } from "@/lib/useAuth";
-
 import { chooseLang, getLang, tx } from "@/lib/i18n";
 /** หน้าแรกก่อนเข้าสู่ระบบ: บอกว่าระบบทำอะไร แล้วพาไปสมัครหรือเข้าสู่ระบบ */
 
@@ -45,7 +45,7 @@ function Demo() {
   const line = LINES[Math.floor(t / 34) % LINES.length];
   return (
     <div className="lp-demo" aria-hidden="true">
-      <div className="lp-demo-bar"><span /><span /><span /><em>Dubbing Studio</em></div>
+      <div className="lp-demo-bar"><span /><span /><span /><em>{BRAND_NAME}</em></div>
       <div className="lp-demo-video">
         <div className="lp-demo-caption"><b style={{ color: line.color }}>{tx(line.who)}</b> {tx(line.text)}</div>
       </div>
@@ -82,10 +82,7 @@ export default function WelcomePage() {
     <div className="landing">
       <div className="lp-glow" aria-hidden="true" />
       <header className="lp-nav">
-        <Link href="/welcome" className="lp-brand">
-          <span className="lp-brand-mark"><MicIcon size={16} color="#fff" /></span>
-          Dubbing Studio
-        </Link>
+        <BrandLink href="/welcome" className="lp-brand" markClassName="lp-brand-mark" markSize={28} />
         <nav aria-label={tx("เมนูหน้าแรก")}>
           <a href="#features">{tx("ความสามารถ")}</a>
           <a href="#how">{tx("วิธีใช้")}</a>
@@ -99,20 +96,25 @@ export default function WelcomePage() {
 
       <main>
         <section className="lp-hero">
-          <h1>
-            <span className="lp-h-bold">{tx("พากย์ไทย")}</span>
-            <span className="lp-h-thin">{tx("ทั้งเรื่อง")}</span>
-          </h1>
-          <p className="lp-tagline">{tx("สตูดิโอพากย์เสียง")}<br />{tx("ที่แยกตัวละคร แปล")}<br />{tx("และพากย์ให้คุณ")}</p>
-          <div className="lp-cta">
-            <Link href={start} className="lp-pill lp-pill-dark lp-pill-lg">
-              <MicIcon size={18} color="#fff" /> {signedIn || !authOn ? tx("เริ่มพากย์คลิป") : tx("เริ่มพากย์คลิปแรก")}
-            </Link>
-            {authOn && !signedIn
-              ? <Link href={login} className="lp-pill lp-pill-light lp-pill-lg">{tx("เข้าสู่ระบบ")}</Link>
-              : <a href="#how" className="lp-pill lp-pill-light lp-pill-lg">{tx("ดูวิธีใช้")}</a>}
+          <div className="lp-hero-copy">
+            <p className="lp-kicker">{BRAND_NAME}</p>
+            <h1>
+              <span className="lp-h-bold">{tx("พากย์ดี")}</span>
+              <span className="lp-h-thin">{tx("ด้วย AI")}</span>
+            </h1>
+            <p className="lp-tagline">{tx("นกแก้วช่วยแยกตัวละคร แปล และพากย์คลิปต่างประเทศเป็นไทย")}</p>
+            <div className="lp-cta">
+              <Link href={start} className="lp-pill lp-pill-dark lp-pill-lg">
+                <MicIcon size={18} color="#fff" /> {signedIn || !authOn ? tx("เริ่มพากย์คลิป") : tx("เริ่มพากย์คลิปแรก")}
+              </Link>
+              {authOn && !signedIn
+                ? <Link href={login} className="lp-pill lp-pill-light lp-pill-lg">{tx("เข้าสู่ระบบ")}</Link>
+                : <a href="#how" className="lp-pill lp-pill-light lp-pill-lg">{tx("ดูวิธีใช้")}</a>}
+            </div>
+            <p className="lp-note">{tx("รองรับคลิปภาษาจีน ญี่ปุ่น เกาหลี อังกฤษ และอีกหลายภาษา · พากย์เป็นไทยหรืออังกฤษ")}</p>
           </div>
-          <p className="lp-note">{tx("รองรับคลิปภาษาจีน ญี่ปุ่น เกาหลี อังกฤษ และอีกหลายภาษา · พากย์เป็นไทยหรืออังกฤษ")}</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="lp-hero-mascot" src="/brand/icon.png" alt={BRAND_NAME} width={420} height={420} />
           <Demo />
         </section>
 
@@ -145,7 +147,7 @@ export default function WelcomePage() {
         </section>
       </main>
 
-      <footer className="lp-footer">© {new Date().getFullYear()}  {tx("Dubbing Studio · ใช้กับคลิปที่คุณมีสิทธิ์และเสียงที่ได้รับอนุญาตเท่านั้น")}</footer>
+      <footer className="lp-footer">© {new Date().getFullYear()}  {tx("Pakdee · ใช้กับคลิปที่คุณมีสิทธิ์และเสียงที่ได้รับอนุญาตเท่านั้น")}</footer>
     </div>
   );
 }

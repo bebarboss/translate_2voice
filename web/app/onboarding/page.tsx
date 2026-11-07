@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MicIcon } from "@/components/Icons";
+import { BrandLockup } from "@/components/Brand";
 import { api, type AccountType, type Legal } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
-
 import Prefs from "@/components/Prefs";
 import { tx } from "@/lib/i18n";
 const TYPES: { id: AccountType; label: string; hint: string }[] = [
@@ -81,10 +80,7 @@ export default function OnboardingPage() {
     <main className="onboard">
       <div className="corner-prefs"><Prefs compact /></div>
       <form className="card onboard-card" onSubmit={submit} aria-labelledby="ob-title">
-        <div className="brand" style={{ gap: 10 }}>
-          <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
-          Dubbing Studio
-        </div>
+        <BrandLockup markSize={34} />
         <div>
           <h1 id="ob-title" style={{ margin: "0 0 4px", fontSize: 22 }}>
             {consentOnly ? tx("ข้อกำหนดฉบับใหม่") : editing ? tx("แก้ไขข้อมูลบัญชี") : tx("ข้อมูลเบื้องต้น")}

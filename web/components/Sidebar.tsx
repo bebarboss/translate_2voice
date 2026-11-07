@@ -8,6 +8,7 @@ import { fmtNum } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
+import { BrandLink } from "./Brand";
 import { FolderIcon, GearIcon, GridIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
@@ -71,12 +72,7 @@ export default function Sidebar() {
   }, [canLoad, path]);
   if (bare) return null;
 
-  const brand = (
-    <Link href="/dashboard" className="brand">
-      <span className="brand-mark"><MicIcon size={16} color="#1A0E06" /></span>
-      Dubbing Studio
-    </Link>
-  );
+  const brand = <BrandLink href="/dashboard" />;
   const jobId = path.match(/^\/jobs\/([^/]+)/)?.[1];
   return (
     <>

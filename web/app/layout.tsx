@@ -12,8 +12,12 @@ import { isLang, isTheme, LANG_COOKIE, THEME_COOKIE } from "@/lib/i18n";
 import { AuthProvider } from "@/lib/useAuth";
 
 export const metadata: Metadata = {
-  title: "Dubbing Studio",
-  description: "พากย์คลิปต่างประเทศเป็นไทยหรืออังกฤษ ด้วยเสียงนักแสดงต้นฉบับ",
+  title: "Pakdee",
+  description: "พากย์ดี · AI พากย์ไทย — พากย์คลิปต่างประเทศเป็นไทยหรืออังกฤษ ด้วยเสียงนักแสดงต้นฉบับ",
+  icons: {
+    icon: [{ url: "/brand/icon-32.png", sizes: "32x32", type: "image/png" }, { url: "/favicon.ico" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

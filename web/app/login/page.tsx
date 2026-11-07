@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
-import { MicIcon, XIcon } from "@/components/Icons";
-
+import { BrandLink } from "@/components/Brand";
+import { XIcon } from "@/components/Icons";
 import Prefs from "@/components/Prefs";
 import { tx } from "@/lib/i18n";
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
@@ -54,7 +54,7 @@ function Showcase({ bonus }: { bonus: number }) {
   }, [paused, offers.length]);
   const cur = offers[i % offers.length];
   return (
-    <section className="auth-show" aria-label={tx("สิ่งที่ได้จาก Dubbing Studio")}>
+    <section className="auth-show" aria-label={tx("สิ่งที่ได้จาก Pakdee")}>
       <div className="auth-stack" aria-hidden="true">
         <div className="auth-sheet back" />
         <div className="auth-sheet mid" />
@@ -67,7 +67,10 @@ function Showcase({ bonus }: { bonus: number }) {
             </div>
           </div>
         </div>
-        <span className="auth-badge"><MicIcon size={20} color="#1A0E06" /></span>
+        <span className="auth-badge" aria-hidden="true">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/icon.png" alt="" width={56} height={56} />
+        </span>
       </div>
       <div className="auth-offers" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
         <h2>{tx("สมัครแล้วใช้ได้เลย")}</h2>
@@ -165,10 +168,7 @@ export default function LoginPage() {
         <Link href="/welcome" className="icon-only auth-close" aria-label={tx("กลับหน้าแรก")}><XIcon size={18} /></Link>
         <div className="auth-prefs"><Prefs compact /></div>
         <div className="auth-box">
-          <Link href="/welcome" className="brand auth-brand">
-            <span className="brand-mark"><MicIcon size={18} color="#1A0E06" /></span>
-            <span className="auth-brand-text">Dubbing Studio<small>{tx("พากย์ไทยด้วย AI")}</small></span>
-          </Link>
+          <BrandLink href="/welcome" className="brand auth-brand" markSize={40} subtitle={tx("พากย์ดี · AI พากย์ไทย")} />
           {body}
         </div>
       </section>

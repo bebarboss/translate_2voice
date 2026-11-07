@@ -109,7 +109,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .sidebar .sidebar-close, .topbar { display: none; }
 .brand { display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; font-size: 17px; font-weight: 600; }
 .brand:hover { color: var(--text); }
-.brand-mark { width: 34px; height: 34px; border-radius: 10px; background: var(--accent-grad); display: flex; align-items: center; justify-content: center; flex: none; box-shadow: 0 6px 18px -6px rgba(255, 110, 80, .6), inset 0 1px 0 rgba(var(--fg-rgb), .35); }
+.brand-mark { width: 34px; height: 34px; border-radius: 10px; background: transparent; display: flex; align-items: center; justify-content: center; flex: none; overflow: hidden; box-shadow: 0 6px 18px -6px rgba(255, 110, 80, .45); }
+.brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .side-nav { display: flex; flex-direction: column; gap: 2px; }
 .side-nav a { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: 10px; color: var(--text-2); text-decoration: none; font-size: 14.5px; transition: background .15s, color .15s; }
 .side-nav a svg { color: var(--muted); flex: none; }
@@ -325,8 +326,9 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .auth-sheet-body span { color: #6f665b; font-size: 15px; }
 .auth-wave { display: flex; align-items: center; gap: 3px; height: 56px; width: 100%; margin-top: 14px; }
 .auth-wave i { flex: 1; border-radius: 3px; background: linear-gradient(var(--accent), #c0562a); transform-origin: center; animation: auth-wave 1.4s ease-in-out infinite alternate; }
-.auth-badge { position: absolute; left: -2%; bottom: 6%; width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center;
-  background: var(--accent); box-shadow: 0 10px 30px rgba(255, 138, 76, .35); transform: rotate(-12deg); }
+.auth-badge { position: absolute; left: -2%; bottom: 6%; width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
+  background: transparent; overflow: hidden; box-shadow: 0 10px 30px rgba(255, 138, 76, .35); transform: rotate(-12deg); padding: 0; border: 0; }
+.auth-badge img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .auth-offers { position: relative; z-index: 1; }
 .auth-offers h2 { margin: 0 0 16px; font-size: 19px; font-weight: 600; color: #fff; }
 .auth-offers ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 32px; }
@@ -460,7 +462,8 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .landing > *:not(.lp-glow) { position: relative; }
 .lp-nav { max-width: 1200px; margin: 0 auto; padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .lp-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--lp-ink); text-decoration: none; }
-.lp-brand-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--lp-ink); display: grid; place-items: center; }
+.lp-brand-mark { width: 28px; height: 28px; border-radius: 8px; background: transparent; display: grid; place-items: center; overflow: hidden; }
+.lp-brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .lp-nav nav { display: flex; align-items: center; gap: 22px; font-size: 14px; }
 .lp-nav nav a { color: var(--lp-ink-2); text-decoration: none; }
 .lp-nav nav a:hover { color: var(--lp-ink); }
@@ -471,13 +474,17 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .lp-pill-light { background: rgba(255, 255, 255, .6); color: var(--lp-ink) !important; border: 1px solid var(--lp-line); }
 .lp-pill-light:hover { background: rgba(255, 255, 255, .85); }
 .lp-pill-accent { background: var(--lp-accent); color: #1a0e06 !important; }
-.lp-hero { max-width: 1200px; margin: 0 auto; padding: 48px 24px 0; display: grid; grid-template-columns: 1.4fr 1fr; column-gap: 40px; }
+.lp-hero { max-width: 1200px; margin: 0 auto; padding: 48px 24px 0; display: grid; grid-template-columns: 1.15fr .85fr; column-gap: 28px; align-items: center; }
+.lp-hero-copy { display: flex; flex-direction: column; min-width: 0; }
+.lp-kicker { margin: 0 0 10px; font-size: clamp(28px, 3.2vw, 40px); font-weight: 700; letter-spacing: -.02em; color: var(--lp-ink); }
+.lp-hero-mascot { width: min(420px, 100%); height: auto; justify-self: end; border-radius: 36px; box-shadow: 0 28px 60px rgba(23, 18, 13, .22); }
 .lp-hero h1 { margin: 0; display: flex; flex-direction: column; line-height: 1.22; } /* ภาษาไทยต้องเผื่อที่ให้วรรณยุกต์และสระบน */
-.lp-h-bold { font-weight: 700; font-size: clamp(56px, 9.5vw, 128px); }
-.lp-h-thin { font-weight: 300; font-size: clamp(56px, 9.5vw, 128px); }
-.lp-tagline { margin: 34px 0 0; font-size: clamp(22px, 2.4vw, 32px); line-height: 1.45; color: var(--lp-ink); }
-.lp-cta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
-.lp-note { grid-column: 1 / -1; margin: 14px 0 0; color: var(--lp-ink-3); font-size: 15px; }
+.lp-h-bold { font-weight: 700; font-size: clamp(48px, 7.5vw, 96px); }
+.lp-h-thin { font-weight: 300; font-size: clamp(48px, 7.5vw, 96px); }
+.lp-tagline { margin: 22px 0 0; font-size: clamp(18px, 2vw, 26px); line-height: 1.45; color: var(--lp-ink); max-width: 28ch; }
+.lp-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+.lp-note { margin: 14px 0 0; color: var(--lp-ink-3); font-size: 15px; }
+.lp-hero .lp-demo { grid-column: 1 / -1; }
 .lp-demo { grid-column: 1 / -1; justify-self: center; width: min(640px, 100%); margin: 44px 0 0; border-radius: 22px 22px 0 0; overflow: hidden;
   background: #14171d; color: #e8eaee; box-shadow: 0 30px 80px rgba(23, 18, 13, .35); }
 .lp-demo-bar { display: flex; align-items: center; gap: 6px; padding: 12px 16px; border-bottom: 1px solid #262a33; }
@@ -505,6 +512,7 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .lp-footer { max-width: 1200px; margin: 0 auto; padding: 88px 24px 40px; color: var(--lp-ink-3); font-size: 13px; }
 @media (max-width: 900px) {
   .lp-hero { grid-template-columns: 1fr; }
+  .lp-hero-mascot { justify-self: center; width: min(280px, 70vw); order: -1; margin-bottom: 8px; }
   .lp-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 600px) {

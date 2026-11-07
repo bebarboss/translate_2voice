@@ -135,7 +135,7 @@ class Settings:
     credit_price_satang: int = _int("CREDIT_PRICE_SATANG", 700)  # 7 บาท/เครดิต
     credit_packs: tuple = _credit_packs()
     plan_credit_rollover: int = _int("PLAN_CREDIT_ROLLOVER", 1)  # ทบเครดิตแพ็กเกจได้ไม่เกินกี่รอบของแพ็กใหม่
-    watermark_text: str = _env("WATERMARK_TEXT", "Dubbing Studio")
+    watermark_text: str = _env("WATERMARK_TEXT", "Pakdee")
     # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
     actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
     # ภาษีหัก ณ ที่จ่ายค่าตอบแทนนักพากย์: กี่เปอร์เซ็นต์ (0 = ไม่หัก) หักเมื่อจ่ายครั้งละตั้งแต่กี่สตางค์ และประเภทเงินได้ในรายงาน

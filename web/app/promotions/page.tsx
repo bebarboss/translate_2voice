@@ -56,8 +56,10 @@ export default function PromotionsPage() {
         window.location.href = created.checkout_url;
         return created;
       }
+      // แพ็กฟรี (ทดลอง) จ่าย 0 ไม่มี Checkout — รับ status=paid แล้วจบ
+      if (created.status === "paid") return created;
       throw new Error(tx("ไม่ได้รับลิงก์ชำระเงินจาก Stripe"));
-    }, tx("กำลังไปหน้าชำระเงิน..."));
+    }, (created) => created.status === "paid" ? tx("ชำระแล้ว") : tx("กำลังไปหน้าชำระเงิน..."));
   const sendSlip = (file: File) => {
     if (!order) return;
     run("slip", async () => {
