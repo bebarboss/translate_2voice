@@ -7,12 +7,12 @@ import { api, type FeedbackItem } from "@/lib/api";
 import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 
-const CATEGORIES: { id: FeedbackItem["category"]; label: string; hint: string }[] = [
-  { id: "bug", label: "บั๊กหรือข้อผิดพลาด", hint: "หน้าเว็บพัง งานค้าง ระบบตอบผิด" },
-  { id: "billing", label: "เครดิตและการชำระเงิน", hint: "เติมเครดิต แพ็กเกจ สลิป สิทธิ์" },
-  { id: "quality", label: "คุณภาพพากย์", hint: "เสียง บทแปล จังหวะปาก" },
-  { id: "feature", label: "ขอฟีเจอร์", hint: "อยากให้มีอะไรเพิ่ม" },
-  { id: "other", label: "อื่น ๆ", hint: "คำถามหรือเรื่องอื่น" },
+const CATEGORIES: { id: FeedbackItem["category"]; label: string }[] = [
+  { id: "bug", label: "บั๊กหรือข้อผิดพลาด" },
+  { id: "billing", label: "เครดิตและการชำระเงิน" },
+  { id: "quality", label: "คุณภาพพากย์" },
+  { id: "feature", label: "ขอฟีเจอร์" },
+  { id: "other", label: "อื่น ๆ" },
 ];
 
 const CAT_LABEL = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as Record<string, string>;
@@ -57,7 +57,7 @@ export default function SupportPage() {
   if (config?.auth && !user) return null;
 
   return (
-    <main className="page narrow">
+    <main className="page support-page">
       <div className="page-head">
         <div>
           <h1>{tx("แจ้งปัญหา")}</h1>
@@ -65,37 +65,38 @@ export default function SupportPage() {
         </div>
       </div>
 
-      <form className="card" onSubmit={send} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <label className="field">
-          <span>{tx("ประเภท")}</span>
-          <select className="select" value={category} onChange={(e) => setCategory(e.target.value as FeedbackItem["category"])}>
+      <form className="card support-form" onSubmit={send}>
+        <div className="field">
+          <span className="label">{tx("ประเภท")}</span>
+          <div className="seg support-cats" role="group" aria-label={tx("ประเภท")}>
             {CATEGORIES.map((c) => (
-              <option key={c.id} value={c.id}>{tx(c.label)} — {tx(c.hint)}</option>
+              <button key={c.id} type="button" aria-pressed={category === c.id}
+                onClick={() => setCategory(c.id)}>{tx(c.label)}</button>
             ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>{tx("หัวข้อ")}</span>
-          <input className="input" value={subject} maxLength={120} required
+          </div>
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="fb-subject">{tx("หัวข้อ")}</label>
+          <input id="fb-subject" className="input" value={subject} maxLength={120} required
             placeholder={tx("สรุปสั้น ๆ เช่น หน้าโปรโมชันกดแล้วขึ้น 500")}
             onChange={(e) => setSubject(e.target.value)} />
-        </label>
-        <label className="field">
-          <span>{tx("รายละเอียด")}</span>
-          <textarea className="input" rows={6} value={body} maxLength={4000} required
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="fb-body">{tx("รายละเอียด")}</label>
+          <textarea id="fb-body" className="input" rows={4} value={body} maxLength={4000} required
             placeholder={tx("เกิดอะไรขึ้น ต้องการให้อย่างไร ถ้าเป็นงานพากย์ บอกชื่อคลิปหรือรหัสงานด้วย")}
             onChange={(e) => setBody(e.target.value)} />
-        </label>
-        <label className="field">
-          <span>{tx("รหัสงาน (ถ้ามี)")}</span>
-          <input className="input" value={jobId} maxLength={80}
+        </div>
+        <div className="field">
+          <label className="label" htmlFor="fb-job">{tx("รหัสงาน (ถ้ามี)")}</label>
+          <input id="fb-job" className="input" value={jobId} maxLength={80}
             placeholder={tx("คัดลอกจาก URL หน้างาน เช่น จาก /jobs/...")}
             onChange={(e) => setJobId(e.target.value)} />
-        </label>
+        </div>
         {error && <div className="alert error" role="alert">{error}</div>}
         {flash && <div className="alert info" role="status">{flash}</div>}
-        <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-          <span className="dim" style={{ fontSize: 13 }}>
+        <div className="support-actions">
+          <span className="dim">
             {user ? tx("จะติดต่อกลับที่ {0}", { 0: user.email }) : null}
           </span>
           <button type="submit" className="btn primary" disabled={busy}>
@@ -105,31 +106,31 @@ export default function SupportPage() {
       </form>
 
       {mine.length > 0 && (
-        <section style={{ marginTop: 28 }} aria-labelledby="mine-title">
-          <h2 id="mine-title" style={{ fontSize: 18, margin: "0 0 12px" }}>{tx("ที่เคยแจ้ง")}</h2>
-          <ul className="card" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column" }}>
+        <section className="support-history" aria-labelledby="mine-title">
+          <h2 id="mine-title">{tx("ที่เคยแจ้ง")}</h2>
+          <ul className="card support-history-list">
             {mine.map((f) => (
-              <li key={f.id} style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-                <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <li key={f.id}>
+                <div className="support-history-head">
                   <b>{f.subject}</b>
                   <span className={`badge ${f.status === "done" ? "done" : "warn"}`}>
                     {f.status === "done" ? tx("ปิดแล้ว") : tx("รอดู")}
                   </span>
                 </div>
-                <div className="dim" style={{ fontSize: 13, marginTop: 4 }}>
+                <div className="dim">
                   {tx(CAT_LABEL[f.category] || f.category)}
                   {" · "}
                   {new Date(f.created_at * 1000).toLocaleString(locale())}
                   {f.job_id ? ` · ${f.job_id}` : ""}
                 </div>
-                {f.admin_note && <p style={{ margin: "8px 0 0", fontSize: 14 }}>{tx("หมายเหตุผู้ดูแล")}: {f.admin_note}</p>}
+                {f.admin_note && <p>{tx("หมายเหตุผู้ดูแล")}: {f.admin_note}</p>}
               </li>
             ))}
           </ul>
         </section>
       )}
 
-      <p className="dim" style={{ marginTop: 24, fontSize: 13 }}>
+      <p className="support-foot dim">
         {tx("เรื่องด่วนเรื่องบัญชีหรือการชำระเงิน ดูที่")}{" "}
         <Link href="/account">{tx("หน้าบัญชี")}</Link>
         {config?.billing ? <>{" · "}<Link href="/promotions">{tx("แพ็กเกจและโปรโมชัน")}</Link></> : null}

@@ -355,6 +355,26 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
   .auth-panel { min-height: 100vh; padding: 48px 16px; }
 }
 .page.narrow { max-width: 460px; }
+
+/* หน้าแจ้งปัญหา: กว้างพออ่าน แต่ไม่ยืดการ์ดให้สูงเต็มจอ */
+.support-page { max-width: 560px; align-items: stretch; }
+.support-page .page-head { align-items: flex-start; }
+.support-form { flex: none; width: 100%; gap: 14px; padding: 18px 18px 16px; }
+.support-form .field { gap: 6px; }
+.support-form textarea.input { min-height: 96px; resize: vertical; }
+.support-cats { flex-wrap: wrap; height: auto; padding: 4px; gap: 4px; }
+.support-cats button { height: 32px; padding: 0 12px; font-size: 13px; }
+.support-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 2px; }
+.support-actions .dim { font-size: 13px; }
+.support-history { margin-top: 8px; }
+.support-history h2 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+.support-history-list { list-style: none; margin: 0; padding: 0; gap: 0; }
+.support-history-list li { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.support-history-list li:last-child { border-bottom: 0; }
+.support-history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.support-history-list .dim { font-size: 13px; margin-top: 4px; }
+.support-history-list p { margin: 8px 0 0; font-size: 14px; }
+.support-foot { margin: 4px 0 0; font-size: 13px; }
 .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .plan { gap: 8px; }
 .card-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
