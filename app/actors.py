@@ -4,7 +4,8 @@
 เก็บในฐานข้อมูลเดียวกับบัญชีผู้ใช้ (data/accounts.db) ตัวไฟล์เสียงอยู่ในคลังเสียงตามปกติ (voice_library.py)
 - actors: ข้อมูลนักพากย์ สถานะ pending / approved / rejected / withdrawn
 - actor_consents: ทุกครั้งที่กดยอมรับ (เวอร์ชันหนังสือ แฮชข้อความ เวลา IP เบราว์เซอร์) และเวลาที่ถอน
-- actor_voices: เสียงในคลังที่นักพากย์อัด สถานะตรวจ pending / approved / rejected
+- actor_voices: เสียงในคลังที่นักพากย์อัด สถานะตรวจ draft / pending / approved / rejected
+  (draft = อัดแล้วยังไม่ส่งตรวจ ต้องอัดอารมณ์ครบทุกหมวดก่อนกดส่ง)
 - actor_moods: เสียงอารมณ์ที่นักพากย์อัดเพิ่ม ตรวจแยกทีละอารมณ์ (เสียงหลักที่ผ่านแล้วไม่ต้องรอตรวจใหม่)
   อารมณ์ที่ไม่มีแถวในตารางนี้ (อัดก่อนมีการตรวจแยก) ถือตามสถานะของเสียงหลัก
 - voice_usage: งาน × เสียง = วินาทีของเสียงพากย์ในผลงานรอบล่าสุดของงานนั้น (พากย์ใหม่ = แทนค่าเดิม ไม่นับซ้ำ)
@@ -339,19 +340,25 @@ def all_actors() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# อารมณ์ที่ต้องอัดครบก่อนส่งให้แอดมินตรวจ (ตรงกับ schemas.Mood)
+REQUIRED_MOODS: tuple[str, ...] = ("angry", "sad", "happy", "whisper", "scared")
+
+
 # ---------------------------------------------------------------- เสียงของนักพากย์
 def add_voice(voice_id: str, uid: str) -> None:
+    """เสียงใหม่เริ่มเป็นฉบับร่าง ยังไม่เข้าคิวแอดมินจนกว่าจะอัดอารมณ์ครบแล้วกดส่งตรวจ"""
     _init()
     with _tx() as db:
-        db.execute("INSERT INTO actor_voices (voice_id, user_id, created_at) VALUES (?, ?, ?)",
+        db.execute("INSERT INTO actor_voices (voice_id, user_id, review, created_at) VALUES (?, ?, 'draft', ?)",
                    (voice_id, uid, time.time()))
 
 
 def resubmit_voice(voice_id: str) -> None:
-    """อัดเสียงใหม่หรือเพิ่มเสียงอารมณ์: กลับไปรอตรวจ"""
+    """อัดเสียงหลักใหม่: กลับเป็นฉบับร่าง ต้องส่งตรวจอีกครั้งเมื่อครบชุด"""
     _init()
     with _tx() as db:
-        db.execute("UPDATE actor_voices SET review = 'pending', note = '' WHERE voice_id = ?", (voice_id,))
+        db.execute("UPDATE actor_voices SET review = 'draft', note = '', reviewed_at = NULL, reviewed_by = NULL "
+                   "WHERE voice_id = ?", (voice_id,))
 
 
 def remove_voice(voice_id: str) -> None:
@@ -363,12 +370,46 @@ def remove_voice(voice_id: str) -> None:
 
 # ---------------------------------------------------------------- เสียงอารมณ์ (ตรวจแยกทีละอารมณ์)
 def add_mood(voice_id: str, mood: str) -> None:
-    """นักพากย์อัดเสียงอารมณ์ใหม่หรืออัดซ้ำ: อารมณ์นั้นรอตรวจ เสียงหลักและอารมณ์อื่นใช้ได้ตามเดิม"""
+    """นักพากย์อัดเสียงอารมณ์ใหม่หรืออัดซ้ำ: เก็บเป็นฉบับร่าง ยังไม่เข้าคิวแอดมินจนกว่าจะส่งตรวจทั้งชุด"""
     _init()
     with _tx() as db:
-        db.execute("INSERT INTO actor_moods (voice_id, mood, created_at) VALUES (?, ?, ?) "
-                   "ON CONFLICT (voice_id, mood) DO UPDATE SET review = 'pending', note = '', created_at = excluded.created_at, "
+        db.execute("INSERT INTO actor_moods (voice_id, mood, review, created_at) VALUES (?, ?, 'draft', ?) "
+                   "ON CONFLICT (voice_id, mood) DO UPDATE SET review = 'draft', note = '', created_at = excluded.created_at, "
                    "reviewed_at = NULL, reviewed_by = NULL", (voice_id, mood, time.time()))
+
+
+def submit_for_review(voice_id: str, ready_moods: list[str]) -> None:
+    """ส่งชุดเสียงให้แอดมินตรวจ: ต้องมีอารมณ์ครบทุกแบบ เฉพาะฉบับร่างขึ้นรอตรวจ (หมวดที่ถูกตีกลับต้องอัดใหม่ก่อน)"""
+    _init()
+    if any(m not in ready_moods for m in REQUIRED_MOODS):
+        raise AccountError(400, "ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")
+    with _tx() as db:
+        row = db.execute("SELECT review FROM actor_voices WHERE voice_id = ?", (voice_id,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่ใช่เสียงของนักพากย์")
+        if row["review"] == "rejected":
+            raise AccountError(400, "เสียงหลักยังไม่ผ่าน ให้อัดใหม่ก่อนส่งตรวจ")
+        mood_rows = {r["mood"]: r["review"] for r in
+                     db.execute("SELECT mood, review FROM actor_moods WHERE voice_id = ?", (voice_id,))}
+        if any(mood_rows.get(m) == "rejected" for m in REQUIRED_MOODS):
+            raise AccountError(400, "มีหมวดอารมณ์ที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")
+        now = time.time()
+        changed = False
+        if row["review"] == "draft":
+            db.execute("UPDATE actor_voices SET review = 'pending', note = '', reviewed_at = NULL, reviewed_by = NULL "
+                       "WHERE voice_id = ?", (voice_id,))
+            changed = True
+        for mood in REQUIRED_MOODS:
+            cur = mood_rows.get(mood)
+            if cur is None or cur == "draft":
+                db.execute("INSERT INTO actor_moods (voice_id, mood, review, note, created_at, reviewed_at, reviewed_by) "
+                           "VALUES (?, ?, 'pending', '', ?, NULL, NULL) "
+                           "ON CONFLICT (voice_id, mood) DO UPDATE SET review = 'pending', note = '', "
+                           "created_at = excluded.created_at, reviewed_at = NULL, reviewed_by = NULL",
+                           (voice_id, mood, now))
+                changed = True
+        if not changed:
+            raise AccountError(400, "ชุดนี้ส่งตรวจแล้ว หรือไม่มีฉบับร่างที่ต้องส่ง")
 
 
 def remove_mood(voice_id: str, mood: str) -> None:

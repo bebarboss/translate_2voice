@@ -1660,7 +1660,7 @@ async def actor_record(
     denoise: bool = Form(True),
     user=Depends(require_user),
 ):
-    """นักพากย์ส่งเสียงเข้าคลัง เตรียมเสียงเหมือนอัปโหลดทั่วไป แล้วรอผู้ดูแลตรวจฟังก่อนผู้อื่นจะเห็น"""
+    """นักพากย์อัดเสียงเก็บเป็นฉบับร่าง (ยังไม่เข้าคิวแอดมิน) ต้องอัดอารมณ์ครบแล้วกดส่งตรวจ"""
     a = _approved_actor(user)
     ext = Path(file.filename or "").suffix.lower() or ".webm"
     if ext not in AUDIO_EXT:
@@ -1689,9 +1689,7 @@ async def actor_record(
         else:
             actors.resubmit_voice(voice_id)
         worker.submit_voice(voice_id, mood or "")
-        out = _own_voice(user, voice_id)
-        notify.actor_voice_submitted(user["id"], f"{out.name} ({mood})" if mood else out.name)
-        return out
+        return _own_voice(user, voice_id)
     if mood:
         raise HTTPException(400, "อัดเสียงหลักก่อน แล้วค่อยเพิ่มเสียงอารมณ์")
     voice_id = voice_store.new_id()
@@ -1702,8 +1700,28 @@ async def actor_record(
                                  categories=["นักพากย์"], filename=label, denoise=denoise))
     actors.add_voice(voice_id, user["id"])
     worker.submit_voice(voice_id)
-    notify.actor_voice_submitted(user["id"], a["stage_name"])
     return _own_voice(user, voice_id)
+
+
+@app.post("/actor/voices/{voice_id}/submit-review", response_model=LibraryVoice, dependencies=[Depends(require_key)])
+def actor_submit_review(voice_id: str, user=Depends(require_user)):
+    """ส่งชุดเสียงให้แอดมินตรวจ — ต้องอัดเสียงหลักและอารมณ์ครบทุกหมวด และเตรียมเสร็จแล้ว"""
+    v = _own_voice(user, voice_id)
+    if v.status != VoiceStatus.ready:
+        raise HTTPException(400, "เสียงหลักยังไม่พร้อม ส่งตรวจไม่ได้")
+    if any(x.status == VoiceStatus.processing for x in [v, *v.moods]):
+        raise HTTPException(409, "กำลังเตรียมเสียงอยู่ รอให้เสร็จก่อนแล้วค่อยส่งตรวจ")
+    ready_moods = [m.mood for m in v.moods if m.status == VoiceStatus.ready]
+    missing = [m for m in actors.REQUIRED_MOODS if m not in ready_moods]
+    if missing or v.status != VoiceStatus.ready:
+        raise HTTPException(400, "ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")
+    try:
+        actors.submit_for_review(voice_id, ready_moods)
+    except accounts.AccountError as e:
+        raise _actor_fail(e)
+    out = _own_voice(user, voice_id)
+    notify.actor_voice_submitted(user["id"], out.name)
+    return out
 
 
 @app.delete("/actor/voices/{voice_id}", status_code=204, dependencies=[Depends(require_key)])

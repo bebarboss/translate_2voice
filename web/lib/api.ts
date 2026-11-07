@@ -187,7 +187,7 @@ export interface VoiceMood {
   duration: number | null;
   quality: number | null;
   analysis?: VoiceAnalysis | null;
-  review?: string | null; // เสียงอารมณ์ของนักพากย์: pending / approved / rejected
+  review?: string | null; // เสียงอารมณ์ของนักพากย์: draft / pending / approved / rejected
   review_note?: string;
 }
 
@@ -210,7 +210,7 @@ export interface LibraryVoice {
   analysis?: VoiceAnalysis | null;
   moods: VoiceMood[];
   actor?: string | null; // ชื่อนักพากย์ (เสียงที่นักพากย์อัดเอง)
-  review?: "pending" | "approved" | "rejected" | null; // ผู้ดูแลตรวจฟังแล้วหรือยัง ผู้ใช้ทั่วไปเห็นเฉพาะ approved
+  review?: "draft" | "pending" | "approved" | "rejected" | null; // draft = อัดแล้วยังไม่ส่งตรวจ
   review_note?: string;
   created_at: string;
   updated_at: string;
@@ -483,6 +483,7 @@ export const api = {
     form.append("denoise", String(opts.denoise));
     return request<LibraryVoice>("/actor/voices", { method: "POST", body: form });
   },
+  actorSubmitReview: (id: string) => request<LibraryVoice>(`/actor/voices/${id}/submit-review`, { method: "POST" }),
   actorDeleteVoice: (id: string) => request<void>(`/actor/voices/${id}`, { method: "DELETE" }),
   actorWithdraw: () => request<void>("/actor/withdraw", { method: "POST" }),
   actorSavePayment: (body: ActorPayment) => request<ActorPayment>("/actor/payment", json("PUT", body)),

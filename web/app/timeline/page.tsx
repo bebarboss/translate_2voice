@@ -27,13 +27,14 @@ export default function TimelineImportPage() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [ent, setEnt] = useState<Entitlements | null>(null);
+  const [ent, setEnt] = useState<Entitlements | null | undefined>(undefined);
   const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     api.wallet().then((w) => setEnt(w.entitlements ?? null)).catch(() => setEnt(null));
   }, []);
-  const locked = ent != null && !ent.timeline && ent.plan_id !== "admin";
+  // รอโหลดสิทธิ์ก่อน — กันเผลออัปโหลดตอนยังไม่รู้แพ็ก / ไม่มีแพ็ก
+  const locked = ent === undefined || (ent != null && !ent.timeline && ent.plan_id !== "admin");
 
   const pick = (f: File | undefined | null) => {
     setError("");

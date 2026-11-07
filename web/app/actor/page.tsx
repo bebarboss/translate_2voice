@@ -124,56 +124,112 @@ function ApplyForm({ onDone }: { onDone: () => void }) {
 }
 
 const REVIEW_BADGE = {
+  draft: <span className="badge queued">{tx("บันทึกแล้ว ยังไม่ส่งตรวจ")}</span>,
   pending: <span className="badge awaiting_review">{tx("รอผู้ดูแลตรวจ")}</span>,
   approved: <span className="badge done">{tx("อยู่ในคลังแล้ว")}</span>,
   rejected: <span className="badge failed">{tx("ให้อัดใหม่")}</span>,
 };
 
-/** อารมณ์ที่ใช้บ่อยในงานพากย์ แนะนำให้อัดก่อน */
-const SUGGESTED: Mood[] = ["happy", "angry", "sad"];
+/** ครบเสียงหลัก + อารมณ์ทุกหมวด และเตรียมเสร็จแล้ว */
+function packageComplete(v: LibraryVoice): boolean {
+  if (v.status !== "ready") return false;
+  return MOODS.every((m) => v.moods.some((x) => x.mood === m && x.status === "ready"));
+}
 
-/** สถานะเสียงอารมณ์ของเสียงหนึ่ง: มีแล้วกี่แบบ แต่ละแบบผ่านการตรวจไหม และถูกใช้พากย์ไปกี่ประโยค กดเพื่ออัด */
-function MoodChips({ v, usage, picked, onPick }: {
-  v: LibraryVoice; usage: Record<string, number>; picked?: Mood; onPick: (m: Mood) => void;
+function hasDraft(v: LibraryVoice): boolean {
+  return v.review === "draft" || v.moods.some((x) => x.review === "draft");
+}
+
+function hasRejected(v: LibraryVoice): boolean {
+  return v.review === "rejected" || v.moods.some((x) => x.review === "rejected");
+}
+
+/** แสดงปุ่มส่งตรวจเมื่อยังมีงานค้าง (ร่าง / ตีกลับ / ยังอัดไม่ครบ) */
+function showSubmit(v: LibraryVoice): boolean {
+  if (v.review === "pending") return false;
+  if (hasDraft(v) || hasRejected(v)) return true;
+  return !packageComplete(v) && (v.status === "ready" || v.moods.length > 0);
+}
+
+function canSubmit(v: LibraryVoice): boolean {
+  return packageComplete(v) && hasDraft(v) && !hasRejected(v);
+}
+
+type MoodSlot = Mood | "normal";
+
+function moodSlotState(v: LibraryVoice, slot: MoodSlot): {
+  mark: string; hint: string; badge: "empty" | "processing" | "failed" | "draft" | "pending" | "rejected" | "ready"; suggest: boolean;
+} {
+  if (slot === "normal") {
+    if (v.status === "processing") return { mark: "…", hint: tx("กำลังเตรียม"), badge: "processing", suggest: false };
+    if (v.status === "failed") return { mark: "!", hint: tx("เตรียมไม่สำเร็จ กดเพื่ออัดใหม่"), badge: "failed", suggest: false };
+    if (v.status === "ready" && v.review === "draft") return { mark: "○", hint: tx("บันทึกแล้ว ยังไม่ส่งตรวจ"), badge: "draft", suggest: false };
+    if (v.review === "pending") return { mark: "⏳", hint: tx("รอผู้ดูแลตรวจ"), badge: "pending", suggest: false };
+    if (v.review === "rejected") return { mark: "✕", hint: tx("ไม่ผ่านการตรวจ กดเพื่ออัดใหม่"), badge: "rejected", suggest: false };
+    if (v.status === "ready" && v.review === "approved") return { mark: "✓", hint: tx("ผ่านแล้ว กดเพื่ออัดใหม่"), badge: "ready", suggest: false };
+    return { mark: "+", hint: tx("กดเพื่ออัด"), badge: "empty", suggest: false };
+  }
+  const got = v.moods.find((x) => x.mood === slot);
+  if (!got) return { mark: "+", hint: tx("ต้องอัด"), badge: "empty", suggest: true };
+  if (got.status === "processing") return { mark: "…", hint: tx("กำลังเตรียม"), badge: "processing", suggest: false };
+  if (got.status === "failed") return { mark: "!", hint: tx("เตรียมไม่สำเร็จ กดเพื่ออัดใหม่"), badge: "failed", suggest: false };
+  if (got.review === "draft") return { mark: "○", hint: tx("บันทึกแล้ว ยังไม่ส่งตรวจ"), badge: "draft", suggest: false };
+  if (got.review === "pending") return { mark: "⏳", hint: tx("รอผู้ดูแลตรวจ"), badge: "pending", suggest: false };
+  if (got.review === "rejected") return { mark: "✕", hint: tx("ไม่ผ่านการตรวจ กดเพื่ออัดใหม่"), badge: "rejected", suggest: false };
+  return { mark: "✓", hint: tx("ผ่านแล้ว กดเพื่ออัดใหม่"), badge: "ready", suggest: false };
+}
+
+/** หมวดอารมณ์ของเสียงหนึ่ง: อัดและบันทึกทีละหมวด กดการ์ดเพื่อเปิดห้องอัดของหมวดนั้น */
+function MoodCategories({ v, usage, picked, pickedNormal, onPick, onPickNormal, preview }: {
+  v: LibraryVoice; usage: Record<string, number>; picked?: Mood; pickedNormal: boolean;
+  onPick: (m: Mood) => void; onPickNormal: () => void;
+  preview: { playing: string | null; toggle: (url: string) => void };
 }) {
-  const ready = v.moods.filter((x) => x.status === "ready" && x.review === "approved").length;
-  const missing = SUGGESTED.filter((m) => !v.moods.some((x) => x.mood === m));
-  const state = (m: Mood): [string, string] => {
-    const got = v.moods.find((x) => x.mood === m);
-    if (!got) return ["+ ", SUGGESTED.includes(m) ? tx("แนะนำให้อัด") : tx("กดเพื่ออัด")];
-    if (got.status === "processing") return ["… ", tx("กำลังเตรียม")];
-    if (got.status === "failed") return ["! ", tx("เตรียมไม่สำเร็จ กดเพื่ออัดใหม่")];
-    if (got.review === "pending") return ["⏳ ", tx("รอผู้ดูแลตรวจ")];
-    if (got.review === "rejected") return ["✕ ", tx("ไม่ผ่านการตรวจ กดเพื่ออัดใหม่")];
-    return ["✓ ", tx("ผ่านแล้ว กดเพื่ออัดใหม่")];
-  };
-  const used = Object.entries(usage).filter(([, n]) => n > 0);
+  const recorded = v.moods.filter((x) => x.status === "ready").length;
+  const missing = MOODS.filter((m) => !v.moods.some((x) => x.mood === m && x.status === "ready"));
+  const slots: MoodSlot[] = ["normal", ...MOODS];
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div className="row" style={{ gap: 6 }}>
-        <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", { 0: ready, 1: MOODS.length })}</span>
-        {MOODS.map((m) => {
-          const [mark, hint] = state(m);
-          const suggest = SUGGESTED.includes(m) && !v.moods.some((x) => x.mood === m);
+    <div className="mood-cats">
+      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
+        <span className="label" style={{ margin: 0 }}>{tx("หมวดอารมณ์ — ต้องอัดครบทุกหมวดก่อนส่งตรวจ")}</span>
+        <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", { 0: recorded, 1: MOODS.length })}</span>
+      </div>
+      <div className="mood-grid" role="list">
+        {slots.map((slot) => {
+          const { mark, hint, badge, suggest } = moodSlotState(v, slot);
+          const label = slot === "normal" ? tx("ปกติ") : tx(MOOD_LABEL[slot]);
+          const active = slot === "normal" ? pickedNormal : picked === slot;
+          const lines = usage[slot === "normal" ? "" : slot] ?? 0;
+          const canPreview = (badge === "ready" || badge === "draft" || badge === "pending") && (slot === "normal"
+            ? v.status === "ready"
+            : !!v.moods.find((x) => x.mood === slot && x.status === "ready"));
+          const url = slot === "normal"
+            ? fileUrl.voice(v.id, v.updated_at)
+            : fileUrl.voiceMood(v.id, slot, v.updated_at);
           return (
-            <button key={m} type="button" className={`chip${suggest ? " suggest" : ""}`} aria-pressed={picked === m}
-              title={hint} aria-label={`${tx(MOOD_LABEL[m])} · ${hint}`} onClick={() => onPick(m)}>
-              {mark}{tx(MOOD_LABEL[m])}
-            </button>
+            <div key={slot} className={`mood-card badge-${badge}${suggest ? " suggest" : ""}${active ? " active" : ""}`} role="listitem">
+              <button type="button" className="mood-card-main" aria-pressed={active}
+                title={hint} aria-label={`${label} · ${hint}`}
+                onClick={() => (slot === "normal" ? onPickNormal() : onPick(slot))}>
+                <span className="mood-card-mark" aria-hidden>{mark}</span>
+                <span className="mood-card-label">{label}</span>
+                <span className="mood-card-hint">{hint}</span>
+                {lines > 0 && <span className="mood-card-use">{lines} {tx("ประโยค")}</span>}
+              </button>
+              {canPreview && (
+                <PreviewButton url={url} playing={preview.playing} onToggle={preview.toggle} />
+              )}
+            </div>
           );
         })}
       </div>
-      {missing.length > 0 && v.status === "ready" && (
-        <span className="dim">{tx("แนะนำให้อัด {0} ก่อน งานละครและการ์ตูนใช้อารมณ์เหล่านี้บ่อย เสียงที่มีอารมณ์ครบจะถูกแนะนำให้ผู้ใช้บ่อยขึ้น",
-          { 0: missing.map((m) => tx(MOOD_LABEL[m])).join(" ") })}</span>
+      {missing.length > 0 && (
+        <span className="dim">{tx("ยังขาด {0} — ต้องอัดครบทุกหมวดถึงจะส่งให้แอดมินตรวจได้",
+          { 0: missing.map((m) => tx(MOOD_LABEL[m])).join(" · ") })}</span>
       )}
       {v.moods.filter((x) => x.review === "rejected" && x.review_note).map((x) => (
         <div key={x.mood} className="alert error">{tx("ผู้ดูแล ({0}):", { 0: tx(MOOD_LABEL[x.mood]) })} {x.review_note}</div>
       ))}
-      {used.length > 0 && (
-        <span className="dim">{tx("ถูกใช้พากย์:")} {used.map(([m, n]) =>
-          tx("{0} {1} ประโยค", { 0: m ? tx(MOOD_LABEL[m as Mood]) : tx("ปกติ"), 1: n })).join(" · ")}</span>
-      )}
     </div>
   );
 }
@@ -187,6 +243,9 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [key, setKey] = useState(0); // เปลี่ยนแล้วล้างเครื่องอัด
 
+  // เสียงในรายการอาจอัปเดตหลัง reload ให้ชี้ไปตัวล่าสุดของเสียงเดิม
+  const liveVoice = target.voice ? me.voices.find((x) => x.id === target.voice!.id) ?? target.voice : undefined;
+
   // เสียงที่กำลังเตรียมอยู่ โหลดสถานะใหม่ทุก 4 วินาที
   const preparing = me.voices.some((v) => [v, ...v.moods].some((x) => x.status === "processing"));
   useEffect(() => {
@@ -195,50 +254,85 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
     return () => clearInterval(t);
   }, [preparing, reload]);
 
+  const pickSlot = (voice: LibraryVoice, mood?: Mood) => {
+    setTarget({ voice, mood });
+    setBlob(null);
+    setKey((k) => k + 1);
+    setMessage(null);
+    requestAnimationFrame(() => document.getElementById("studio-title")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
   const send = async () => {
     if (!blob) return;
     setBusy(true);
     setMessage(null);
+    const mood = target.mood;
+    const voiceId = target.voice?.id;
     try {
-      await api.actorRecord(blob.data, blob.name, { voiceId: target.voice?.id, mood: target.mood, denoise });
+      await api.actorRecord(blob.data, blob.name, { voiceId, mood, denoise });
       setBlob(null);
       setKey((k) => k + 1);
-      setTarget({});
-      setMessage({ kind: "info", text: target.mood
-        ? tx("ส่งเสียงอารมณ์แล้ว ระหว่างรอผู้ดูแลตรวจ เสียงหลักและอารมณ์อื่นยังใช้พากย์ได้ตามปกติ")
-        : tx("ส่งเสียงแล้ว ระบบกำลังเตรียมเสียง แล้วผู้ดูแลจะตรวจฟังก่อนขึ้นคลัง") });
+      // คงหมวดที่เพิ่งส่งไว้ เห็นสถานะเตรียม/รอตรวจ แล้วกดหมวดถัดไปได้ทันที
+      setTarget(voiceId ? { voice: me.voices.find((x) => x.id === voiceId) ?? target.voice, mood } : {});
+      setMessage({ kind: "info", text: mood
+        ? tx("บันทึกหมวดอารมณ์แล้ว อัดให้ครบทุกหมวดแล้วกดส่งให้แอดมินตรวจ")
+        : tx("บันทึกเสียงหลักแล้ว ต่อไปอัดหมวดอารมณ์ให้ครบก่อนส่งตรวจ") });
+      reload();
+    } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); } finally { setBusy(false); }
+  };
+  const submitReview = async (v: LibraryVoice) => {
+    if (!canSubmit(v)) {
+      setMessage({ kind: "error", text: hasRejected(v)
+        ? tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")
+        : tx("ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ") });
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api.actorSubmitReview(v.id);
+      setMessage({ kind: "info", text: tx("ส่งชุดเสียงให้แอดมินตรวจแล้ว") });
       reload();
     } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); } finally { setBusy(false); }
   };
   const remove = async (v: LibraryVoice) => {
     if (!window.confirm(tx("ลบเสียง \"{0}\" ออกจากคลัง?", { 0: v.name }))) return;
-    try { await api.actorDeleteVoice(v.id); reload(); } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); }
+    try {
+      await api.actorDeleteVoice(v.id);
+      if (target.voice?.id === v.id) setTarget({});
+      reload();
+    } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); }
   };
 
   const lines = target.mood ? [MOOD_SCRIPT[target.mood]] : SCRIPT;
-  const title = target.mood ? tx("เสียงอารมณ์{0} ของ {1}", { 0: tx(MOOD_LABEL[target.mood]), 1: target.voice?.name })
-    : target.voice ? tx("อัดเสียงหลักของ {0} ใหม่", { 0: target.voice.name }) : tx("เสียงหลักใหม่");
+  const title = target.mood && liveVoice
+    ? tx("เสียงอารมณ์{0} ของ {1}", { 0: tx(MOOD_LABEL[target.mood]), 1: liveVoice.name })
+    : liveVoice ? tx("อัดเสียงหลักของ {0} ใหม่", { 0: liveVoice.name }) : tx("เสียงหลักใหม่");
   return (
     <>
       <section className="card" aria-labelledby="studio-title">
         <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
           <h2 id="studio-title" style={{ margin: 0 }}>{tx("ห้องอัด ·")} {title}</h2>
-          {target.voice && <button type="button" className="btn small" onClick={() => setTarget({})}>{tx("อัดเสียงใหม่แทน")}</button>}
+          {liveVoice && <button type="button" className="btn small" onClick={() => setTarget({})}>{tx("อัดเสียงใหม่แทน")}</button>}
         </div>
         <p className="muted" style={{ margin: 0 }}>
-          
-          {tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ")}{target.mood ? tx("ในอารมณ์นั้น") : ""}
+          {target.mood
+            ? tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ") + tx("ในอารมณ์นั้น")
+            : tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ")}
           {" "}{tx("ไม่ต้องรีบ เว้นจังหวะหายใจตามธรรมชาติ")}
+          {" "}{tx("แต่ละหมวดอารมณ์บันทึกแยกกัน ต้องอัดครบทุกหมวดถึงจะส่งให้แอดมินตรวจได้")}
         </p>
         <ol className="script">{lines.map((l) => <li key={l}>{l}</li>)}</ol>
-        <Recorder key={key} disabled={busy} onDone={(b, name) => setBlob(b ? { data: b, name } : null)} />
+        <Recorder key={`${key}-${liveVoice?.id ?? "new"}-${target.mood ?? "normal"}`} disabled={busy}
+          onDone={(b, name) => setBlob(b ? { data: b, name } : null)} />
         <label className="agree">
           <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />
-          
           {tx("ลดเสียงรบกวน (แนะนำเมื่ออัดด้วยไมค์มือถือหรือโน้ตบุ๊ก)")}
         </label>
         <button type="button" className="btn primary" style={{ alignSelf: "flex-start" }} disabled={!blob || busy} onClick={send}>
-          {busy ? tx("กำลังส่ง...") : tx("ส่งเสียงให้ผู้ดูแลตรวจ")}
+          {busy ? tx("กำลังบันทึก...") : target.mood
+            ? tx("บันทึกหมวด {0}", { 0: tx(MOOD_LABEL[target.mood]) })
+            : tx("บันทึกเสียงหลัก")}
         </button>
         {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
       </section>
@@ -255,15 +349,34 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
                   : v.review && REVIEW_BADGE[v.review]}
               </div>
               <div className="row" style={{ gap: 6 }}>
-                {v.status === "ready" && <PreviewButton url={fileUrl.voice(v.id, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} />}
-                <button type="button" className="btn small" onClick={() => setTarget({ voice: v })}>{tx("อัดใหม่")}</button>
                 <button type="button" className="btn small" onClick={() => remove(v)}>{tx("ลบ")}</button>
               </div>
             </div>
             {v.error && <div className="alert error">{v.error}</div>}
             {v.review === "rejected" && v.review_note && <div className="alert error">{tx("ผู้ดูแล:")} {v.review_note}</div>}
-            <MoodChips v={v} usage={me.mood_usage[v.id] ?? {}} picked={target.voice?.id === v.id ? target.mood : undefined}
-              onPick={(m) => setTarget({ voice: v, mood: m })} />
+            <MoodCategories
+              v={v}
+              usage={me.mood_usage[v.id] ?? {}}
+              picked={target.voice?.id === v.id ? target.mood : undefined}
+              pickedNormal={target.voice?.id === v.id && !target.mood}
+              onPick={(m) => pickSlot(v, m)}
+              onPickNormal={() => pickSlot(v)}
+              preview={preview}
+            />
+            {showSubmit(v) && (
+              <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <button type="button" className="btn primary" disabled={busy || !canSubmit(v)}
+                  onClick={() => submitReview(v)}
+                  title={canSubmit(v) ? undefined : tx("ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")}>
+                  {busy ? tx("กำลังส่ง...") : tx("ส่งให้แอดมินตรวจ")}
+                </button>
+                {hasRejected(v) ? (
+                  <span className="dim">{tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")}</span>
+                ) : !packageComplete(v) ? (
+                  <span className="dim">{tx("อัดให้ครบทุกหมวดอารมณ์ก่อน ปุ่มนี้จะเปิดให้กด")}</span>
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
       </section>

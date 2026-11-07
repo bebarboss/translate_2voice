@@ -210,7 +210,7 @@ class VoiceMood(BaseModel):
     analysis: Optional[VoiceAnalysis] = None
     denoise: bool = False  # ลดเสียงรบกวนหลังแยกเพลง
     # เสียงอารมณ์ของนักพากย์ (actors.py) เติมตอนส่งออกทาง API ไม่ได้เก็บกับเสียง
-    review: Optional[str] = None  # pending / approved / rejected
+    review: Optional[str] = None  # draft / pending / approved / rejected
     review_note: str = ""
 
 
@@ -252,7 +252,7 @@ class LibraryVoice(BaseModel):
     moods: list[VoiceMood] = Field(default_factory=list)  # เสียงตัวอย่างอารมณ์อื่น ๆ
     # เสียงที่นักพากย์อัด (actors.py) เติมตอนส่งออกทาง API ไม่ได้เก็บกับเสียง
     actor: Optional[str] = None  # ชื่อในวงการของนักพากย์
-    review: Optional[str] = None  # pending / approved / rejected ผู้ใช้ทั่วไปเห็นเฉพาะ approved
+    review: Optional[str] = None  # draft / pending / approved / rejected ผู้ใช้ทั่วไปเห็นเฉพาะ approved
     review_note: str = ""
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)

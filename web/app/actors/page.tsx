@@ -149,7 +149,9 @@ function VoiceReview() {
               <strong>{v.name}</strong><span className="dim">{tx("โดย")} {v.actor}</span>
               {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
                 : v.status === "failed" ? <span className="badge failed">{tx("เตรียมไม่สำเร็จ")}</span>
-                : <span className={`badge ${STATUS_BADGE[v.review ?? "pending"]}`}>{v.review === "approved" ? tx("อยู่ในคลัง") : v.review === "rejected" ? tx("ให้อัดใหม่") : tx("รอตรวจ")}</span>}
+                : <span className={`badge ${STATUS_BADGE[v.review === "draft" ? "pending" : (v.review ?? "pending")]}`}>
+                    {v.review === "approved" ? tx("อยู่ในคลัง") : v.review === "rejected" ? tx("ให้อัดใหม่")
+                      : v.review === "draft" ? tx("บันทึกแล้ว ยังไม่ส่งตรวจ") : tx("รอตรวจ")}</span>}
               {v.quality != null && <span className={`badge ${v.quality < 2.3 ? "warn" : "queued"}`}>{tx("ความสะอาด")} {v.quality.toFixed(1)}</span>}
             </div>
             <div className="row" style={{ gap: 6 }}>
@@ -169,8 +171,9 @@ function VoiceReview() {
                   {m.status === "ready"
                     ? <PreviewButton url={fileUrl.voiceMood(v.id, m.mood, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} label={tx(MOOD_LABEL[m.mood])} />
                     : <span className="badge queued">{tx(MOOD_LABEL[m.mood])} · {m.status === "failed" ? tx("ไม่สำเร็จ") : tx("กำลังเตรียม")}</span>}
-                  <span className={`badge ${STATUS_BADGE[m.review ?? "pending"]}`}>
-                    {m.review === "approved" ? tx("ใช้ได้") : m.review === "rejected" ? tx("ให้อัดใหม่") : tx("รอตรวจ")}
+                  <span className={`badge ${STATUS_BADGE[m.review === "draft" ? "pending" : (m.review ?? "pending")]}`}>
+                    {m.review === "approved" ? tx("ใช้ได้") : m.review === "rejected" ? tx("ให้อัดใหม่")
+                      : m.review === "draft" ? tx("บันทึกแล้ว ยังไม่ส่งตรวจ") : tx("รอตรวจ")}
                   </span>
                   {m.text && <span className="muted" style={{ fontSize: 13, flex: "1 1 200px" }}>{m.text}</span>}
                   <span style={{ marginLeft: "auto" }} className="row">
