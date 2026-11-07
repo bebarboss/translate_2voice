@@ -55,7 +55,8 @@ class Settings:
     # งานและโปรเจกต์ยังเป็นไฟล์ JSON ค่าตั้งกับคลังเสียงยังเขียนไฟล์สำรองไว้ด้วย
     db_backend: str = _env("DB_BACKEND", "files").lower()
     supabase_url: str = _env("SUPABASE_URL")
-    supabase_key: str = _env("SUPABASE_SERVICE_ROLE_KEY")
+    # คีย์เซิร์ฟเวอร์: แบบเดิม (JWT service_role) หรือแบบใหม่ (sb_secret_...)
+    supabase_key: str = _env("SUPABASE_SERVICE_ROLE_KEY") or _env("SUPABASE_SECRET_KEY")
     supabase_db_url: str = _env("SUPABASE_DB_URL")  # Postgres โดยตรง สำหรับบัญชี/งาน/โปรเจกต์ (schema studio)
 
     # บัญชีผู้ใช้และการเก็บเงิน (accounts.py) ยังไม่เปิดใช้งาน
