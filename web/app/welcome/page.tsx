@@ -115,13 +115,12 @@ export default function WelcomePage() {
           </div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            className="lp-hero-mascot"
-            src="/brand/icon-4x.png"
-            srcSet="/brand/icon-2x.png 272w, /brand/icon-4x.png 544w"
-            sizes="(max-width: 900px) 200px, 240px"
+            className="lp-hero-lockup"
+            src="/brand/logo-wide.png"
+            srcSet="/brand/logo-wide.png 1x, /brand/logo-wide-3x.png 3x"
             alt={BRAND_NAME}
-            width={544}
-            height={544}
+            width={876}
+            height={429}
           />
           <Demo />
         </section>
