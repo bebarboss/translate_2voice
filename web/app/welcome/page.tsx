@@ -114,7 +114,15 @@ export default function WelcomePage() {
             <p className="lp-note">{tx("รองรับคลิปภาษาจีน ญี่ปุ่น เกาหลี อังกฤษ และอีกหลายภาษา · พากย์เป็นไทยหรืออังกฤษ")}</p>
           </div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="lp-hero-mascot" src="/brand/icon.svg" alt={BRAND_NAME} width={512} height={512} />
+          <img
+            className="lp-hero-mascot"
+            src="/brand/icon-4x.png"
+            srcSet="/brand/icon-2x.png 272w, /brand/icon-4x.png 544w"
+            sizes="(max-width: 900px) 200px, 240px"
+            alt={BRAND_NAME}
+            width={544}
+            height={544}
+          />
           <Demo />
         </section>
 
