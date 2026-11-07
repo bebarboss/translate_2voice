@@ -69,7 +69,7 @@ function Showcase({ bonus }: { bonus: number }) {
         </div>
         <span className="auth-badge" aria-hidden="true">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/icon.png" alt="" width={56} height={56} />
+          <img src="/brand/icon.svg" alt="" width={56} height={56} />
         </span>
       </div>
       <div className="auth-offers" onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>

@@ -3,12 +3,12 @@ import Link from "next/link";
 export const BRAND_NAME = "Pakdee";
 export const BRAND_TAGLINE = "พากย์ดี · AI พากย์ไทย";
 
-/** ไอคอนนกแก้ว Pakdee (สี่เหลี่ยมส้ม) */
+/** ไอคอนนกแก้ว Pakdee (สี่เหลี่ยมส้ม) — ใช้ SVG จะไม่แตกตอนขยาย */
 export function BrandMark({ size = 34, className = "brand-mark" }: { size?: number; className?: string }) {
   return (
     <span className={className} style={{ width: size, height: size }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/icon.png" alt="" width={size} height={size} />
+      <img src="/brand/icon.svg" alt="" width={size} height={size} />
     </span>
   );
 }

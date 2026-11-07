@@ -15,7 +15,11 @@ export const metadata: Metadata = {
   title: "Pakdee",
   description: "พากย์ดี · AI พากย์ไทย — พากย์คลิปต่างประเทศเป็นไทยหรืออังกฤษ ด้วยเสียงนักแสดงต้นฉบับ",
   icons: {
-    icon: [{ url: "/brand/icon-32.png", sizes: "32x32", type: "image/png" }, { url: "/favicon.ico" }],
+    icon: [
+      { url: "/brand/icon.svg", type: "image/svg+xml" },
+      { url: "/brand/icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon.ico" },
+    ],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
   },
 };
