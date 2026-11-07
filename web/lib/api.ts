@@ -238,7 +238,7 @@ export interface ActorPayout {
   id: number; actor_id: string; month: string; amount: number; wht: number; payee_name: string; tax_id: string;
   note: string; paid_by: string; paid_at: number;
 }
-/** ข้อมูลรับค่าตอบแทน (หน้านักพากย์ได้เลขผู้เสียภาษีและเลขบัญชีแบบปิดเหลือ 4 ตัวท้าย) */
+/** ข้อมูลรับค่าตอบแทน (หน้าบัญชี · เลขผู้เสียภาษีและเลขบัญชีปิดเหลือ 4 ตัวท้าย) */
 export interface ActorPayment {
   payee_name: string; tax_id: string; address: string; bank: string; account_no: string; account_name: string;
   updated_at?: number;

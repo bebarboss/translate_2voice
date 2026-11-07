@@ -225,7 +225,7 @@ export default function DashboardPage() {
           {actorNotes.length > 0 && (
             <section className="card dash-block" aria-label={tx("ต้องดูแล")}>
               {actorNotes.map((item) => (
-                <Link key={item.key} href="/actor" className="dash-row">
+                <Link key={item.key} href={item.key === "pay" ? "/account#payout" : "/actor"} className="dash-row">
                   <span className="sq" aria-hidden="true">฿</span>
                   <span className="dash-main">
                     <b>{item.title}</b>

@@ -255,7 +255,7 @@ function Compensation() {
                       <button type="button" className="btn small" onClick={() => toggle(u.actor_id)}>{open === u.actor_id ? tx("ซ่อน") : tx("รายการ")}</button>
                       {u.payee
                         ? <button type="button" className="btn small" onClick={() => showPayee(u.actor_id)}>{tx("บัญชี")}</button>
-                        : <span className="dim" title={tx("นักพากย์ต้องกรอกข้อมูลรับเงินที่หน้านักพากย์ก่อน")}>{tx("ยังไม่กรอกบัญชี")}</span>}
+                        : <span className="dim" title={tx("นักพากย์ต้องกรอกข้อมูลรับเงินที่หน้าบัญชีก่อน")}>{tx("ยังไม่กรอกบัญชี")}</span>}
                       <button type="button" className="btn primary small" disabled={!!busy || u.due <= 0 || !u.payee} onClick={() => pay(u)}>{tx("จ่ายแล้ว")}</button>
                     </div>
                   </td>

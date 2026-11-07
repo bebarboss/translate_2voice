@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Recorder from "@/components/Recorder";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorConsentDoc, type ActorMe, type ActorPayment, type Gender, type LibraryVoice, type Mood,
+import Link from "next/link";
+import { api, fileUrl, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood,
   type UsageRow } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, MOODS, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
@@ -214,27 +215,29 @@ function moodSlotState(v: LibraryVoice, slot: MoodSlot): {
   return { mark: "✓", hint: tx("ผ่านแล้ว กดเพื่ออัดใหม่"), badge: "ready", suggest: false };
 }
 
-/** หมวดอารมณ์ของเสียงหนึ่ง: อัดและบันทึกทีละหมวด กดการ์ดเพื่อเปิดห้องอัดของหมวดนั้น */
-function MoodCategories({ v, usage, picked, pickedNormal, onPick, onPickNormal, preview }: {
-  v: LibraryVoice; usage: Record<string, number>; picked?: Mood; pickedNormal: boolean;
+function firstMissingMood(v: LibraryVoice): Mood | undefined {
+  return MOODS.find((m) => !v.moods.some((x) => x.mood === m && x.status === "ready"));
+}
+
+/** แถบเลือกหมวด: กดง่าย สถานะสั้น ๆ */
+function MoodPicker({ v, picked, pickedNormal, onPick, onPickNormal, preview }: {
+  v: LibraryVoice; picked?: Mood; pickedNormal: boolean;
   onPick: (m: Mood) => void; onPickNormal: () => void;
   preview: { playing: string | null; toggle: (url: string) => void };
 }) {
   const recorded = v.moods.filter((x) => x.status === "ready").length;
-  const missing = MOODS.filter((m) => !v.moods.some((x) => x.mood === m && x.status === "ready"));
   const slots: MoodSlot[] = ["normal", ...MOODS];
   return (
-    <div className="mood-cats">
-      <div className="row" style={{ justifyContent: "space-between", gap: 8 }}>
-        <span className="label" style={{ margin: 0 }}>{tx("หมวดอารมณ์ — ต้องอัดครบทุกหมวดก่อนส่งตรวจ")}</span>
-        <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", { 0: recorded, 1: MOODS.length })}</span>
+    <div className="mood-picker">
+      <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <span className="label" style={{ margin: 0 }}>{tx("เลือกหมวดที่จะอัด")}</span>
+        <span className="dim">{tx("อารมณ์ {0}/{1}", { 0: recorded, 1: MOODS.length })}</span>
       </div>
-      <div className="mood-grid" role="list">
+      <div className="mood-tabs" role="tablist" aria-label={tx("หมวดอารมณ์")}>
         {slots.map((slot) => {
-          const { mark, hint, badge, suggest } = moodSlotState(v, slot);
+          const { mark, hint, badge } = moodSlotState(v, slot);
           const label = slot === "normal" ? tx("ปกติ") : tx(MOOD_LABEL[slot]);
           const active = slot === "normal" ? pickedNormal : picked === slot;
-          const lines = usage[slot === "normal" ? "" : slot] ?? 0;
           const canPreview = (badge === "ready" || badge === "draft" || badge === "pending") && (slot === "normal"
             ? v.status === "ready"
             : !!v.moods.find((x) => x.mood === slot && x.status === "ready"));
@@ -242,26 +245,18 @@ function MoodCategories({ v, usage, picked, pickedNormal, onPick, onPickNormal, 
             ? fileUrl.voice(v.id, v.updated_at)
             : fileUrl.voiceMood(v.id, slot, v.updated_at);
           return (
-            <div key={slot} className={`mood-card badge-${badge}${suggest ? " suggest" : ""}${active ? " active" : ""}`} role="listitem">
-              <button type="button" className="mood-card-main" aria-pressed={active}
-                title={hint} aria-label={`${label} · ${hint}`}
+            <div key={slot} className={`mood-tab badge-${badge}${active ? " active" : ""}`}>
+              <button type="button" role="tab" aria-selected={active} title={hint}
+                aria-label={`${label} · ${hint}`}
                 onClick={() => (slot === "normal" ? onPickNormal() : onPick(slot))}>
-                <span className="mood-card-mark" aria-hidden>{mark}</span>
-                <span className="mood-card-label">{label}</span>
-                <span className="mood-card-hint">{hint}</span>
-                {lines > 0 && <span className="mood-card-use">{lines} {tx("ประโยค")}</span>}
+                <span className="mood-tab-mark" aria-hidden>{mark}</span>
+                <span className="mood-tab-label">{label}</span>
               </button>
-              {canPreview && (
-                <PreviewButton url={url} playing={preview.playing} onToggle={preview.toggle} />
-              )}
+              {canPreview && <PreviewButton url={url} playing={preview.playing} onToggle={preview.toggle} />}
             </div>
           );
         })}
       </div>
-      {missing.length > 0 && (
-        <span className="dim">{tx("ยังขาด {0} — ต้องอัดครบทุกหมวดถึงจะส่งให้แอดมินตรวจได้",
-          { 0: missing.map((m) => tx(MOOD_LABEL[m])).join(" · ") })}</span>
-      )}
       {v.moods.filter((x) => x.review === "rejected" && x.review_note).map((x) => (
         <div key={x.mood} className="alert error">{tx("ผู้ดูแล ({0}):", { 0: tx(MOOD_LABEL[x.mood]) })} {x.review_note}</div>
       ))}
@@ -285,6 +280,13 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
     if (target.voice) return me.voices.find((x) => x.id === target.voice!.id) ?? target.voice;
     return me.voices[0];
   })();
+
+  // มีเสียงแล้วยังไม่ได้เลือกหมวด → เด้งไปหมวดที่ยังขาด
+  useEffect(() => {
+    if (freshVoice || target.voice || !me.voices[0]) return;
+    const v = me.voices[0];
+    setTarget({ voice: v, mood: firstMissingMood(v) });
+  }, [me.voices, freshVoice, target.voice]);
 
   // เสียงที่กำลังเตรียมอยู่ โหลดสถานะใหม่ทุก 4 วินาที
   const preparing = me.voices.some((v) => [v, ...v.moods].some((x) => x.status === "processing"));
@@ -314,11 +316,12 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
       setBlob(null);
       setKey((k) => k + 1);
       setFreshVoice(false);
-      // ผูกห้องอัดกับเสียงที่เพิ่งบันทึก เปิดให้เลือกหมวดอารมณ์ต่อได้ทันที
-      setTarget({ voice: out, mood });
-      setMessage({ kind: "info", text: mood
-        ? tx("บันทึกหมวดอารมณ์แล้ว เลือกหมวดถัดไปด้านบนแล้วอัดต่อ หรืออัดให้ครบแล้วกดส่งตรวจ")
-        : tx("บันทึกเสียงหลักแล้ว เลือกหมวดอารมณ์ด้านบนแล้วอัดทีละหมวด") });
+      // หลังบันทึก เด้งไปหมวดที่ยังขาดอัตโนมัติ
+      const next = firstMissingMood(out);
+      setTarget({ voice: out, mood: next });
+      setMessage({ kind: "info", text: next
+        ? tx("บันทึกแล้ว · ต่อไปอัดหมวด {0}", { 0: tx(MOOD_LABEL[next]) })
+        : tx("อัดครบทุกหมวดแล้ว กดส่งให้แอดมินตรวจได้") });
       reload();
     } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); } finally { setBusy(false); }
   };
@@ -347,179 +350,123 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   };
 
   const lines = target.mood ? MOOD_SCRIPT[target.mood] : SCRIPT;
-  const title = target.mood && liveVoice
-    ? tx("เสียงอารมณ์{0} ของ {1}", { 0: tx(MOOD_LABEL[target.mood]), 1: liveVoice.name })
-    : liveVoice ? tx("อัดเสียงหลักของ {0} ใหม่", { 0: liveVoice.name }) : tx("เสียงหลักใหม่");
+  const step = !liveVoice ? 1 : 2;
+  const moodLabel = target.mood ? tx(MOOD_LABEL[target.mood]) : tx("ปกติ");
   const pickedNormal = !!liveVoice && !target.mood && !freshVoice;
+  const doneMoods = liveVoice ? liveVoice.moods.filter((x) => x.status === "ready").length : 0;
   return (
     <>
-      <section className="card" aria-labelledby="studio-title">
-        <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
-          <h2 id="studio-title" style={{ margin: 0 }}>{tx("ห้องอัด ·")} {title}</h2>
+      <section className="card actor-studio" aria-labelledby="studio-title">
+        <div className="actor-steps" aria-label={tx("ขั้นตอนการอัดเสียง")}>
+          <div className={`actor-step${step === 1 ? " current" : liveVoice ? " done" : ""}`}>
+            <span className="actor-step-n" aria-hidden>{liveVoice ? "✓" : "1"}</span>
+            <span>{tx("เสียงหลัก")}</span>
+          </div>
+          <span className="actor-step-line" aria-hidden />
+          <div className={`actor-step${step === 2 ? " current" : (liveVoice && packageComplete(liveVoice) ? " done" : "")}`}>
+            <span className="actor-step-n" aria-hidden>{liveVoice && packageComplete(liveVoice) ? "✓" : "2"}</span>
+            <span>{tx("อารมณ์ครบ 5 หมวด")}</span>
+          </div>
+        </div>
+
+        <div className="row" style={{ justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <h2 id="studio-title" style={{ margin: 0 }}>
+              {step === 1
+                ? tx("ขั้นที่ 1 · อัดเสียงหลัก")
+                : tx("ขั้นที่ 2 · อัดหมวด {0}", { 0: moodLabel })}
+            </h2>
+            <p className="muted actor-tip">
+              {step === 1
+                ? tx("ห้องเงียบ ห่างไมค์หนึ่งฝ่ามือ อ่านน้ำเสียงปกติช้า ๆ")
+                : tx("อ่านบทด้านล่างด้วยอารมณ์{0} จริง ๆ", { 0: moodLabel })}
+            </p>
+          </div>
           {liveVoice && (
             <button type="button" className="btn small" onClick={() => { setFreshVoice(true); setTarget({}); setBlob(null); setKey((k) => k + 1); }}>
-              {tx("อัดเสียงใหม่แทน")}
+              {tx("เริ่มเสียงใหม่")}
             </button>
           )}
         </div>
-        <p className="muted" style={{ margin: 0 }}>
-          {target.mood
-            ? tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ") + tx("ในอารมณ์นั้น")
-            : tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ")}
-          {" "}{tx("ไม่ต้องรีบ เว้นจังหวะหายใจตามธรรมชาติ")}
-          {" "}{tx("เลือกหมวดอารมณ์ด้านล่างแล้วอัดทีละหมวด ต้องครบทุกหมวดก่อนส่งตรวจ")}
-        </p>
 
-        {liveVoice ? (
-          <MoodCategories
+        {liveVoice && (
+          <MoodPicker
             v={liveVoice}
-            usage={me.mood_usage[liveVoice.id] ?? {}}
             picked={target.mood}
             pickedNormal={pickedNormal}
             onPick={(m) => pickSlot(liveVoice, m)}
             onPickNormal={() => pickSlot(liveVoice)}
             preview={preview}
           />
-        ) : (
-          <div className="mood-cats">
-            <span className="label" style={{ margin: 0 }}>{tx("หมวดอารมณ์")}</span>
-            <div className="mood-grid" role="list">
-              {(["normal", ...MOODS] as MoodSlot[]).map((slot) => (
-                <div key={slot} className="mood-card badge-empty" role="listitem">
-                  <button type="button" className="mood-card-main" disabled
-                    title={tx("อัดเสียงหลักก่อน แล้วค่อยเลือกหมวดอารมณ์")}>
-                    <span className="mood-card-mark" aria-hidden>+</span>
-                    <span className="mood-card-label">{slot === "normal" ? tx("ปกติ") : tx(MOOD_LABEL[slot])}</span>
-                    <span className="mood-card-hint">{tx("อัดเสียงหลักก่อน")}</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-            <span className="dim">{tx("อัดและบันทึกเสียงหลักก่อน จากนั้นจะเลือกหมวดอารมณ์ด้านบนนี้ได้")}</span>
-          </div>
         )}
 
+        <div className="script-head row" style={{ justifyContent: "space-between", gap: 8 }}>
+          <span className="label" style={{ margin: 0 }}>{tx("บทให้อ่าน")}</span>
+          {liveVoice && <span className="dim">{tx("คืบหน้าอารมณ์ {0}/{1}", { 0: doneMoods, 1: MOODS.length })}</span>}
+        </div>
         <ol className="script">{lines.map((l) => <li key={l}>{l}</li>)}</ol>
+
         <Recorder key={`${key}-${liveVoice?.id ?? "new"}-${target.mood ?? "normal"}`} disabled={busy}
           onDone={(b, name) => setBlob(b ? { data: b, name } : null)} />
         <label className="agree">
           <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} />
-          {tx("ลดเสียงรบกวน (แนะนำเมื่ออัดด้วยไมค์มือถือหรือโน้ตบุ๊ก)")}
+          {tx("ลดเสียงรบกวน (แนะนำเมื่ออัดด้วยไมค์มือถือ)")}
         </label>
-        <button type="button" className="btn primary" style={{ alignSelf: "flex-start" }} disabled={!blob || busy} onClick={send}>
-          {busy ? tx("กำลังบันทึก...") : target.mood
-            ? tx("บันทึกหมวด {0}", { 0: tx(MOOD_LABEL[target.mood]) })
-            : tx("บันทึกเสียงหลัก")}
-        </button>
-        {liveVoice && showSubmit(liveVoice) && (
-          <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <button type="button" className="btn primary" disabled={busy || !canSubmit(liveVoice)}
+
+        <div className="actor-actions">
+          <button type="button" className="btn primary" disabled={!blob || busy} onClick={send}>
+            {busy ? tx("กำลังบันทึก...") : step === 1
+              ? tx("บันทึกเสียงหลัก แล้วไปขั้นอารมณ์")
+              : tx("บันทึกหมวด {0}", { 0: moodLabel })}
+          </button>
+          {liveVoice && showSubmit(liveVoice) && (
+            <button type="button" className="btn" disabled={busy || !canSubmit(liveVoice)}
               onClick={() => submitReview(liveVoice)}
               title={canSubmit(liveVoice) ? undefined : tx("ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")}>
               {busy ? tx("กำลังส่ง...") : tx("ส่งให้แอดมินตรวจ")}
+              {!canSubmit(liveVoice) && !hasRejected(liveVoice) ? ` (${doneMoods}/${MOODS.length})` : ""}
             </button>
-            {hasRejected(liveVoice) ? (
-              <span className="dim">{tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")}</span>
-            ) : !packageComplete(liveVoice) ? (
-              <span className="dim">{tx("อัดให้ครบทุกหมวดอารมณ์ก่อน ปุ่มนี้จะเปิดให้กด")}</span>
-            ) : null}
-          </div>
+          )}
+        </div>
+        {liveVoice && showSubmit(liveVoice) && !canSubmit(liveVoice) && (
+          <span className="dim">
+            {hasRejected(liveVoice)
+              ? tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")
+              : tx("อัดอารมณ์ให้ครบ 5 หมวด แล้วปุ่มส่งตรวจจะพร้อม")}
+          </span>
         )}
         {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
       </section>
 
-      <section className="card" aria-labelledby="my-voices">
-        <h2 id="my-voices">{tx("เสียงของฉัน")}</h2>
-        {me.voices.length === 0 ? <span className="dim">{tx("ยังไม่ได้ส่งเสียง")}</span> : me.voices.map((v) => (
-          <div key={v.id} className="actor-voice">
-            <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
-              <div className="row" style={{ gap: 8 }}>
-                <strong>{v.name}</strong>
-                {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
-                  : v.status === "failed" ? <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>
-                  : v.review && REVIEW_BADGE[v.review]}
-                <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", {
-                  0: v.moods.filter((x) => x.status === "ready").length, 1: MOODS.length })}</span>
+      {me.voices.length > 0 && (
+        <section className="card" aria-labelledby="my-voices">
+          <h2 id="my-voices">{tx("เสียงของฉัน")}</h2>
+          {me.voices.map((v) => (
+            <div key={v.id} className="actor-voice">
+              <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <strong>{v.name}</strong>
+                  {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
+                    : v.status === "failed" ? <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>
+                    : v.review && REVIEW_BADGE[v.review]}
+                  <span className="dim">{tx("อารมณ์ {0}/{1}", {
+                    0: v.moods.filter((x) => x.status === "ready").length, 1: MOODS.length })}</span>
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <button type="button" className="btn small" onClick={() => {
+                    const next = firstMissingMood(v);
+                    pickSlot(v, next);
+                  }}>{tx("อัดต่อ")}</button>
+                  <button type="button" className="btn small" onClick={() => remove(v)}>{tx("ลบ")}</button>
+                </div>
               </div>
-              <div className="row" style={{ gap: 6 }}>
-                <button type="button" className="btn small" onClick={() => pickSlot(v)}>{tx("เลือกเพื่ออัดอารมณ์")}</button>
-                <button type="button" className="btn small" onClick={() => remove(v)}>{tx("ลบ")}</button>
-              </div>
+              {v.error && <div className="alert error">{v.error}</div>}
+              {v.review === "rejected" && v.review_note && <div className="alert error">{tx("ผู้ดูแล:")} {v.review_note}</div>}
             </div>
-            {v.error && <div className="alert error">{v.error}</div>}
-            {v.review === "rejected" && v.review_note && <div className="alert error">{tx("ผู้ดูแล:")} {v.review_note}</div>}
-          </div>
-        ))}
-      </section>
-    </>
-  );
-}
-
-const EMPTY_PAYMENT: ActorPayment = { payee_name: "", tax_id: "", address: "", bank: "", account_no: "", account_name: "" };
-
-/** ข้อมูลรับค่าตอบแทน: ผู้ดูแลบันทึกการจ่ายไม่ได้จนกว่าจะกรอก แก้ต้องกรอกเลขใหม่ทั้งหมด (หน้านี้เห็นแค่ 4 ตัวท้าย) */
-function PaymentSection({ me, reload }: { me: ActorMe; reload: () => void }) {
-  const [edit, setEdit] = useState(!me.payment);
-  const [form, setForm] = useState<ActorPayment>(me.payment ? { ...me.payment, tax_id: "", account_no: "" } : EMPTY_PAYMENT);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const set = (k: keyof ActorPayment) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true); setError("");
-    try { await api.actorSavePayment(form); setEdit(false); reload(); }
-    catch (err) { setError((err as Error).message); }
-    finally { setBusy(false); }
-  };
-  const p = me.payment;
-  const wht = me.wht.percent > 0
-    ? tx("หักภาษี ณ ที่จ่ายร้อยละ {0} เมื่อจ่ายครั้งละตั้งแต่ {1} และออกหนังสือรับรองการหักภาษีให้", { 0: me.wht.percent, 1: fmtBaht(me.wht.min) })
-    : "";
-  return (
-    <section className="card" aria-labelledby="pay-title">
-      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-        <h2 id="pay-title" style={{ margin: 0 }}>{tx("ข้อมูลรับเงิน")}</h2>
-        {p && !edit && <button type="button" className="btn small" onClick={() => setEdit(true)}>{tx("แก้ไข")}</button>}
-      </div>
-      <span className="muted" style={{ fontSize: 14 }}>
-        
-        {tx("ใช้โอนค่าตอบแทนและยื่นภาษี")} {wht}  {tx("ข้อมูลนี้เห็นเฉพาะคุณและผู้ดูแล")}
-      </span>
-      {!p && <div className="alert info">{tx("กรอกข้อมูลรับเงินก่อน ผู้ดูแลถึงจะจ่ายค่าตอบแทนให้ได้")}</div>}
-      {p && !edit ? (
-        <dl className="profile-list">
-          <div><dt className="dim">{tx("ผู้รับเงิน")}</dt><dd>{p.payee_name}</dd></div>
-          <div><dt className="dim">{tx("เลขผู้เสียภาษี")}</dt><dd>{p.tax_id}</dd></div>
-          <div><dt className="dim">{tx("ที่อยู่")}</dt><dd>{p.address}</dd></div>
-          <div><dt className="dim">{tx("บัญชี")}</dt><dd>{p.bank} {p.account_no} ({p.account_name})</dd></div>
-        </dl>
-      ) : (
-        <form onSubmit={save} style={{ display: "grid", gap: 12 }}>
-          <div className="field"><label htmlFor="pp-name">{tx("ชื่อ-นามสกุลผู้รับเงิน (ตามบัตรประชาชน)")}</label>
-            <input id="pp-name" className="input" value={form.payee_name} onChange={set("payee_name")} required maxLength={100} /></div>
-          <div className="field"><label htmlFor="pp-tax">{tx("เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก")}</label>
-            <input id="pp-tax" className="input" value={form.tax_id} onChange={set("tax_id")} required inputMode="numeric"
-              autoComplete="off" placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.tax_id }) : ""} /></div>
-          <div className="field"><label htmlFor="pp-addr">{tx("ที่อยู่ตามบัตรประชาชน")}</label>
-            <textarea id="pp-addr" className="textarea" rows={2} value={form.address} onChange={set("address")} required maxLength={300} /></div>
-          <div className="field"><label htmlFor="pp-bank">{tx("ธนาคาร")}</label>
-            <select id="pp-bank" className="select" value={form.bank} onChange={set("bank")} required>
-              <option value="">{tx("เลือกธนาคาร")}</option>
-              {me.banks.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select></div>
-          <div className="field"><label htmlFor="pp-acc">{tx("เลขบัญชี")}{form.bank === "พร้อมเพย์" ? tx(" (เบอร์โทรหรือเลขบัตรประชาชน)") : ""}</label>
-            <input id="pp-acc" className="input" value={form.account_no} onChange={set("account_no")} required inputMode="numeric"
-              autoComplete="off" placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.account_no }) : ""} /></div>
-          <div className="field"><label htmlFor="pp-accname">{tx("ชื่อบัญชี")}</label>
-            <input id="pp-accname" className="input" value={form.account_name} onChange={set("account_name")} required maxLength={100} /></div>
-          {error && <div className="alert error" role="alert">{error}</div>}
-          <div className="row" style={{ gap: 10 }}>
-            <button type="submit" className="btn primary small" disabled={busy}>{busy ? tx("กำลังบันทึก...") : tx("บันทึกข้อมูลรับเงิน")}</button>
-            {p && <button type="button" className="btn small" onClick={() => { setEdit(false); setError(""); }}>{tx("ยกเลิก")}</button>}
-          </div>
-        </form>
+          ))}
+        </section>
       )}
-    </section>
+    </>
   );
 }
 
@@ -651,7 +598,21 @@ export default function ActorPage() {
           <>
             <Studio me={me} reload={reload} />
             <Earnings me={me} />
-            <PaymentSection key={me.payment?.updated_at ?? 0} me={me} reload={reload} />
+            <section className="card">
+              <div className="row" style={{ justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <h2 style={{ margin: 0 }}>{tx("ข้อมูลรับเงิน")}</h2>
+                  <p className="muted" style={{ margin: "4px 0 0" }}>
+                    {me.payment
+                      ? tx("จัดการบัญชีรับค่าตอบแทนได้ที่หน้าบัญชี")
+                      : tx("กรอกข้อมูลรับเงินที่หน้าบัญชีก่อน ผู้ดูแลถึงจะจ่ายค่าตอบแทนให้ได้")}
+                  </p>
+                </div>
+                <Link href="/account#payout" className="btn primary small">
+                  {me.payment ? tx("เปิดหน้าบัญชี") : tx("กรอกข้อมูลรับเงิน")}
+                </Link>
+              </div>
+            </section>
             {me.consent && <span className="dim">{tx("ยอมรับหนังสือยินยอมเวอร์ชัน")} {me.consent.version}  {tx("เมื่อ")} {fmtDate(me.consent.accepted_at)}</span>}
           </>
         )}

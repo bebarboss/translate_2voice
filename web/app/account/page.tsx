@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import ActorPaymentSection from "@/components/ActorPaymentSection";
 import { fmtCredits, fmtDate, useWallet } from "@/components/Billing";
-import { GearIcon, ShieldIcon, TagIcon, UserIcon } from "@/components/Icons";
-import { api, fileUrl, type AccountType, type User } from "@/lib/api";
+import { GearIcon, MicIcon, ShieldIcon, TagIcon, UserIcon } from "@/components/Icons";
+import { api, fileUrl, type AccountType, type ActorMe, type User } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { chooseLang, chooseTheme, currentTheme, getLang, locale, tx, type Lang, type Theme } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
@@ -18,11 +19,12 @@ const signed = (n: number) => (n > 0 ? `+${fmtNum(n)}` : `−${fmtNum(Math.abs(n
 const TYPE_LABEL: Record<AccountType, string> = { personal: "บุคคลทั่วไป", creator: "ครีเอเตอร์", business: "บริษัท / หน่วยงาน" };
 const fmtDay = (unix: number) => new Date(unix * 1000).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "numeric" });
 
-type Tab = "profile" | "prefs" | "credits" | "privacy";
+type Tab = "profile" | "prefs" | "credits" | "payout" | "privacy";
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "profile", label: "โปรไฟล์", icon: <UserIcon size={16} /> },
   { id: "prefs", label: "การตั้งค่า", icon: <GearIcon size={16} /> },
   { id: "credits", label: "เครดิต", icon: <TagIcon size={16} /> },
+  { id: "payout", label: "รับเงินนักพากย์", icon: <MicIcon size={16} /> },
   { id: "privacy", label: "ข้อมูลและความเป็นส่วนตัว", icon: <ShieldIcon size={16} /> },
 ];
 
@@ -226,10 +228,47 @@ function PrivacyTab({ user }: { user: User }) {
   );
 }
 
+function PayoutTab({ me, reload }: { me: ActorMe | null; reload: () => void }) {
+  if (!me) return <div className="empty">{tx("กำลังโหลด...")}</div>;
+  const a = me.actor;
+  if (!a || a.status === "withdrawn") {
+    return (
+      <>
+        <Head title={tx("รับเงินนักพากย์")} text={tx("กรอกบัญชีรับค่าตอบแทนเมื่อสมัครและได้รับอนุมัติเป็นนักพากย์แล้ว")} />
+        <div className="set-group">
+          <div className="set-row">
+            <div><b>{tx("ยังไม่ได้เป็นนักพากย์")}</b><span className="d">{tx("ไปสมัครที่หน้านักพากย์ก่อน")}</span></div>
+            <div className="v"><Link href="/actor" className="btn primary small">{tx("เปิดหน้านักพากย์")}</Link></div>
+          </div>
+        </div>
+      </>
+    );
+  }
+  if (a.status !== "approved") {
+    return (
+      <>
+        <Head title={tx("รับเงินนักพากย์")} text={tx("กรอกได้เมื่อผู้ดูแลอนุมัติใบสมัครแล้ว")} />
+        <div className="set-group">
+          <div className="set-row">
+            <div><b>{a.status === "pending" ? tx("รออนุมัติใบสมัคร") : tx("ใบสมัครยังไม่ผ่าน")}</b>
+              <span className="d">{tx("สถานะใบสมัครดูได้ที่หน้านักพากย์")}</span></div>
+            <div className="v"><Link href="/actor" className="btn small">{tx("เปิดหน้านักพากย์")}</Link></div>
+          </div>
+        </div>
+      </>
+    );
+  }
+  return <ActorPaymentSection key={me.payment?.updated_at ?? 0} me={me} onSaved={reload} />;
+}
+
 /** โปรไฟล์และการตั้งค่าของบัญชี: เมนูย่อยซ้าย (จำแท็บไว้ใน #hash ของลิงก์) */
 export default function AccountPage() {
   const { config, user, loaded } = useAuth();
   const [tab, setTab] = useState<Tab>("profile");
+  const [actorMe, setActorMe] = useState<ActorMe | null>(null);
+  const reloadActor = useCallback(() => {
+    api.actorMe().then(setActorMe).catch(() => setActorMe(null));
+  }, []);
   useEffect(() => {
     const h = window.location.hash.slice(1);
     if (TABS.some((t) => t.id === h)) setTab(h as Tab);
@@ -237,6 +276,9 @@ export default function AccountPage() {
   useEffect(() => {
     if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/account";
   }, [loaded, config, user]);
+  useEffect(() => {
+    if (user) reloadActor();
+  }, [user, reloadActor]);
   const pick = (t: Tab) => { setTab(t); window.history.replaceState(null, "", `#${t}`); };
 
   if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
@@ -250,7 +292,12 @@ export default function AccountPage() {
       </main>
     );
   }
-  const tabs = TABS.filter((t) => t.id !== "credits" || config.billing);
+  const isActor = !!actorMe?.actor && actorMe.actor.status !== "withdrawn";
+  const tabs = TABS.filter((t) => {
+    if (t.id === "credits") return !!config.billing;
+    if (t.id === "payout") return isActor || tab === "payout";
+    return true;
+  });
   const shown = tabs.some((t) => t.id === tab) ? tab : "profile";
   return (
     <main className="page" style={{ maxWidth: 1040 }}>
@@ -266,6 +313,7 @@ export default function AccountPage() {
           {shown === "profile" && <ProfileTab user={user} />}
           {shown === "prefs" && <PrefsTab user={user} />}
           {shown === "credits" && <CreditsTab unlimited={user.admin} />}
+          {shown === "payout" && <PayoutTab me={actorMe} reload={reloadActor} />}
           {shown === "privacy" && <PrivacyTab user={user} />}
         </div>
       </div>
