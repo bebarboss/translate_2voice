@@ -144,6 +144,12 @@ def _clean(raw: psycopg.Connection) -> None:
             pass
 
 
+def _ensure_search_path(raw: psycopg.Connection) -> None:
+    """transaction pooler อาจสลับ backend ระหว่างคำขอ — ต้องตั้ง search_path ใหม่ทุกครั้ง"""
+    raw.execute("SET search_path TO studio")
+    raw.commit()
+
+
 def checkout() -> psycopg.Connection:
     global _created
     try:
@@ -177,6 +183,16 @@ def checkout() -> psycopg.Connection:
             with _created_lock:
                 _created = max(0, _created - 1)
             raise
+    try:
+        _ensure_search_path(raw)
+    except Exception:
+        try:
+            raw.close()
+        except Exception:
+            pass
+        with _created_lock:
+            _created = max(0, _created - 1)
+        return _open()
     return raw
 
 
@@ -296,6 +312,15 @@ def connect() -> Conn:
             _clean(_write_conn)
             if _write_conn.closed:
                 _write_conn = _open()
+            else:
+                try:
+                    _ensure_search_path(_write_conn)
+                except Exception:
+                    try:
+                        _write_conn.close()
+                    except Exception:
+                        pass
+                    _write_conn = _open()
         return Conn(_write_conn)
 
 
