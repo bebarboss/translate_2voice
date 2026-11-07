@@ -10,7 +10,8 @@ export function BrandMark({ size = 34, className = "brand-mark" }: { size?: numb
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/brand/icon.png"
-        srcSet="/brand/icon.png 1x, /brand/icon-2x.png 2x, /brand/icon-4x.png 4x"
+        srcSet="/brand/icon-2x.png 272w, /brand/icon.png 1024w"
+        sizes={`${size}px`}
         alt=""
         width={size}
         height={size}
