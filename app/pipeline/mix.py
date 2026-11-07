@@ -162,14 +162,23 @@ def mix_tracks(voice_wav: Path, bgm_wav: Optional[Path], out_wav: Path,
     return out_wav
 
 
-def mux_video(video: Path, audio_wav: Path, out_mp4: Path) -> Path:
+def mux_video(video: Path, audio_wav: Path, out_mp4: Path, watermark: str = "") -> Path:
     base = ["ffmpeg", "-y", "-i", video, "-i", audio_wav, "-map", "0:v:0", "-map", "1:a:0"]
     tail = ["-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_mp4]
-    reencode = base + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"] + tail
+    # ลายน้ำมุมขวาล่าง (แพ็กทดลอง) — บังคับ encode วิดีโอใหม่
+    vf = ""
+    if watermark.strip():
+        text = watermark.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+        vf = (f"drawtext=text='{text}':fontsize=h/18:fontcolor=white@0.55:"
+              f"borderw=2:bordercolor=black@0.35:x=w-tw-24:y=h-th-24")
+    reencode = base + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+    if vf:
+        reencode += ["-vf", vf]
+    reencode += tail
     # มือถือ (โดยเฉพาะ iPhone) เล่น VP9/AV1 ใน mp4 ไม่ได้ ก๊อปตรง ๆ ได้เฉพาะ H.264 8 บิต
     probe = run(["ffprobe", "-v", "error", "-select_streams", "v:0",
                  "-show_entries", "stream=codec_name,pix_fmt", "-of", "csv=p=0", video])
-    if probe.strip().split("\n")[0].split(",")[:2] != ["h264", "yuv420p"]:
+    if vf or probe.strip().split("\n")[0].split(",")[:2] != ["h264", "yuv420p"]:
         run(reencode)
         return out_mp4
     try:

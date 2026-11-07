@@ -68,12 +68,16 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     video = Path(job.input_path)
     duration = round(audio.probe_duration(video), 2)
     store.update(job_id, duration=duration)
-    if job.owner:  # งานของผู้ใช้ที่ล็อกอิน: ตัดนาทีก่อนเริ่มใช้การ์ดจอ เมื่อเปิดระบบเก็บเงิน (ไม่พอ = งานล้มพร้อมบอกเหตุผล)
+    if job.owner:  # งานของผู้ใช้ที่ล็อกอิน: ตรวจสิทธิ์ความยาว + ตัดเครดิตก่อนใช้การ์ดจอ
         from .. import accounts
         try:
+            accounts.check_clip_duration(job.owner, duration)
             accounts.charge_job(job.owner, job_id, duration)
         except accounts.AccountError as e:
             raise RuntimeError(str(e)) from None
+        if accounts.entitlements(job.owner).get("watermark") and not job.watermark:
+            store.update(job_id, watermark=True)
+            job = store.get(job_id)
 
     stage("extract_audio", 0.06)
     mixed = audio.extract_audio(video, d / "audio.wav")
@@ -637,7 +641,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         _remember(store, job_id, utterances)
         return
     stage("mux_video", 0.95)
-    mix.mux_video(video, d / "final_audio.wav", d / "output.mp4")
+    from ..config import settings as _cfg
+    mark = (_cfg.watermark_text if job.watermark else "") or ""
+    mix.mux_video(video, d / "final_audio.wav", d / "output.mp4", watermark=mark)
     subs.write_srt(utterances, d / "subtitles.srt")
 
     # วิดีโอฝังซับรุ่นเก่าใช้ไม่ได้แล้ว เพราะเสียงหรือบทเปลี่ยน

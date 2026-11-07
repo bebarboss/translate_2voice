@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from . import accounts, consent
 from .accounts import AccountError
+from .config import settings
 
 router = APIRouter()
 
@@ -182,8 +183,9 @@ def set_marketing(body: Marketing, request: Request, user=Depends(require_user))
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
 @router.get("/billing/plans", dependencies=[Depends(_need_billing)])
 def plans():
-    return {"plans": [p.__dict__ for p in accounts.PLANS], "credit_price": accounts.CREDIT_PRICE,
-            "credit_packs": list(accounts.CREDIT_PACKS), "card_bonus": accounts.CARD_BONUS}
+    return {"plans": [p.public_dict() for p in accounts.PLANS], "credit_price": accounts.CREDIT_PRICE,
+            "credit_packs": list(accounts.CREDIT_PACKS), "card_bonus": accounts.CARD_BONUS,
+            "rollover_cycles": settings.plan_credit_rollover}
 
 
 @router.get("/billing/wallet", dependencies=[Depends(_need_billing)])
@@ -195,6 +197,15 @@ def wallet(user=Depends(require_user)):
 def subscribe(body: Subscribe, user=Depends(require_user)):
     try:
         return accounts.subscribe(user["id"], body.plan_id)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/billing/trial", dependencies=[Depends(_need_billing)])
+def claim_trial(user=Depends(require_user)):
+    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี"""
+    try:
+        return accounts.claim_trial(user["id"])
     except AccountError as e:
         raise _fail(e)
 

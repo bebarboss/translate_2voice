@@ -46,21 +46,50 @@ _session_cache_lock = threading.Lock()
 class Plan:
     id: str
     name: str
-    price: int  # สตางค์ต่อรอบ
+    price: int  # สตางค์ต่อรอบ (0 = ฟรี)
     minutes: int  # เครดิตต่อรอบ (1 เครดิต = 1 นาที)
     days: int = 30
+    max_clip_minutes: float = 60.0
+    voices: str = "all"  # standard = เฉพาะเสียงที่แอดมินเพิ่ม, all = ทุกเสียง
+    timeline: bool = False
+    watermark: bool = False
+    free_once: bool = False  # รับได้ครั้งเดียวต่อบัญชี โดยไม่ต้องชำระ
+    features: tuple = ()
+
+    def public_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name, "price": self.price, "minutes": self.minutes,
+            "days": self.days, "max_clip_minutes": self.max_clip_minutes, "voices": self.voices,
+            "timeline": self.timeline, "watermark": self.watermark, "free_once": self.free_once,
+            "features": list(self.features),
+        }
 
 
-# ราคาตั้งต้น ปรับได้ก่อนเปิดใช้งานจริง
-PLANS = [
-    Plan("starter", "เริ่มต้น", 299_00, 30),
-    Plan("pro", "มือโปร", 990_00, 120),
-    Plan("studio", "สตูดิโอ", 2_990_00, 400),
-]
-CREDIT_PRICE = 15_00  # ราคาเครดิตเติม (สตางค์ต่อเครดิต) แพ็กเกจรายเดือนตกเครดิตละถูกกว่า
-CREDIT_PACKS = (10, 30, 100, 300)  # จำนวนเครดิตที่หน้าเว็บให้เลือกซื้อ
+def _load_plans() -> list[Plan]:
+    from .config import billing_plan_dicts
+    out: list[Plan] = []
+    for raw in billing_plan_dicts():
+        feats = raw.get("features") or []
+        out.append(Plan(
+            id=str(raw["id"]), name=str(raw["name"]), price=int(raw["price"]),
+            minutes=int(raw["minutes"]), days=int(raw.get("days", 30)),
+            max_clip_minutes=float(raw.get("max_clip_minutes", 60)),
+            voices=str(raw.get("voices", "all")),
+            timeline=bool(raw.get("timeline", False)),
+            watermark=bool(raw.get("watermark", False)),
+            free_once=bool(raw.get("free_once", False)),
+            features=tuple(str(x) for x in feats),
+        ))
+    return out
+
+
+PLANS = _load_plans()
+CREDIT_PRICE = settings.credit_price_satang
+CREDIT_PACKS = settings.credit_packs
 UNIT = 100  # หน่วยย่อยต่อ 1 เครดิต (คิดละเอียด 0.01 เครดิต)
-CARD_BONUS = 5  # เครดิตฟรีเมื่อผูกบัตรครั้งแรก (ได้ครั้งเดียวต่อผู้ใช้ และต่อบัตรหนึ่งใบ)
+CARD_BONUS = 0  # เลิกโบนัสผูกบัตร — ใช้แพ็กทดลองแทน
+# แพ็กเกจเก่าที่ยังมีใน subscriptions → ใช้สิทธิ์เทียบเท่าแพ็กใหม่
+_LEGACY_PLAN_FEATURES = {"studio": "pro"}
 
 
 class AccountError(Exception):
@@ -79,6 +108,104 @@ def billing_enabled() -> bool:
 
 def plan(plan_id: str) -> Optional[Plan]:
     return next((p for p in PLANS if p.id == plan_id), None)
+
+
+def _feature_plan(plan_id: Optional[str]) -> Optional[Plan]:
+    """แผนสำหรับอ่านสิทธิ์ (รวมแม็ปแพ็กเก่า เช่น studio → pro)"""
+    if not plan_id:
+        return None
+    p = plan(plan_id)
+    if p:
+        return p
+    mapped = _LEGACY_PLAN_FEATURES.get(plan_id)
+    return plan(mapped) if mapped else None
+
+
+def trial_claimed(uid: str) -> bool:
+    """เคยรับแพ็กทดลองแล้วหรือยัง (ledger kind=trial หรือเคยเป็น trial)"""
+    rows = _read(
+        "SELECT 1 AS ok FROM ledger WHERE user_id = ? AND (kind = 'trial' OR (kind IN ('subscribe','adjust') AND ref = 'trial')) LIMIT 1",
+        uid)
+    if rows:
+        return True
+    rows = _read("SELECT 1 AS ok FROM subscriptions WHERE user_id = ? AND plan_id = 'trial' LIMIT 1", uid)
+    return bool(rows)
+
+
+def entitlements(uid: Optional[str]) -> dict:
+    """สิทธิ์ตามแพ็กเกจปัจจุบัน (แอดมิน = ไม่จำกัด)"""
+    base = {
+        "plan_id": None, "plan_name": None, "max_clip_minutes": 0.0,
+        "voices": "none", "timeline": False, "watermark": True,
+        "can_topup": False, "trial_available": False, "has_plan": False,
+    }
+    if not billing_enabled() or not uid:
+        return {**base, "max_clip_minutes": 60.0, "voices": "all", "timeline": True, "watermark": False}
+    with _lock:
+        db = _db()
+        u = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if u is None:
+            return base
+        if is_admin(u):
+            return {
+                "plan_id": "admin", "plan_name": "ผู้ดูแล", "max_clip_minutes": 24 * 60,
+                "voices": "all", "timeline": True, "watermark": False,
+                "can_topup": True, "trial_available": False, "has_plan": True,
+            }
+        sub = _subscription(db, uid)
+        claimed = bool(db.execute(
+            "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
+            (uid,)).fetchone())
+    if sub is None:
+        return {**base, "trial_available": not claimed}
+    fp = _feature_plan(sub["plan_id"]) or Plan(
+        id=sub["plan_id"], name=sub["plan_id"], price=0, minutes=0,
+        max_clip_minutes=30, voices="all", timeline=False, watermark=False)
+    return {
+        "plan_id": sub["plan_id"], "plan_name": fp.name,
+        "max_clip_minutes": float(fp.max_clip_minutes),
+        "voices": fp.voices, "timeline": bool(fp.timeline), "watermark": bool(fp.watermark),
+        "can_topup": True, "trial_available": False, "has_plan": True,
+    }
+
+
+def check_clip_duration(uid: Optional[str], seconds: float) -> None:
+    """ตรวจความยาวคลิปตามสิทธิ์แพ็กเกจ เกินแล้วโยน 402 พร้อมข้อความอัปเกรด"""
+    if not billing_enabled() or not uid:
+        return
+    ent = entitlements(uid)
+    if ent.get("plan_id") == "admin":
+        return
+    max_m = float(ent.get("max_clip_minutes") or 0)
+    if max_m <= 0:
+        raise AccountError(402, "ยังไม่มีแพ็กเกจ รับทดลองฟรีหรือซื้อแพ็กเกจที่หน้าโปรโมชันก่อนส่งคลิป")
+    if seconds > max_m * 60 + 0.5:
+        length = f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+        raise AccountError(
+            402,
+            f"คลิปยาว {length} นาที เกินสิทธิ์แพ็กเกจ{ent.get('plan_name') or ''} "
+            f"(ยาวสุด {max_m:g} นาที) อัปเกรดที่หน้าโปรโมชัน")
+
+
+def require_timeline(uid: Optional[str]) -> None:
+    if not billing_enabled() or not uid:
+        return
+    ent = entitlements(uid)
+    if ent.get("timeline") or ent.get("plan_id") == "admin":
+        return
+    raise AccountError(402, "นำเข้าไทม์ไลน์ใช้ได้เฉพาะแพ็กเกจมือโปร อัปเกรดที่หน้าโปรโมชัน")
+
+
+def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str]) -> bool:
+    """แพ็กทดลองใช้ได้เฉพาะเสียง standard (ไม่ใช่เสียงนักพากย์)"""
+    if not billing_enabled() or not uid:
+        return True
+    ent = entitlements(uid)
+    if ent.get("voices") == "all" or ent.get("plan_id") == "admin":
+        return True
+    if ent.get("voices") == "standard":
+        return voice_id not in actor_voice_ids
+    return False
 
 
 # ---------------------------------------------------------------- ฐานข้อมูล
@@ -465,6 +592,7 @@ def wallet(uid: str) -> dict:
         "credits": credits_out(u["credits"]) if u else 0,
         "subscription": _sub_out(sub),
         "credit_price": CREDIT_PRICE,
+        "entitlements": entitlements(uid),
         "ledger": [{**dict(r), "credits": credits_out(r["credits"]), "minutes": credits_out(r["minutes"])}
                    for r in ledger],
     }
@@ -485,11 +613,19 @@ def credit(uid: str, credits: float, kind: str = "topup", amount: int = 0, ref: 
 
 
 def _activate(db, uid: str, p: Plan, kind: str, amount: int, note: str) -> None:
-    """เริ่มแพ็กเกจใหม่วันนี้ เครดิตแพ็กเกจที่เหลือของรอบเดิมไม่ทบ"""
+    """เริ่มแพ็กเกจใหม่วันนี้ ทบเครดิตแพ็กเกจที่เหลือได้ตาม PLAN_CREDIT_ROLLOVER (หน่วย = รอบของแพ็กใหม่)"""
     now = time.time()
+    prev = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
+    carry = 0
+    cycles = max(0, int(settings.plan_credit_rollover))
+    if prev and cycles > 0 and prev["minutes_left"] > 0:
+        # ทบได้ไม่เกิน (เครดิตแพ็กใหม่ × จำนวนรอบ) — ค่าเริ่มต้น 1 รอบ
+        carry = min(int(prev["minutes_left"]), p.minutes * UNIT * cycles)
+    granted = p.minutes * UNIT + carry
     db.execute("INSERT OR REPLACE INTO subscriptions VALUES (?, ?, ?, ?, ?)",
-               (uid, p.id, p.minutes * UNIT, now, now + p.days * 86400))
-    _log(db, uid, kind, minutes=p.minutes * UNIT, amount=amount, ref=p.id, note=note)
+               (uid, p.id, granted, now, now + p.days * 86400))
+    extra = f" ทบ {fmt_credits(carry)} จากรอบก่อน" if carry else ""
+    _log(db, uid, kind, minutes=granted, amount=amount, ref=p.id, note=note + extra)
 
 
 def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
@@ -526,13 +662,16 @@ def can_start(uid: str) -> None:
         u = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()
     if (sub and sub["minutes_left"] > 0) or (u and u["credits"] > 0):
         return
-    raise AccountError(402, "เครดิตหมด ซื้อแพ็กเกจหรือเติมเครดิตก่อนส่งงาน")
+    if not sub and not trial_claimed(uid):
+        raise AccountError(402, "ยังไม่มีแพ็กเกจ รับทดลองฟรีหรือซื้อแพ็กเกจที่หน้าโปรโมชันก่อนส่งงาน")
+    raise AccountError(402, "เครดิตหมด ซื้อแพ็กเกจหรือเติมเครดิตที่หน้าโปรโมชัน")
 
 
 def charge_job(uid: str, job_id: str, seconds: float) -> None:
     """ตัดเครดิตของงานเมื่อรู้ความยาวคลิป (ต้นขั้นวิเคราะห์) ตัดครั้งเดียวต่องาน พากย์ซ้ำหรือแก้บทไม่ตัดเพิ่ม"""
     if not billing_enabled():
         return
+    check_clip_duration(uid, seconds)
     need = job_credits(seconds)
     length = f"{int(seconds // 60)}:{int(seconds % 60):02d}"
     with _tx() as db:
@@ -854,13 +993,38 @@ def slip_file(topup_id: str, uid: str, admin: bool) -> tuple[Path, str, str]:
 def buy_credits(uid: str, credits: int) -> dict:
     if not TOPUP_MIN <= credits <= TOPUP_MAX:
         raise AccountError(400, f"ซื้อได้ครั้งละ {TOPUP_MIN:,}–{TOPUP_MAX:,} เครดิต")
+    ent = entitlements(uid)
+    if not ent.get("can_topup"):
+        raise AccountError(402, "ซื้อเครดิตเติมได้เมื่อมีแพ็กเกจแล้ว รับทดลองหรือซื้อแพ็กเกจที่หน้าโปรโมชันก่อน")
     return _start_payment(uid, credits * CREDIT_PRICE, credits=credits)
+
+
+def claim_trial(uid: str) -> dict:
+    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี"""
+    p = plan("trial")
+    if p is None or not p.free_once:
+        raise AccountError(404, "ไม่มีแพ็กเกจทดลอง")
+    with _tx() as db:
+        if db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        if db.execute(
+            "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
+            (uid,),
+        ).fetchone():
+            raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
+        if _exempt(db, uid):
+            raise AccountError(400, "บัญชีผู้ดูแลไม่ต้องใช้แพ็กทดลอง")
+        _activate(db, uid, p, "trial", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิตฟรี")
+        sub = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
+    return {"plan": p.public_dict(), "subscription": _sub_out(sub), "entitlements": entitlements(uid)}
 
 
 def subscribe(uid: str, plan_id: str) -> dict:
     p = plan(plan_id)
     if p is None:
         raise AccountError(404, "ไม่พบแพ็กเกจนี้")
+    if p.free_once or p.price <= 0:
+        return claim_trial(uid)
     return _start_payment(uid, p.price, plan_id=p.id)
 
 

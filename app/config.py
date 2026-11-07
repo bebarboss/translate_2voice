@@ -1,7 +1,9 @@
 """ค่าตั้งค่าทั้งหมดของระบบ อ่านจาก environment variables หรือไฟล์ .env"""
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -27,6 +29,59 @@ def _float(name: str, default: float) -> float:
 def _int(name: str, default: int) -> int:
     value = os.getenv(name)
     return int(value) if value else default
+
+
+# แพ็กเกจเริ่มต้น (ทับด้วย BILLING_PLANS เป็น JSON ได้) — ราคาเป็นสตางค์
+_DEFAULT_BILLING_PLANS: list[dict[str, Any]] = [
+    {
+        "id": "trial", "name": "ทดลอง", "price": 0, "minutes": 5, "days": 30,
+        "max_clip_minutes": 2, "voices": "standard", "timeline": False, "watermark": True,
+        "free_once": True,
+        "features": [
+            "ฟรี 5 เครดิต ครั้งเดียวต่อบัญชี",
+            "คลิปยาวสุด 2 นาที",
+            "เสียง Standard (ที่แอดมินเพิ่ม)",
+            "ดาวน์โหลดมีลายน้ำ",
+        ],
+    },
+    {
+        "id": "starter", "name": "เริ่มต้น", "price": 299_00, "minutes": 60, "days": 30,
+        "max_clip_minutes": 30, "voices": "all", "timeline": False, "watermark": False,
+        "free_once": False,
+        "features": [
+            "60 เครดิต / 30 วัน",
+            "คลิปยาวสุด 30 นาที",
+            "เลือกเสียงได้ทั้งหมด",
+            "ไม่มีลายน้ำ",
+        ],
+    },
+    {
+        "id": "pro", "name": "มือโปร", "price": 990_00, "minutes": 220, "days": 30,
+        "max_clip_minutes": 60, "voices": "all", "timeline": True, "watermark": False,
+        "free_once": False,
+        "features": [
+            "220 เครดิต / 30 วัน",
+            "คลิปยาวสุด 60 นาที",
+            "เลือกเสียงได้ทั้งหมด",
+            "นำเข้าไทม์ไลน์ได้",
+        ],
+    },
+]
+
+
+def _billing_plans() -> list[dict[str, Any]]:
+    raw = _env("BILLING_PLANS")
+    if not raw:
+        return list(_DEFAULT_BILLING_PLANS)
+    data = json.loads(raw)
+    if not isinstance(data, list) or not data:
+        raise RuntimeError("BILLING_PLANS ต้องเป็น JSON array ของแพ็กเกจ")
+    return data
+
+
+def _credit_packs() -> tuple[int, ...]:
+    raw = _env("CREDIT_PACKS", "10,30,60,100")
+    return tuple(int(x.strip()) for x in raw.split(",") if x.strip())
 
 
 @dataclass(frozen=True)
@@ -76,6 +131,11 @@ class Settings:
     stripe_secret_key: str = _env("STRIPE_SECRET_KEY")
     stripe_webhook_secret: str = _env("STRIPE_WEBHOOK_SECRET")
     stripe_publishable_key: str = _env("STRIPE_PUBLISHABLE_KEY")  # ไม่จำเป็นสำหรับ Checkout แบบ redirect
+    # แพ็กเกจและเครดิต (accounts.py / BILLING_PLANS) — ราคาเครดิตเติมเป็นสตางค์
+    credit_price_satang: int = _int("CREDIT_PRICE_SATANG", 700)  # 7 บาท/เครดิต
+    credit_packs: tuple = _credit_packs()
+    plan_credit_rollover: int = _int("PLAN_CREDIT_ROLLOVER", 1)  # ทบเครดิตแพ็กเกจได้ไม่เกินกี่รอบของแพ็กใหม่
+    watermark_text: str = _env("WATERMARK_TEXT", "Dubbing Studio")
     # นักพากย์ (actors.py): ค่าตอบแทนต่อนาทีที่เสียงถูกใช้พากย์ (สตางค์) และผู้ควบคุมข้อมูลในหนังสือยินยอม PDPA
     actor_rate: int = _int("ACTOR_RATE_SATANG_PER_MIN", 200)
     # ภาษีหัก ณ ที่จ่ายค่าตอบแทนนักพากย์: กี่เปอร์เซ็นต์ (0 = ไม่หัก) หักเมื่อจ่ายครั้งละตั้งแต่กี่สตางค์ และประเภทเงินได้ในรายงาน
@@ -223,3 +283,8 @@ class Settings:
 
 
 settings = Settings()
+
+
+def billing_plan_dicts() -> list[dict[str, Any]]:
+    """รายการแพ็กเกจจาก BILLING_PLANS หรือค่าเริ่มต้นในไฟล์นี้"""
+    return _billing_plans()

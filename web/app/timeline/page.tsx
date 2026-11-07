@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
-import { uploadTimeline, type TargetLang } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, uploadTimeline, type Entitlements, type TargetLang } from "@/lib/api";
 import { GENRES, LANGS, TARGET_LABEL } from "@/lib/format";
 import { ArrowRight, UploadIcon } from "@/components/Icons";
 
@@ -26,7 +27,13 @@ export default function TimelineImportPage() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [ent, setEnt] = useState<Entitlements | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    api.wallet().then((w) => setEnt(w.entitlements ?? null)).catch(() => setEnt(null));
+  }, []);
+  const locked = ent != null && !ent.timeline && ent.plan_id !== "admin";
 
   const pick = (f: File | undefined | null) => {
     setError("");
@@ -58,6 +65,20 @@ export default function TimelineImportPage() {
       abortRef.current = null;
     }
   };
+
+  if (locked) {
+    return (
+      <main className="page narrow">
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>{tx("นำเข้าไทม์ไลน์")}</h1>
+        <div className="card" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            {tx("ฟีเจอร์นี้ใช้ได้เฉพาะแพ็กเกจมือโปร แพ็กเกจปัจจุบันล็อกไว้")}
+          </p>
+          <Link href="/promotions" className="btn primary">{tx("อัปเกรดแพ็กเกจ")}</Link>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="page">

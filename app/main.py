@@ -363,6 +363,7 @@ async def create_job(
     job_dir = store.dir(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
     input_path, filename = "", ""
+    watermark = bool(owner and accounts.entitlements(owner).get("watermark"))
 
     if has_file:
         ext = Path(file.filename).suffix.lower()
@@ -373,6 +374,13 @@ async def create_job(
         dest = job_dir / f"input{ext}"
         await save_upload(file, dest, job_dir)
         input_path, filename = str(dest), file.filename
+        if owner and not library:
+            try:
+                from .pipeline import audio as _audio
+                accounts.check_clip_duration(owner, _audio.probe_duration(dest))
+            except accounts.AccountError as e:
+                shutil.rmtree(job_dir, ignore_errors=True)
+                raise HTTPException(e.status, str(e))
     else:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -391,6 +399,7 @@ async def create_job(
         review=True if library else rs.default_review if review is None else review,
         burn_subs=False if library else rs.default_burn_subs if burn_subs is None else burn_subs,
         library=library,
+        watermark=watermark,
         genre=genre.strip(),
         glossary=glossary.strip(),
         owner=owner,
@@ -851,6 +860,8 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
         raise HTTPException(409, "เปลี่ยนเสียงได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
     voice_map = dict(job.voice_map)
     hidden = hidden_voices(request)
+    actor_ids = set(actors.voice_actors())
+    uid = current_user_id(request)
     for speaker, voice_id in choice.items():
         if speaker not in job.speakers:
             raise HTTPException(400, f"ไม่รู้จักผู้พูด {speaker} มีแค่ {job.speakers}")
@@ -860,6 +871,8 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
         v = voice_store.get(voice_id) if voice_id not in hidden else None
         if v is None or v.status != VoiceStatus.ready:
             raise HTTPException(400, f"เสียง {voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
+        if uid and not accounts.voice_allowed(uid, voice_id, actor_ids):
+            raise HTTPException(402, "แพ็กเกจนี้ใช้ได้เฉพาะเสียง Standard อัปเกรดที่หน้าโปรโมชันเพื่อใช้เสียงนักพากย์")
         voice_map[speaker] = voice_id
     return store.update(job_id, voice_map=voice_map)
 
@@ -885,8 +898,16 @@ def _clean_categories(values: list[str]) -> list[str]:
 @app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
 def list_voices(request: Request):
     info, hidden, moods = actors.voice_actors(), hidden_voices(request), actors.mood_reviews()
-    return [with_actor(v, info.get(v.id), sees_pending(request, info.get(v.id)), moods)
-            for v in voice_store.all() if v.id not in hidden]
+    actor_ids = set(info)
+    uid = current_user_id(request)
+    out = []
+    for v in voice_store.all():
+        if v.id in hidden:
+            continue
+        if uid and not accounts.voice_allowed(uid, v.id, actor_ids):
+            continue
+        out.append(with_actor(v, info.get(v.id), sees_pending(request, info.get(v.id)), moods))
+    return out
 
 
 @app.post("/voices", response_model=LibraryVoice, status_code=202,
@@ -1154,6 +1175,11 @@ async def import_timeline(
     from .timeline import importer, model as tl_model
 
     owner = current_user_id(request)
+    if owner:
+        try:
+            accounts.require_timeline(owner)
+        except accounts.AccountError as e:
+            raise HTTPException(e.status, str(e))
     if target_lang not in ("th", "en"):
         raise HTTPException(400, "ภาษาพากย์ต้องเป็น th หรือ en")
     job_id = store.new_id()

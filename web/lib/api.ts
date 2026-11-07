@@ -122,12 +122,24 @@ export interface LegalDoc { version: string; text: string }
 export interface Legal { terms: LegalDoc; privacy: LegalDoc }
 export interface ConsentChoice { terms_version: string; privacy_version: string; marketing?: boolean }
 /** minutes = เครดิตแพ็กเกจต่อรอบ */
-export interface Plan { id: string; name: string; price: number; minutes: number; days: number }
+export interface Plan {
+  id: string; name: string; price: number; minutes: number; days: number;
+  max_clip_minutes?: number; voices?: "standard" | "all" | string;
+  timeline?: boolean; watermark?: boolean; free_once?: boolean; features?: string[];
+}
+export interface Entitlements {
+  plan_id: string | null; plan_name: string | null; max_clip_minutes: number;
+  voices: string; timeline: boolean; watermark: boolean;
+  can_topup: boolean; trial_available: boolean; has_plan: boolean;
+}
 /** minutes_left = เครดิตแพ็กเกจที่เหลือ หมดอายุพร้อมแพ็กเกจ */
 export interface Subscription { plan_id: string; minutes_left: number; started_at: number; expires_at: number }
 /** credits = เครดิตเติมที่เปลี่ยน, minutes = เครดิตแพ็กเกจที่เปลี่ยน, amount = เงินที่จ่าย */
 export interface LedgerEntry { kind: string; credits: number; minutes: number; amount: number; ref: string | null; note: string; created_at: number }
-export interface Wallet { credits: number; subscription: Subscription | null; credit_price: number; ledger: LedgerEntry[] }
+export interface Wallet {
+  credits: number; subscription: Subscription | null; credit_price: number;
+  entitlements?: Entitlements; ledger: LedgerEntry[];
+}
 export interface Payee { name: string; bank: string; account: string }
 /** amount ของ ocr เป็นสตางค์ เท่ากับ amount ของรายการ (null = อ่านยอดไม่ได้) */
 export interface SlipOcr {
@@ -418,6 +430,8 @@ export const api = {
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
   subscribe: (planId: string) => request<PaymentOrder>("/billing/subscribe", json("POST", { plan_id: planId })),
+  /** รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี */
+  claimTrial: () => request<{ plan: Plan; subscription: Subscription | null; entitlements: Entitlements }>("/billing/trial", { method: "POST" }),
   cards: () => request<Cards>("/billing/cards"),
   /** token จากสคริปต์ของผู้ให้บริการชำระเงิน (เลขบัตรไม่ผ่านเซิร์ฟเวอร์เรา) */
   addCard: (token: string) => request<{ card: Card; bonus: number }>("/billing/cards", json("POST", { token })),
