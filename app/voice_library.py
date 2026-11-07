@@ -52,7 +52,11 @@ class VoiceStore:
     def _write(self, v: LibraryVoice) -> None:
         _atomic_write(self.dir(v.id) / "voice.json", v.model_dump_json(indent=2))
         if db.enabled():
-            push(v)
+            try:
+                push(v)
+            except db.DBError as e:
+                # ไฟล์ในเครื่องเป็นต้นฉบับอยู่แล้ว — อย่าทำให้ทั้งคำขอล้มเพราะ REST ขัดข้องชั่วคราว
+                log.error("บันทึกคลังเสียงลง Supabase ไม่ได้ (ใช้ไฟล์ในเครื่องต่อ): %s", e)
 
     def dir(self, voice_id: str) -> Path:
         return self.root / voice_id
@@ -133,7 +137,10 @@ class VoiceStore:
         with self._lock:
             self._voices.pop(voice_id, None)
             if db.enabled():
-                db.delete("voices", id=f"eq.{voice_id}")
+                try:
+                    db.delete("voices", id=f"eq.{voice_id}")
+                except db.DBError as e:
+                    log.error("ลบคลังเสียงใน Supabase ไม่ได้: %s", e)
             shutil.rmtree(self.dir(voice_id), ignore_errors=True)
 
     def save_embedding(self, voice_id: str, emb: Optional[np.ndarray]) -> None:
@@ -143,7 +150,10 @@ class VoiceStore:
         else:
             np.save(path, emb.astype(np.float32))
         if db.enabled():
-            db.update("voices", {"embedding": db.vector(emb)}, id=f"eq.{voice_id}")
+            try:
+                db.update("voices", {"embedding": db.vector(emb)}, id=f"eq.{voice_id}")
+            except db.DBError as e:
+                log.error("บันทึกลายเสียงลง Supabase ไม่ได้: %s", e)
 
     def embedding(self, voice_id: str) -> Optional[np.ndarray]:
         path = self.dir(voice_id) / "embedding.npy"
