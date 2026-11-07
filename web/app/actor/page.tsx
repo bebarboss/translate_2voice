@@ -242,9 +242,14 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [key, setKey] = useState(0); // เปลี่ยนแล้วล้างเครื่องอัด
+  const [freshVoice, setFreshVoice] = useState(false); // true = ตั้งใจอัดเสียงคนละตัวใหม่ ไม่ผูกเสียงเดิม
 
-  // เสียงในรายการอาจอัปเดตหลัง reload ให้ชี้ไปตัวล่าสุดของเสียงเดิม
-  const liveVoice = target.voice ? me.voices.find((x) => x.id === target.voice!.id) ?? target.voice : undefined;
+  // มีเสียงแล้วผูกห้องอัดกับเสียงนั้นอัตโนมัติ เพื่อให้เลือกหมวดอารมณ์ได้ทันที
+  const liveVoice = (() => {
+    if (freshVoice && !target.voice) return undefined;
+    if (target.voice) return me.voices.find((x) => x.id === target.voice!.id) ?? target.voice;
+    return me.voices[0];
+  })();
 
   // เสียงที่กำลังเตรียมอยู่ โหลดสถานะใหม่ทุก 4 วินาที
   const preparing = me.voices.some((v) => [v, ...v.moods].some((x) => x.status === "processing"));
@@ -255,6 +260,7 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   }, [preparing, reload]);
 
   const pickSlot = (voice: LibraryVoice, mood?: Mood) => {
+    setFreshVoice(false);
     setTarget({ voice, mood });
     setBlob(null);
     setKey((k) => k + 1);
@@ -267,16 +273,17 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
     setBusy(true);
     setMessage(null);
     const mood = target.mood;
-    const voiceId = target.voice?.id;
+    const voiceId = liveVoice?.id;
     try {
-      await api.actorRecord(blob.data, blob.name, { voiceId, mood, denoise });
+      const out = await api.actorRecord(blob.data, blob.name, { voiceId, mood, denoise });
       setBlob(null);
       setKey((k) => k + 1);
-      // คงหมวดที่เพิ่งส่งไว้ เห็นสถานะเตรียม/รอตรวจ แล้วกดหมวดถัดไปได้ทันที
-      setTarget(voiceId ? { voice: me.voices.find((x) => x.id === voiceId) ?? target.voice, mood } : {});
+      setFreshVoice(false);
+      // ผูกห้องอัดกับเสียงที่เพิ่งบันทึก เปิดให้เลือกหมวดอารมณ์ต่อได้ทันที
+      setTarget({ voice: out, mood });
       setMessage({ kind: "info", text: mood
-        ? tx("บันทึกหมวดอารมณ์แล้ว อัดให้ครบทุกหมวดแล้วกดส่งให้แอดมินตรวจ")
-        : tx("บันทึกเสียงหลักแล้ว ต่อไปอัดหมวดอารมณ์ให้ครบก่อนส่งตรวจ") });
+        ? tx("บันทึกหมวดอารมณ์แล้ว เลือกหมวดถัดไปด้านบนแล้วอัดต่อ หรืออัดให้ครบแล้วกดส่งตรวจ")
+        : tx("บันทึกเสียงหลักแล้ว เลือกหมวดอารมณ์ด้านบนแล้วอัดทีละหมวด") });
       reload();
     } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); } finally { setBusy(false); }
   };
@@ -299,7 +306,7 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
     if (!window.confirm(tx("ลบเสียง \"{0}\" ออกจากคลัง?", { 0: v.name }))) return;
     try {
       await api.actorDeleteVoice(v.id);
-      if (target.voice?.id === v.id) setTarget({});
+      if (target.voice?.id === v.id || liveVoice?.id === v.id) { setTarget({}); setFreshVoice(false); }
       reload();
     } catch (e) { setMessage({ kind: "error", text: (e as Error).message }); }
   };
@@ -308,20 +315,55 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
   const title = target.mood && liveVoice
     ? tx("เสียงอารมณ์{0} ของ {1}", { 0: tx(MOOD_LABEL[target.mood]), 1: liveVoice.name })
     : liveVoice ? tx("อัดเสียงหลักของ {0} ใหม่", { 0: liveVoice.name }) : tx("เสียงหลักใหม่");
+  const pickedNormal = !!liveVoice && !target.mood && !freshVoice;
   return (
     <>
       <section className="card" aria-labelledby="studio-title">
         <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
           <h2 id="studio-title" style={{ margin: 0 }}>{tx("ห้องอัด ·")} {title}</h2>
-          {liveVoice && <button type="button" className="btn small" onClick={() => setTarget({})}>{tx("อัดเสียงใหม่แทน")}</button>}
+          {liveVoice && (
+            <button type="button" className="btn small" onClick={() => { setFreshVoice(true); setTarget({}); setBlob(null); setKey((k) => k + 1); }}>
+              {tx("อัดเสียงใหม่แทน")}
+            </button>
+          )}
         </div>
         <p className="muted" style={{ margin: 0 }}>
           {target.mood
             ? tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ") + tx("ในอารมณ์นั้น")
             : tx("อัดในห้องเงียบ ไม่มีเสียงแอร์หรือพัดลม ห่างไมค์ประมาณหนึ่งฝ่ามือ อ่านด้วยน้ำเสียงปกติของคุณ")}
           {" "}{tx("ไม่ต้องรีบ เว้นจังหวะหายใจตามธรรมชาติ")}
-          {" "}{tx("แต่ละหมวดอารมณ์บันทึกแยกกัน ต้องอัดครบทุกหมวดถึงจะส่งให้แอดมินตรวจได้")}
+          {" "}{tx("เลือกหมวดอารมณ์ด้านล่างแล้วอัดทีละหมวด ต้องครบทุกหมวดก่อนส่งตรวจ")}
         </p>
+
+        {liveVoice ? (
+          <MoodCategories
+            v={liveVoice}
+            usage={me.mood_usage[liveVoice.id] ?? {}}
+            picked={target.mood}
+            pickedNormal={pickedNormal}
+            onPick={(m) => pickSlot(liveVoice, m)}
+            onPickNormal={() => pickSlot(liveVoice)}
+            preview={preview}
+          />
+        ) : (
+          <div className="mood-cats">
+            <span className="label" style={{ margin: 0 }}>{tx("หมวดอารมณ์")}</span>
+            <div className="mood-grid" role="list">
+              {(["normal", ...MOODS] as MoodSlot[]).map((slot) => (
+                <div key={slot} className="mood-card badge-empty" role="listitem">
+                  <button type="button" className="mood-card-main" disabled
+                    title={tx("อัดเสียงหลักก่อน แล้วค่อยเลือกหมวดอารมณ์")}>
+                    <span className="mood-card-mark" aria-hidden>+</span>
+                    <span className="mood-card-label">{slot === "normal" ? tx("ปกติ") : tx(MOOD_LABEL[slot])}</span>
+                    <span className="mood-card-hint">{tx("อัดเสียงหลักก่อน")}</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+            <span className="dim">{tx("อัดและบันทึกเสียงหลักก่อน จากนั้นจะเลือกหมวดอารมณ์ด้านบนนี้ได้")}</span>
+          </div>
+        )}
+
         <ol className="script">{lines.map((l) => <li key={l}>{l}</li>)}</ol>
         <Recorder key={`${key}-${liveVoice?.id ?? "new"}-${target.mood ?? "normal"}`} disabled={busy}
           onDone={(b, name) => setBlob(b ? { data: b, name } : null)} />
@@ -334,6 +376,20 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
             ? tx("บันทึกหมวด {0}", { 0: tx(MOOD_LABEL[target.mood]) })
             : tx("บันทึกเสียงหลัก")}
         </button>
+        {liveVoice && showSubmit(liveVoice) && (
+          <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button type="button" className="btn primary" disabled={busy || !canSubmit(liveVoice)}
+              onClick={() => submitReview(liveVoice)}
+              title={canSubmit(liveVoice) ? undefined : tx("ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")}>
+              {busy ? tx("กำลังส่ง...") : tx("ส่งให้แอดมินตรวจ")}
+            </button>
+            {hasRejected(liveVoice) ? (
+              <span className="dim">{tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")}</span>
+            ) : !packageComplete(liveVoice) ? (
+              <span className="dim">{tx("อัดให้ครบทุกหมวดอารมณ์ก่อน ปุ่มนี้จะเปิดให้กด")}</span>
+            ) : null}
+          </div>
+        )}
         {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
       </section>
 
@@ -347,36 +403,16 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
                 {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
                   : v.status === "failed" ? <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>
                   : v.review && REVIEW_BADGE[v.review]}
+                <span className="dim">{tx("เสียงอารมณ์ {0}/{1}", {
+                  0: v.moods.filter((x) => x.status === "ready").length, 1: MOODS.length })}</span>
               </div>
               <div className="row" style={{ gap: 6 }}>
+                <button type="button" className="btn small" onClick={() => pickSlot(v)}>{tx("เลือกเพื่ออัดอารมณ์")}</button>
                 <button type="button" className="btn small" onClick={() => remove(v)}>{tx("ลบ")}</button>
               </div>
             </div>
             {v.error && <div className="alert error">{v.error}</div>}
             {v.review === "rejected" && v.review_note && <div className="alert error">{tx("ผู้ดูแล:")} {v.review_note}</div>}
-            <MoodCategories
-              v={v}
-              usage={me.mood_usage[v.id] ?? {}}
-              picked={target.voice?.id === v.id ? target.mood : undefined}
-              pickedNormal={target.voice?.id === v.id && !target.mood}
-              onPick={(m) => pickSlot(v, m)}
-              onPickNormal={() => pickSlot(v)}
-              preview={preview}
-            />
-            {showSubmit(v) && (
-              <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                <button type="button" className="btn primary" disabled={busy || !canSubmit(v)}
-                  onClick={() => submitReview(v)}
-                  title={canSubmit(v) ? undefined : tx("ต้องอัดเสียงอารมณ์ให้ครบทุกหมวดก่อนส่งให้แอดมินตรวจ")}>
-                  {busy ? tx("กำลังส่ง...") : tx("ส่งให้แอดมินตรวจ")}
-                </button>
-                {hasRejected(v) ? (
-                  <span className="dim">{tx("มีหมวดที่ถูกตีกลับ ให้อัดใหม่ก่อนส่งตรวจ")}</span>
-                ) : !packageComplete(v) ? (
-                  <span className="dim">{tx("อัดให้ครบทุกหมวดอารมณ์ก่อน ปุ่มนี้จะเปิดให้กด")}</span>
-                ) : null}
-              </div>
-            )}
           </div>
         ))}
       </section>
