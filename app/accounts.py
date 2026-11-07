@@ -300,6 +300,14 @@ def _migrate(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE topups ADD COLUMN provider_ref TEXT")
     db.execute("CREATE TABLE IF NOT EXISTS slip_uses ("
                "hash TEXT PRIMARY KEY, topup_id TEXT NOT NULL, created_at REAL NOT NULL)")
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS feedback ("
+        "id TEXT PRIMARY KEY, user_id TEXT, email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', "
+        "category TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, job_id TEXT NOT NULL DEFAULT '', "
+        "status TEXT NOT NULL DEFAULT 'open', admin_note TEXT NOT NULL DEFAULT '', "
+        "created_at REAL NOT NULL, resolved_at REAL)"
+    )
+    db.execute("CREATE INDEX IF NOT EXISTS feedback_status_created ON feedback(status, created_at)")
 
 
 class _tx:
@@ -1103,6 +1111,108 @@ def remove_card(uid: str, card_id: str) -> None:
             raise AccountError(404, "ไม่พบบัตรนี้")
         db.execute("DELETE FROM cards WHERE id = ?", (card_id,))
     _detach_card(row["provider"], row["ref"])
+
+
+FEEDBACK_CATEGORIES = ("bug", "billing", "quality", "feature", "other")
+_FEEDBACK_DDL = (
+    "CREATE TABLE IF NOT EXISTS feedback ("
+    "id TEXT PRIMARY KEY, user_id TEXT, email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', "
+    "category TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL, job_id TEXT NOT NULL DEFAULT '', "
+    "status TEXT NOT NULL DEFAULT 'open', admin_note TEXT NOT NULL DEFAULT '', "
+    "created_at REAL NOT NULL, resolved_at REAL)"
+)
+
+
+def _ensure_feedback(db) -> None:
+    db.execute(_FEEDBACK_DDL)
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS feedback_status_created ON feedback(status, created_at)")
+    except Exception:
+        pass
+
+
+def _feedback_out(row) -> dict:
+    return {
+        "id": row["id"], "user_id": row["user_id"], "email": row["email"] or "", "name": row["name"] or "",
+        "category": row["category"], "subject": row["subject"], "body": row["body"],
+        "job_id": row["job_id"] or "", "status": row["status"], "admin_note": row["admin_note"] or "",
+        "created_at": row["created_at"], "resolved_at": row["resolved_at"],
+    }
+
+
+def submit_feedback(uid: Optional[str], *, category: str, subject: str, body: str, job_id: str = "") -> dict:
+    """ผู้ใช้แจ้งปัญหาหรือข้อเสนอแนะ"""
+    cat = (category or "").strip()
+    if cat not in FEEDBACK_CATEGORIES:
+        raise AccountError(400, "เลือกประเภทปัญหาไม่ถูกต้อง")
+    sub = (subject or "").strip()
+    text = (body or "").strip()
+    if len(sub) < 3:
+        raise AccountError(400, "กรอกหัวข้อสั้น ๆ อย่างน้อย 3 ตัวอักษ")
+    if len(text) < 10:
+        raise AccountError(400, "อธิบายปัญหาอย่างน้อย 10 ตัวอักษ")
+    if len(sub) > 120 or len(text) > 4000:
+        raise AccountError(400, "ข้อความยาวเกินไป")
+    jid = (job_id or "").strip()[:80]
+    email, name = "", ""
+    with _tx() as db:
+        _ensure_feedback(db)
+        if uid:
+            u = db.execute("SELECT id, email, name FROM users WHERE id = ?", (uid,)).fetchone()
+            if u is None:
+                raise AccountError(404, "ไม่พบผู้ใช้นี้")
+            email, name = u["email"] or "", u["name"] or ""
+        fid = secrets.token_urlsafe(12)
+        now = time.time()
+        db.execute(
+            "INSERT INTO feedback (id, user_id, email, name, category, subject, body, job_id, status, admin_note, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', '', ?)",
+            (fid, uid, email, name, cat, sub, text, jid, now),
+        )
+        row = db.execute("SELECT * FROM feedback WHERE id = ?", (fid,)).fetchone()
+    return _feedback_out(row)
+
+
+def list_feedback(uid: str, *, mine: bool = False) -> list[dict]:
+    """รายการแจ้งปัญหา — ของตัวเอง หรือทั้งหมดเมื่อเป็นผู้ดูแล"""
+    with _lock:
+        db = _db()
+        _ensure_feedback(db)
+        if mine:
+            rows = db.execute(
+                "SELECT * FROM feedback WHERE user_id = ? ORDER BY created_at DESC LIMIT 50", (uid,)
+            ).fetchall()
+        else:
+            u = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+            if u is None or not is_admin(u):
+                raise AccountError(403, "เฉพาะผู้ดูแลระบบ")
+            rows = db.execute("SELECT * FROM feedback ORDER BY created_at DESC LIMIT 100").fetchall()
+    return [_feedback_out(r) for r in rows]
+
+
+def resolve_feedback(fid: str, admin_email: str, *, status: str = "done", note: str = "") -> dict:
+    """ผู้ดูแลปิดหรือเปิดรายงานใหม่"""
+    if status not in ("open", "done"):
+        raise AccountError(400, "สถานะไม่ถูกต้อง")
+    with _tx() as db:
+        _ensure_feedback(db)
+        row = db.execute("SELECT * FROM feedback WHERE id = ?", (fid,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบรายการนี้")
+        resolved = time.time() if status == "done" else None
+        note_text = (note or "").strip()[:500]
+        if note_text:
+            db.execute(
+                "UPDATE feedback SET status = ?, resolved_at = ?, admin_note = ? WHERE id = ?",
+                (status, resolved, note_text, fid),
+            )
+        else:
+            db.execute(
+                "UPDATE feedback SET status = ?, resolved_at = ? WHERE id = ?",
+                (status, resolved, fid),
+            )
+        row = db.execute("SELECT * FROM feedback WHERE id = ?", (fid,)).fetchone()
+    return _feedback_out(row)
 
 
 def mark_paid(topup_id: str) -> None:

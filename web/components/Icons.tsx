@@ -88,3 +88,6 @@ export const ShieldIcon = ({ size = 18, color = "currentColor" }: P) =>
 
 export const FolderIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />);
+
+export const FlagIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 21V4" /><path d="M4 4h10l-1.5 4L14 12H4" /></>);

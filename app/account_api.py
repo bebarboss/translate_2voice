@@ -99,6 +99,18 @@ class RejectSlip(BaseModel):
     note: str = Field("", max_length=300, description="เหตุผลที่สลิปไม่ผ่าน ผู้ใช้เห็นข้อความนี้")
 
 
+class FeedbackIn(BaseModel):
+    category: str = Field(..., description="bug | billing | quality | feature | other")
+    subject: str = Field(..., max_length=120)
+    body: str = Field(..., max_length=4000)
+    job_id: str = Field("", max_length=80, description="รหัสงานที่เกี่ยวข้อง (ถ้ามี)")
+
+
+class FeedbackResolve(BaseModel):
+    status: str = Field("done", description="open | done")
+    note: str = Field("", max_length=500)
+
+
 # ---------------------------------------------------------------- บัญชี
 @router.get("/auth/config")
 def auth_config():
@@ -336,5 +348,42 @@ def admin_set_admin(user_id: str, body: SetAdmin, admin=Depends(require_admin)):
     """ให้หรือถอดสิทธิ์ผู้ดูแลระบบ"""
     try:
         accounts.set_admin(user_id, body.admin, admin)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/feedback")
+def post_feedback(body: FeedbackIn, user=Depends(require_user)):
+    """แจ้งปัญหาหรือข้อเสนอแนะ"""
+    try:
+        return accounts.submit_feedback(
+            user["id"], category=body.category, subject=body.subject, body=body.body, job_id=body.job_id,
+        )
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.get("/feedback")
+def get_my_feedback(user=Depends(require_user)):
+    """รายการที่ผู้ใช้แจ้งไว้"""
+    try:
+        return accounts.list_feedback(user["id"], mine=True)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.get("/admin/feedback")
+def admin_feedback_list(admin=Depends(require_admin)):
+    """คิวแจ้งปัญหาทั้งหมด"""
+    try:
+        return accounts.list_feedback(admin["id"], mine=False)
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.post("/admin/feedback/{feedback_id}")
+def admin_resolve_feedback(feedback_id: str, body: FeedbackResolve, admin=Depends(require_admin)):
+    try:
+        return accounts.resolve_feedback(feedback_id, admin["email"], status=body.status, note=body.note)
     except AccountError as e:
         raise _fail(e)

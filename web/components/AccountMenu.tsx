@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, type AuthConfig, type User } from "@/lib/api";
 import { chooseLang, chooseTheme, currentTheme, getLang, tx, type Lang, type Theme } from "@/lib/i18n";
-import { GearIcon, ShieldIcon, TagIcon, UserIcon } from "./Icons";
+import { FlagIcon, GearIcon, ShieldIcon, TagIcon, UserIcon } from "./Icons";
 
 const LANGS: [Lang, string][] = [["th", "ไทย"], ["en", "English"]];
 const THEMES: [Theme, string][] = [["system", "อัตโนมัติ"], ["dark", "มืด"], ["light", "สว่าง"]];
@@ -71,6 +71,7 @@ export default function AccountMenu({ config, user }: { config: AuthConfig | nul
               {config?.billing && !user.admin && (
                 <Link role="menuitem" href="/promotions" className="menu-item" onClick={() => setOpen(false)}><TagIcon />{tx("แพ็กเกจและโปรโมชัน")}</Link>
               )}
+              <Link role="menuitem" href="/support" className="menu-item" onClick={() => setOpen(false)}><FlagIcon />{tx("แจ้งปัญหา")}</Link>
               {user.admin && (
                 <Link role="menuitem" href="/admin" className="menu-item" onClick={() => setOpen(false)}><ShieldIcon />{tx("ผู้ดูแลระบบ")}</Link>
               )}

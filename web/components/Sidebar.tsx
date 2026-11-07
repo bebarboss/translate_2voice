@@ -9,7 +9,7 @@ import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
 import { BrandLink } from "./Brand";
-import { FolderIcon, GearIcon, GridIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
+import { FlagIcon, FolderIcon, GearIcon, GridIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
   { href: "/dashboard", label: "ภาพรวม", icon: <GridIcon size={16} /> },
@@ -19,6 +19,7 @@ const LINKS = [
   { href: "/projects", label: "โปรเจกต์", icon: <FolderIcon size={16} /> },
   { href: "/voices", label: "คลังเสียง", icon: <WaveIcon /> },
   { href: "/settings", label: "ตั้งค่า", icon: <GearIcon /> },
+  { href: "/support", label: "แจ้งปัญหา", icon: <FlagIcon size={16} /> },
 ];
 const RECENT = 6;
 // หน้าที่ไม่มีเมนูซ้าย (มีโครงของตัวเอง)

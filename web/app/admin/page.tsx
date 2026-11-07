@@ -297,6 +297,66 @@ function UsersSection({ me, billing }: { me: string; billing: boolean }) {
   );
 }
 
+const FEEDBACK_CAT: Record<string, string> = {
+  bug: "บั๊กหรือข้อผิดพลาด", billing: "เครดิตและการชำระเงิน", quality: "คุณภาพพากย์",
+  feature: "ขอฟีเจอร์", other: "อื่น ๆ",
+};
+
+function FeedbackSection() {
+  const [rows, setRows] = useState<import("@/lib/api").FeedbackItem[] | null>(null);
+  const [error, setError] = useState("");
+  const { busy, message, run } = useRunner(() => api.adminFeedback().then(setRows).catch((e) => setError(e.message)));
+  useEffect(() => {
+    api.adminFeedback().then(setRows).catch((e) => setError(e.message));
+  }, []);
+  const open = rows?.filter((r) => r.status === "open") ?? [];
+  return (
+    <section className="card" aria-labelledby="feedback-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="feedback-title" style={{ margin: 0 }}>{tx("แจ้งปัญหา")}{open.length ? ` (${open.length})` : ""}</h2>
+        <Link href="/support" className="btn small">{tx("หน้าแจ้งปัญหา")}</Link>
+      </div>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      <Alert m={message} />
+      {!rows ? <div className="empty">{tx("กำลังโหลด...")}</div> : rows.length === 0 ? (
+        <div className="empty">{tx("ยังไม่มีรายงาน")}</div>
+      ) : (
+        <ul style={{ listStyle: "none", margin: "12px 0 0", padding: 0 }}>
+          {rows.map((f) => (
+            <li key={f.id} style={{ padding: "12px 0", borderTop: "1px solid var(--border)" }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <div>
+                  <b>{f.subject}</b>
+                  <div className="dim" style={{ fontSize: 13 }}>
+                    {tx(FEEDBACK_CAT[f.category] || f.category)} · {f.email || f.name || f.user_id || "—"}
+                    {" · "}{new Date(f.created_at * 1000).toLocaleString(locale())}
+                    {f.job_id ? ` · ${f.job_id}` : ""}
+                  </div>
+                </div>
+                <span className={`badge ${f.status === "done" ? "done" : "warn"}`}>
+                  {f.status === "done" ? tx("ปิดแล้ว") : tx("รอดู")}
+                </span>
+              </div>
+              <p style={{ margin: "8px 0", whiteSpace: "pre-wrap", fontSize: 14 }}>{f.body}</p>
+              {f.status === "open" ? (
+                <button type="button" className="btn small" disabled={!!busy}
+                  onClick={() => run(`f-${f.id}`, () => api.adminResolveFeedback(f.id, "done"), tx("ปิดรายงานแล้ว"))}>
+                  {busy === `f-${f.id}` ? "..." : tx("ปิดรายงาน")}
+                </button>
+              ) : (
+                <button type="button" className="btn small" disabled={!!busy}
+                  onClick={() => run(`f-${f.id}`, () => api.adminResolveFeedback(f.id, "open"), tx("เปิดรายงานใหม่แล้ว"))}>
+                  {busy === `f-${f.id}` ? "..." : tx("เปิดใหม่")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** ผู้ดูแลระบบ: ผู้ใช้ทั้งหมด (เครดิต แพ็กเกจ สิทธิ์ผู้ดูแล) คุณภาพงาน และการสำรองข้อมูล */
 export default function AdminPage() {
   const { config, user, loaded } = useAuth();
@@ -317,6 +377,7 @@ export default function AdminPage() {
           <Link href="/settings" className="btn small">{tx("ตั้งค่า")}</Link>
         </div>
       </div>
+      <FeedbackSection />
       <UsersSection me={user.id} billing={config.billing} />
       {config.billing && <PaymentsSection />}
       <QualitySection />

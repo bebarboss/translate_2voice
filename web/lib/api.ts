@@ -155,6 +155,12 @@ export interface PaymentOrder {
   email?: string; name?: string; ocr_text?: string;
 }
 export interface Card { id: string; brand: string; last4: string; exp_month: number; exp_year: number; created_at: number }
+export interface FeedbackItem {
+  id: string; user_id: string | null; email: string; name: string;
+  category: "bug" | "billing" | "quality" | "feature" | "other";
+  subject: string; body: string; job_id: string; status: "open" | "done";
+  admin_note: string; created_at: number; resolved_at: number | null;
+}
 /** bonus = เครดิตฟรีเมื่อผูกบัตรครั้งแรก, provider = ผู้ให้บริการชำระเงิน (ว่าง = ยังไม่เชื่อม, mock = ทดสอบ) */
 export interface Cards { cards: Card[]; bonus: number; bonus_available: boolean; provider: string }
 export interface AdminUser extends User { created_at: number; subscription: Subscription | null }
@@ -454,6 +460,12 @@ export const api = {
     request<void>(`/admin/users/${userId}/credit`, json("POST", { credits, note })),
   adminSetAdmin: (userId: string, admin: boolean) => request<void>(`/admin/users/${userId}/admin`, json("POST", { admin })),
   adminPlan: (userId: string, planId: string) => request<void>(`/admin/users/${userId}/plan`, json("POST", { plan_id: planId })),
+  submitFeedback: (body: { category: string; subject: string; body: string; job_id?: string }) =>
+    request<FeedbackItem>("/feedback", json("POST", body)),
+  myFeedback: () => request<FeedbackItem[]>("/feedback"),
+  adminFeedback: () => request<FeedbackItem[]>("/admin/feedback"),
+  adminResolveFeedback: (id: string, status: "open" | "done", note = "") =>
+    request<FeedbackItem>(`/admin/feedback/${encodeURIComponent(id)}`, json("POST", { status, note })),
   /** หนังสือยินยอมของนักพากย์ อ่านได้โดยไม่ต้องล็อกอิน items = ข้อที่ต้องติ๊กให้ครบ */
   actorConsent: () => request<ActorConsentDoc>("/legal/actor"),
   actorMe: () => request<ActorMe>("/actor/me"),
