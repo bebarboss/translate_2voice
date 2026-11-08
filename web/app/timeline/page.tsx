@@ -9,14 +9,12 @@ import { ArrowRight, UploadIcon } from "@/components/Icons";
 
 import { tx } from "@/lib/i18n";
 const TIMELINE_EXT = [".xml", ".fcpxml", ".edl", ".otio", ".zip"];
-const MEDIA_ACCEPT = ".wav,.aif,.aiff,.mp3,.m4a,.aac,.flac,.mp4,.mov,.mxf,.mkv,.zip";
 const FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
 
 /** นำเข้าไทม์ไลน์จาก Premiere Pro / DaVinci Resolve / Final Cut Pro แล้วไปหน้าตั้งค่าแทร็ก */
 export default function TimelineImportPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [media, setMedia] = useState<File[]>([]);
   const [drag, setDrag] = useState(false);
   const [fps, setFps] = useState("");
   const [sourceLang, setSourceLang] = useState("");
@@ -46,13 +44,12 @@ export default function TimelineImportPage() {
     setFile(f);
   };
   const isEdl = !!file && file.name.toLowerCase().endsWith(".edl");
-  const size = [file, ...media].reduce((s, f) => s + (f?.size ?? 0), 0);
 
   const submit = async () => {
     if (!file || busy) return;
     setBusy(true); setError(""); setProgress(0);
     try {
-      const up = uploadTimeline(file, media, {
+      const up = uploadTimeline(file, [], {
         fps: fps ? Number(fps) : null, sourceLang, targetLang, genre: genre.trim(), glossary: glossary.trim(), review,
       }, setProgress);
       abortRef.current = up.abort;
@@ -111,18 +108,6 @@ export default function TimelineImportPage() {
         <input type="file" accept={TIMELINE_EXT.join(",")} aria-label={tx("เลือกไฟล์ไทม์ไลน์")} disabled={busy}
           onChange={(e) => pick(e.target.files?.[0])} />
       </label>
-
-      <div className="card">
-        <div className="field">
-          <label htmlFor="media">{tx("ไฟล์เสียงหรือวิดีโอที่ไทม์ไลน์ใช้ (เลือกได้หลายไฟล์)")}</label>
-          <input id="media" type="file" multiple accept={MEDIA_ACCEPT} disabled={busy}
-            onChange={(e) => setMedia(Array.from(e.target.files ?? []))} />
-        </div>
-        <span className="dim">
-          {media.length ? tx("{0} ไฟล์ · รวม {1} MB", { 0: media.length, 1: (size / 1024 / 1024).toFixed(1) }) : tx("ไม่เลือกตอนนี้ก็ได้ หน้าถัดไปจะบอกว่าขาดไฟล์ไหนแล้วอัปโหลดเพิ่มได้")}
-          {" · "}{tx("ใช้ไฟล์เสียงแยกคน (WAV) จะได้ผลดีกว่าไฟล์วิดีโอ")}
-        </span>
-      </div>
 
       <section className="grid-3" aria-label={tx("ตั้งค่างาน")}>
         <div className="card tight field">
