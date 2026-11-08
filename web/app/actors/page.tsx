@@ -157,6 +157,7 @@ function VoiceReview() {
             <div className="row" style={{ gap: 6 }}>
               {v.status === "ready" && <PreviewButton url={fileUrl.voice(v.id, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} />}
               <button type="button" className="btn primary small" disabled={!!busy || v.status !== "ready" || v.review === "approved"}
+                title={tx("อนุมัติครั้งแรกให้นักพากย์โบนัส 5 เครดิต")}
                 onClick={() => review(v, true)}>{tx("อนุมัติขึ้นคลัง")}</button>
               <button type="button" className="btn small" disabled={!!busy || v.review === "rejected"} onClick={() => review(v, false)}>{tx("ให้อัดใหม่")}</button>
             </div>
