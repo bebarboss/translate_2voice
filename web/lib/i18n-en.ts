@@ -565,6 +565,7 @@ export const EN: Record<string, string> = {
   "รองรับไฟล์ไทม์ไลน์ .xml (Premiere / Resolve), .fcpxml, .edl, .otio หรือ .zip ที่มีไทม์ไลน์กับไฟล์สื่อ": "Supports timeline files .xml (Premiere / Resolve), .fcpxml, .edl, .otio, or a .zip with the timeline and media files",
   "นำเข้าไทม์ไลน์จากโปรแกรมตัดต่อ": "Import a timeline from your editor",
   "ส่งไทม์ไลน์ที่แยกเสียงแต่ละคนไว้คนละแทร็ก ระบบถอดเสียงทีละแทร็ก แปล พากย์ให้พอดีแต่ละคลิป แล้วส่งกลับเป็นไฟล์ XML / FCPXML ที่มีแทร็กพากย์ไทยแยกคน และเสียงแยกแทร็ก 48 kHz": "Send a timeline with each person's voice on its own track. The system transcribes each track, translates, dubs to fit each clip, and returns XML / FCPXML files with a Thai dub track per person plus 48 kHz stems",
+  "ส่งไทม์ไลน์ที่แยกเสียงแต่ละคนไว้คนละแทร็ก ระบบถอดเสียง แปล แล้วพาไปหน้าตรวจบทก่อนพากย์ — แก้บทได้เหมือนงานคลิปปกติ แล้วส่งกลับเป็น XML / FCPXML พร้อมเสียงแยกแทร็ก 48 kHz": "Send a timeline with each person's voice on its own track. The system transcribes and translates, then opens the script review page before dubbing — edit like a normal clip job, then export XML / FCPXML with 48 kHz stems",
   "ลากไฟล์ไทม์ไลน์มาวางที่นี่": "Drop a timeline file here",
   ".xml .fcpxml .edl .otio หรือ .zip ที่รวมไทม์ไลน์กับไฟล์เสียงไว้แล้ว": ".xml .fcpxml .edl .otio, or a .zip with the timeline and audio files",
   "เลือกไฟล์ไทม์ไลน์": "Choose a timeline file",
