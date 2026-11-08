@@ -94,6 +94,8 @@ export const EN: Record<string, string> = {
   "ดาวน์โหลดมีลายน้ำ": "Downloads include a watermark",
   "เสียง Standard เท่านั้น": "Standard voices only",
   "ใช้เสียงในคลังที่อนุมัติแล้วได้": "Use approved library voices",
+  "บัญชีทดลองใช้ได้เฉพาะเสียง Standard (ที่แอดมินเพิ่ม) เสียงนักพากย์ต้องอัปเกรดแพ็กเกจ": "Trial accounts can only use Standard voices (added by admin). Upgrade to use voice actor voices",
+  "ดูโปรโมชัน": "View promotions",
   "เลือกเสียงได้ทั้งหมด": "All voices available",
   "นำเข้าไทม์ไลน์ได้": "Timeline import included",
   "นำเข้าไทม์ไลน์ล็อกไว้": "Timeline import locked",
