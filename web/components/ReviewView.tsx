@@ -103,10 +103,10 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     setT(sec + 0.01);
   }, []);
 
-  const save = async () => {
+  /** บันทึกบท + เสียงพากย์ที่แก้ค้างไว้ (ยังไม่รีเฟรชงาน — ให้เรียก onChanged เองหลังจบขั้น) */
+  const saveAll = async () => {
     if (voiceDirty.length) {
       await api.setJobVoices(job.id, Object.fromEntries(voiceDirty.map((s) => [s, voiceDraft[s] ?? null])));
-      onChanged();
     }
     await tr.saveLines();
   };
@@ -117,7 +117,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     try {
       const n = dirty.length;
       const nv = voiceDirty.length;
-      await save();
+      await saveAll();
+      onChanged();
       const parts = [n && tx("บท {0} ประโยค", { 0: n }), nv && tx("เสียงพากย์ {0} ตัวละคร", { 0: nv })].filter(Boolean);
       setMessage({ kind: "info", text: parts.length ? tx("บันทึกแล้ว: {0}", { 0: parts.join(" และ ") }) : tx("ไม่มีอะไรเปลี่ยน") });
     } catch (e) {
@@ -131,7 +132,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     setBusy("dub");
     setMessage(null);
     try {
-      await save();
+      // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยเข้าคิวพากย์
+      await saveAll();
       await api.synthesize(job.id);
       onChanged();
     } catch (e) {
@@ -168,14 +170,15 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <button type="button" className="btn" onClick={onSave} disabled={!!busy || !pending}>
             {busy === "save" ? tx("กำลังบันทึก...") : tx("บันทึก{0}", { 0: pending ? ` (${pending})` : "" })}
           </button>
-          <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length}>
-            <MicIcon size={17} />{busy === "dub" ? tx("กำลังส่ง...") : onCancelEdit ? tx("พากย์ใหม่") : tx("เริ่มพากย์")}
+          <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length}
+            title={tx("บันทึกบทและเสียงที่แก้ทั้งหมด แล้วเริ่มพากย์")}>
+            <MicIcon size={17} />{busy === "dub" ? tx("กำลังบันทึกและพากย์...") : onCancelEdit ? tx("บันทึกและพากย์ใหม่") : tx("บันทึกและเริ่มพากย์")}
           </button>
         </div>
       </div>
 
       {onCancelEdit && (
-        <div className="alert info">{tx("แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดพากย์ใหม่ ระบบจะพากย์เฉพาะประโยคที่เปลี่ยน ประโยคอื่นใช้เสียงเดิม")}</div>
+        <div className="alert info">{tx("แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดบันทึกและพากย์ใหม่ ระบบบันทึกการแก้ทั้งหมดก่อน แล้วพากย์เฉพาะประโยคที่เปลี่ยน")}</div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 

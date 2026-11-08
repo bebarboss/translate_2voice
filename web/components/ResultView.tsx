@@ -128,6 +128,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     tr.setBusy("dub");
     tr.setMessage(null);
     try {
+      // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยพากย์ใหม่ช่วงที่เปลี่ยน
       await tr.saveLines();
       await api.synthesize(job.id);
       onChanged();
@@ -218,8 +219,9 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
         </div>
         <div className="row">
           {needsDub && (
-            <button type="button" className="btn primary" onClick={redub} disabled={!!tr.busy}>
-              <MicIcon size={17} />{tr.busy === "dub" ? tx("กำลังส่ง...") : tx("พากย์ใหม่ช่วงที่แก้")}
+            <button type="button" className="btn primary" onClick={redub} disabled={!!tr.busy}
+              title={tx("บันทึกบทที่แก้ทั้งหมด แล้วพากย์ใหม่เฉพาะช่วงที่เปลี่ยน")}>
+              <MicIcon size={17} />{tr.busy === "dub" ? tx("กำลังบันทึกและพากย์...") : tx("บันทึกและพากย์ใหม่")}
             </button>
           )}
           <button type="button" className="btn" onClick={onEdit}>{tx("แก้บททั้งหมด")}</button>
@@ -292,7 +294,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
                     onClick={() => pick(sorted[idx + 1])} aria-label={tx("ประโยคถัดไป")}><ArrowRight size={14} /></button>
                   <span style={{ flex: 1 }} />
                 </>} />
-              <span className="dim">{tx("เสียงในวิดีโอยังเป็นเสียงพากย์รอบก่อน แก้บท ตัวละคร หรือแยก/รวมประโยค แล้วกด “พากย์ใหม่ช่วงที่แก้” ระบบพากย์เฉพาะประโยคที่เปลี่ยน")}</span>
+              <span className="dim">{tx("เสียงในวิดีโอยังเป็นเสียงพากย์รอบก่อน แก้บท ตัวละคร หรือแยก/รวมประโยค แล้วกด “บันทึกและพากย์ใหม่” ระบบบันทึกการแก้ทั้งหมดก่อน แล้วพากย์เฉพาะประโยคที่เปลี่ยน")}</span>
             </section>
           )}
 
