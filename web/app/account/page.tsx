@@ -12,7 +12,7 @@ import { useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
   topup: "ซื้อเครดิต", subscribe: "ซื้อแพ็กเกจ", charge: "ใช้พากย์", refund: "คืนเครดิต", adjust: "ผู้ดูแลปรับ", bonus: "เครดิตฟรี",
-  closed: "ปิดบัญชี",
+  voice_bonus: "โบนัสอนุมัติเสียง", closed: "ปิดบัญชี",
 };
 const PAID = new Set(["topup", "subscribe"]); // รายการที่ผู้ใช้จ่ายเงินจริง
 const signed = (n: number) => (n > 0 ? `+${fmtNum(n)}` : `−${fmtNum(Math.abs(n))}`);

@@ -500,14 +500,22 @@ def voice_actors() -> dict[str, dict]:
     return {k: dict(v) for k, v in out.items()}
 
 
-def review_voice(voice_id: str, approve: bool, note: str, by: str) -> None:
+def review_voice(voice_id: str, approve: bool, note: str, by: str) -> dict:
+    """อนุมัติ/ปฏิเสธเสียง คืน {user_id, newly_approved}
+    newly_approved=True เมื่อเพิ่งเปลี่ยนเป็น approved จากสถานะอื่น (ใช้ให้โบนัสเครดิตครั้งแรก)"""
     _init()
     with _tx() as db:
-        if db.execute("SELECT 1 FROM actor_voices WHERE voice_id = ?", (voice_id,)).fetchone() is None:
+        row = db.execute("SELECT user_id, review FROM actor_voices WHERE voice_id = ?", (voice_id,)).fetchone()
+        if row is None:
             raise AccountError(404, "ไม่ใช่เสียงของนักพากย์")
+        prev = row["review"]
         db.execute("UPDATE actor_voices SET review = ?, note = ?, reviewed_at = ?, reviewed_by = ? WHERE voice_id = ?",
                    ("approved" if approve else "rejected", note, time.time(), by, voice_id))
     invalidate_voice_cache()
+    return {
+        "user_id": row["user_id"],
+        "newly_approved": bool(approve and prev != "approved"),
+    }
 
 
 # ---------------------------------------------------------------- บันทึกการใช้เสียงและค่าตอบแทน

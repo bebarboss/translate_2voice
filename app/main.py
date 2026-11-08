@@ -1947,17 +1947,20 @@ def admin_actor_voices(_=Depends(require_admin)):
 
 @app.post("/admin/actor-voices/{voice_id}/review", status_code=204, dependencies=[Depends(require_key)])
 def admin_review_voice(voice_id: str, body: Review, admin=Depends(require_admin)):
-    """อนุมัติให้เสียงขึ้นคลัง (ทุกคนเลือกใช้ได้) หรือให้นักพากย์อัดใหม่พร้อมเหตุผล"""
+    """อนุมัติให้เสียงขึ้นคลัง (ทุกคนเลือกใช้ได้) หรือให้นักพากย์อัดใหม่พร้อมเหตุผล
+    อนุมัติครั้งแรกให้โบนัสเครดิตเติมแก่นักพากย์เจ้าของเสียง"""
     v = get_voice_or_404(voice_id)
     if body.approve and v.status != VoiceStatus.ready:
         raise HTTPException(409, "เสียงยังเตรียมไม่เสร็จหรือเตรียมไม่สำเร็จ")
     try:
-        actors.review_voice(voice_id, body.approve, body.note.strip(), admin["email"])
+        result = actors.review_voice(voice_id, body.approve, body.note.strip(), admin["email"])
     except accounts.AccountError as e:
         raise _actor_fail(e)
-    owner = actors.voice_actors().get(voice_id)
-    if owner:
-        notify.voice_reviewed(owner["user_id"], v.name, body.approve, body.note.strip())
+    bonus = 0
+    if result.get("newly_approved"):
+        if accounts.grant_voice_approve_bonus(result["user_id"], voice_id, v.name):
+            bonus = accounts.VOICE_APPROVE_BONUS
+    notify.voice_reviewed(result["user_id"], v.name, body.approve, body.note.strip(), bonus=bonus)
 
 
 @app.post("/admin/actor-voices/{voice_id}/moods/{mood}/review", status_code=204, dependencies=[Depends(require_key)])

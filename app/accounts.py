@@ -90,6 +90,7 @@ CREDIT_PRICE = settings.credit_price_satang
 CREDIT_PACKS = settings.credit_packs
 UNIT = 100  # หน่วยย่อยต่อ 1 เครดิต (คิดละเอียด 0.01 เครดิต)
 CARD_BONUS = 0  # เลิกโบนัสผูกบัตร — ใช้แพ็กทดลองแทน
+VOICE_APPROVE_BONUS = 5  # เครดิตเติมเมื่อเสียงนักพากย์ถูกอนุมัติขึ้นคลัง (ครั้งแรกต่อเสียง)
 # แพ็กเกจเก่าที่ยังมีใน subscriptions → ใช้สิทธิ์เทียบเท่าแพ็กใหม่
 _LEGACY_PLAN_FEATURES = {"studio": "pro"}
 
@@ -630,6 +631,27 @@ def credit(uid: str, credits: float, kind: str = "topup", amount: int = 0, ref: 
             raise AccountError(400, f"หักได้ไม่เกิน {fmt_credits(u['credits'])} เครดิต")
         db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (credits, uid))
         _log(db, uid, kind, credits=credits, amount=amount, ref=ref, note=note)
+
+
+def grant_voice_approve_bonus(uid: str, voice_id: str, voice_name: str = "") -> bool:
+    """ให้ VOICE_APPROVE_BONUS เครดิตเติมเมื่อเสียงนักพากย์ถูกอนุมัติครั้งแรก
+    กันซ้ำด้วย ledger kind=voice_bonus + ref=voice_id คืน True ถ้าเพิ่งให้"""
+    if not billing_enabled() or VOICE_APPROVE_BONUS <= 0:
+        return False
+    units = VOICE_APPROVE_BONUS * UNIT
+    label = voice_name.strip() or voice_id
+    with _tx() as db:
+        if db.execute(
+            "SELECT 1 FROM ledger WHERE kind = 'voice_bonus' AND ref = ?", (voice_id,)
+        ).fetchone():
+            return False
+        u = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()
+        if u is None:
+            return False
+        db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (units, uid))
+        _log(db, uid, "voice_bonus", credits=units, ref=voice_id,
+             note=f"โบนัสอนุมัติเสียง “{label}” ขึ้นคลัง")
+    return True
 
 
 def _activate(db, uid: str, p: Plan, kind: str, amount: int, note: str) -> None:
