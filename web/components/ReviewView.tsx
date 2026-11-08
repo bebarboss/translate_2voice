@@ -189,14 +189,14 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
         <section className="main" aria-label={tx("วิดีโอ")}>
           <div className="video-box">
             {job.timeline ? (
-              <audio ref={mediaRef} src={fileUrl.source(job.id)} controls preload="metadata"
+              <audio ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} controls preload="metadata"
                 style={{ width: "100%", margin: "24px 16px" }}
                 onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
                 onSeeked={(e) => setT(e.currentTarget.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                 onPlay={() => setPicked(null)} />
             ) : (
-              <video ref={mediaRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
+              <video ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
                 onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
                 onSeeked={(e) => setT(e.currentTarget.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
