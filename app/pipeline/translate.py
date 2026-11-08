@@ -10,6 +10,7 @@ import logging
 import re
 import time
 import unicodedata
+from pathlib import Path
 from typing import Callable, Optional
 
 from ..config import settings
@@ -137,6 +138,50 @@ Rules:
 4. You may add ! ? … where the tone calls for it.
 5. Return lines that are already correct unchanged.
 6. Reply with JSON only, in the form {"lines":[{"id":1,"text":"..."}]}, covering every id."""
+
+SUSPECT_FIX_PROMPT_TH = """คุณซ่อมบทถอดเสียงภาษาไทยที่ระบบจับว่าเวลาหรือข้อความผิดปกติ
+แต่ละบรรทัดมี text = บทถอดเสียง, seconds = ความยาวช่วงในคลิป, note = เหตุที่น่าสงสัย
+กฎ:
+1. แก้ให้เป็นประโยคพูดที่คนไทยพูดจริง ใจความครบตามที่น่าจะพูดจากข้อความเดิมและบริบท previous_lines / next_lines
+2. ห้ามแต่งเรื่องใหม่ยาวเกินที่พูดได้ใน seconds ด้วยความเร็วปกติ (ประมาณ 11 ตัวอักษรไทย/วินาที ไม่นับวรรณยุกต์)
+3. ถ้าข้อความขาดกลางคำ ให้เติมให้จบคำ/ประโยคอย่างสั้นที่สุดที่เข้ากับบริบท
+4. ห้ามใส่คำลงท้ายเกินจำเป็น (นะ ครับ ค่ะ) เว้นต้นฉบับมีอยู่แล้ว
+5. ตอบ JSON เท่านั้น {"lines":[{"id":1,"text":"..."}]} ครบทุก id"""
+
+SUSPECT_FIX_PROMPT_EN = """You repair automatic speech-transcript lines flagged as timing/text anomalies.
+Each line has text, seconds (clip span), and note.
+Rules:
+1. Fix into natural spoken English that matches what the broken transcript likely meant, using previous_lines/next_lines for context.
+2. Keep length speakable within seconds at a normal pace (~2.5 words/sec). Do not invent a long new plot.
+3. If a word is cut mid-way, complete it briefly.
+4. Reply JSON only: {"lines":[{"id":1,"text":"..."}]} for every id."""
+
+DUB_JUDGE_PROMPT = """คุณเป็นผู้ตรวจคุณภาพเสียงพากย์อัตโนมัติ
+แต่ละบรรทัดมี: id, target (บทที่ต้องพูด), heard (สิ่งที่ระบบถอดจากเสียงพากย์), score (0–1 ความตรงบท), seconds (เวลาที่มี)
+เลือก action อย่างเดียวต่อบรรทัด:
+- retry = พากย์ใหม่ด้วยบทเดิม (เสียงเพี้ยน/มั่ว แต่บทโอเค)
+- shorten = บทยาวเกินเวลาหรือพูดไม่ทัน → ย่อบทแล้วพากย์ใหม่
+- accept = รับได้ หรือ score พอใช้แล้ว ไม่ต้องทำอะไร (อาจยังติดป้ายให้คนฟัง)
+กฎ: ถ้า heard ว่างหรือคนละเรื่องจาก target ชัด ๆ ใช้ retry; ถ้า target ยาวเกิน seconds ชัด ๆ ใช้ shorten; ไม่แน่ใจใช้ retry ก่อน accept
+ตอบ JSON เท่านั้น {"lines":[{"id":1,"action":"retry"}]} ครบทุก id"""
+
+NATURALIZE_PROMPT_TH = """คุณปรับบทพากย์ไทยให้ออกเสียงเป็นธรรมชาติเหมือนบทละคร/ซีรีส์
+แต่ละบรรทัดมี source (ต้นฉบับ), text (คำแปลปัจจุบัน), seconds (เวลาพูดที่มี), speaker
+กฎ:
+1. รักษาใจความ ชื่อคน และข้อเท็จจริงตาม source/text ห้ามแต่งเรื่องใหม่
+2. ใช้ภาษาพูดไทยที่ตัวละครพูดจริง (สรรพนาม คำลงท้าย ระดับภาษาตามสถานะ) ไม่ใช่แปลตรงตัวแข็ง ๆ
+3. ความยาวต้องพูดได้ใน seconds (ราว 11 ตัวอักษรไทย/วินาที ไม่นับวรรณยุกต์) ไม่ยาวเกิน text เดิมเกิน ~20%
+4. บรรทัดที่ฟังเป็นธรรมชาติอยู่แล้ว คืน text เดิม
+5. ตอบ JSON เท่านั้น {"lines":[{"id":1,"text":"..."}]} ครบทุก id"""
+
+NATURALIZE_PROMPT_EN = """You rewrite dubbed English dialogue so it sounds like natural spoken drama.
+Each line has source, text (current translation), seconds, speaker.
+Rules:
+1. Keep meaning, names and facts from source/text. Do not invent plot.
+2. Prefer natural spoken English for the character, not stiff literal translation.
+3. Keep speakable within seconds (~2.5 words/sec). Do not grow more than ~20% vs text.
+4. If already natural, return text unchanged.
+5. Reply JSON only: {"lines":[{"id":1,"text":"..."}]} for every id."""
 
 MOOD_PROMPT_TH = """คุณคือผู้กำกับการพากย์ เลือกอารมณ์ของเสียงพากย์ให้แต่ละบรรทัด จากบทต้นฉบับ (source) บทพากย์ (text) และบรรทัดรอบ ๆ
 แต่ละบรรทัดมี moods คืออารมณ์ที่เลือกได้ และ excite คือความตื่นเต้นที่วัดจากเสียงต้นฉบับ (0 = ปกติของตัวละครนั้น, บวก = ดัง/ตื่นเต้นกว่าปกติ, ลบ = เบา/เนิบกว่าปกติ) ถ้ามี
@@ -774,6 +819,197 @@ def proofread(utts: list[Utterance], target: str = "th",
             on_progress(done / len(utts))
 
 
+def fix_suspect_sources(utts: list[Utterance], lang: str = "th", title: str = "",
+                        check_cancel: Optional[Callable[[], None]] = None) -> int:
+    """ให้โมเดลซ่อมเฉพาะท่อนที่ gate ติดป้ายน่าสงสัย (แก้ source และ target ว่าง/เดิม)
+    คืนจำนวนบรรทัดที่เปลี่ยน"""
+    if not settings.ai_fix_suspects or not settings.typhoon_api_key or settings.mock_pipeline:
+        return 0
+    bad = [u for u in utts if u.unclear or (u.check_note and "น่าสงสัย" in u.check_note)]
+    if not bad:
+        return 0
+    prompt = SUSPECT_FIX_PROMPT_EN if lang == "en" else SUSPECT_FIX_PROMPT_TH
+    order = sorted(utts, key=lambda u: u.start)
+    at = {u.id: i for i, u in enumerate(order)}
+    changed = 0
+    for batch in _chunks(bad, min(12, settings.translate_batch_size)):
+        if check_cancel:
+            check_cancel()
+        lines = []
+        for u in batch:
+            i = at[u.id]
+            item = {"id": u.id, "speaker": u.speaker, "seconds": round(u.duration, 1),
+                    "text": u.source, "note": u.check_note or "suspect"}
+            if i > 0:
+                item["previous_lines"] = [{"speaker": order[i - 1].speaker, "text": order[i - 1].source}]
+            if i + 1 < len(order):
+                item["next_lines"] = [{"speaker": order[i + 1].speaker, "text": order[i + 1].source}]
+            lines.append(item)
+        payload = {"title": title, "lines": lines}
+        try:
+            head = f"title: {title}\n\n" if title else ""
+            result = _parse_json(_chat(prompt, head + json.dumps(payload, ensure_ascii=False), temperature=0.2,
+                                       max_tokens=min(4096, 300 + 120 * len(batch))))
+            by_id = {int(x["id"]): _item_text(x) for x in result.get("lines", []) if "id" in x}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("fix_suspect_sources failed: %s", exc)
+            continue
+        for u in batch:
+            text = by_id.get(u.id)
+            if not text or FOREIGN_SCRIPT.search(text):
+                continue
+            # ยอมให้ยาวขึ้นเพื่อเติมคำที่ขาด แต่ไม่ให้ยาวทะลุเวลาพูดมาก
+            lo, hi = 0.4, 2.5
+            ratio = len(text) / max(len(u.source), 1)
+            if not (lo <= ratio <= hi):
+                continue
+            if estimate_seconds(text, "en" if lang == "en" else "th") > max(u.duration, 0.5) * 1.4:
+                continue
+            if text.strip() != u.source.strip():
+                same_target = (u.target or "").strip() in ("", u.source.strip())
+                u.source = text.strip()
+                if same_target:
+                    u.target = spoken(u.source) if lang == "th" else u.source
+                u.unclear = False
+                if u.check_note and "น่าสงสัย" in u.check_note:
+                    u.check_note = ""
+                changed += 1
+    if changed:
+        log.info("AI fixed %d suspect source lines", changed)
+    return changed
+
+
+def naturalize_dialogue(utts: list[Utterance], target: str = "th",
+                        check_cancel: Optional[Callable[[], None]] = None) -> int:
+    """ปรับบทพากย์ให้ออกเสียงเป็นธรรมชาติหลังแปล/ย่อ คืนจำนวนบรรทัดที่เปลี่ยน"""
+    if (not settings.ai_naturalize or not settings.typhoon_api_key or settings.mock_pipeline
+            or target not in ("th", "en")):
+        return 0
+    lines = [u for u in utts if (u.target or "").strip()]
+    if not lines:
+        return 0
+    prompt = NATURALIZE_PROMPT_TH if target == "th" else NATURALIZE_PROMPT_EN
+    changed = 0
+    for batch in _chunks(lines, min(16, settings.translate_batch_size)):
+        if check_cancel:
+            check_cancel()
+        payload = {"lines": [{"id": u.id, "speaker": u.speaker, "seconds": round(u.duration, 1),
+                              "source": u.source, "text": u.target} for u in batch]}
+        try:
+            result = _parse_json(_chat(prompt, json.dumps(payload, ensure_ascii=False), temperature=0.3,
+                                       max_tokens=min(4096, 300 + 120 * len(batch))))
+            by_id = {int(x["id"]): _item_text(x) for x in result.get("lines", []) if "id" in x}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("naturalize_dialogue failed: %s", exc)
+            continue
+        for u in batch:
+            text = by_id.get(u.id)
+            if not text or FOREIGN_SCRIPT.search(text):
+                continue
+            text = spoken(text) if target == "th" else text.strip()
+            old = (u.target or "").strip()
+            if not text or text == old:
+                continue
+            # ไม่ให้ยาวพุ่งเกินเวลาพูดมาก และไม่หดจนเสียใจความ
+            if estimate_seconds(text, target) > max(u.duration, 0.5) * 1.25:
+                continue
+            if len(text) < max(2, int(len(old) * 0.45)):
+                continue
+            u.target = text
+            changed += 1
+    if changed:
+        log.info("naturalized %d dialogue lines", changed)
+    return changed
+
+
+def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", title: str = "",
+                       hints: Optional[dict] = None, job_dir: Optional[Path] = None,
+                       check_cancel: Optional[Callable[[], None]] = None) -> int:
+    """เติมบทพากย์ที่ว่างก่อนพากย์: กู้จาก ai_targets.json ก่อน แล้วให้ AI แปลบรรทัดที่เหลือ
+    คืนจำนวนบรรทัดที่เติมได้ (ลดท่อนเงียบตอนตัด vocals ต้นฉบับออก)"""
+    if settings.mock_pipeline or not settings.ai_fill_empty:
+        return 0
+    empty = [u for u in utts if not (u.target or "").strip() and (u.source or "").strip()]
+    if not empty:
+        return 0
+    ai: dict[int, str] = {}
+    if job_dir is not None:
+        try:
+            raw = json.loads((Path(job_dir) / "ai_targets.json").read_text(encoding="utf-8"))
+            ai = {int(k): str(v) for k, v in raw.items() if v}
+        except (OSError, ValueError, TypeError):
+            ai = {}
+    filled = 0
+    still: list[Utterance] = []
+    for u in empty:
+        prev = (ai.get(u.id) or "").strip()
+        if prev and not FOREIGN_SCRIPT.search(prev):
+            u.target = spoken(prev) if target == "th" else prev
+            filled += 1
+        else:
+            still.append(u)
+    if not still:
+        if filled:
+            log.info("filled %d empty targets from ai_targets", filled)
+        return filled
+    if not settings.typhoon_api_key:
+        log.warning("empty targets remain %s (no API key to fill)", [u.id for u in still])
+        return filled
+    hints = _with_order(utts, hints)
+    order = sorted(utts, key=lambda u: u.start)
+    for u in still:
+        if check_cancel:
+            check_cancel()
+        if lang == target:
+            u.target = u.source
+        else:
+            context = [x for x in order if x.target.strip() and x.start < u.start][-6:]
+            before = u.target
+            try:
+                _translate_groups([[u]], lang, target, context, title, hints)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("fill_empty line %d failed: %s", u.id, exc)
+                continue
+            if target == "th" and u.target:
+                u.target = spoken(u.target)
+            if not u.target.strip() or u.target == before:
+                continue
+        if u.target.strip():
+            filled += 1
+    log.info("filled empty targets: %d (restored+AI), still empty: %s",
+             filled, [u.id for u in utts if not (u.target or "").strip() and (u.source or "").strip()])
+    return filled
+
+
+def judge_dub_quality(lines: list[dict], check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """ตัดสินคุณภาพเสียงพากย์ที่ยังไม่ตรงบท: id → retry|shorten|accept
+    lines: [{id, target, heard, score, seconds}]"""
+    if not settings.ai_dub_judge or not settings.typhoon_api_key or settings.mock_pipeline or not lines:
+        return {int(x["id"]): "retry" for x in lines}
+    out: dict[int, str] = {}
+    for batch in _chunks(lines, 16):
+        if check_cancel:
+            check_cancel()
+        payload = {"lines": [{"id": x["id"], "target": x["target"], "heard": x.get("heard") or "",
+                              "score": round(float(x.get("score") or 0), 3),
+                              "seconds": round(float(x.get("seconds") or 0), 1)} for x in batch]}
+        try:
+            result = _parse_json(_chat(DUB_JUDGE_PROMPT, json.dumps(payload, ensure_ascii=False),
+                                       temperature=0.1, max_tokens=min(2048, 80 + 40 * len(batch))))
+            for row in result.get("lines", []):
+                try:
+                    uid, action = int(row["id"]), str(row.get("action") or "").strip().lower()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if action in ("retry", "shorten", "accept"):
+                    out[uid] = action
+        except Exception as exc:  # noqa: BLE001
+            log.warning("judge_dub_quality failed: %s", exc)
+        for x in batch:
+            out.setdefault(int(x["id"]), "retry")
+    return out
+
+
 def _around(batch: list[Utterance], order: Optional[list[Utterance]]) -> dict[int, dict]:
     """id → บทก่อนหน้าและถัดไปหนึ่งบรรทัด ใช้ตอนย่อหรือขยาย (แต่ละชุดรวมบรรทัดที่อยู่ห่างกัน โมเดลจึงไม่เห็นว่าบทต่อกันยังไง)"""
     if not (settings.fit_neighbors and order):
@@ -911,9 +1147,21 @@ def _continuity_breaks(order: list[Utterance], ids: Optional[set[int]] = None,
     return out
 
 
+def _keep_better_target(old: str, new: str, target: str) -> str:
+    """ถ้ารอบแปลใหม่ว่าง / มีอักษรต้นฉบับ / หดสั้นผิดปกติ → คงบทเดิม"""
+    old, new = (old or "").strip(), (new or "").strip()
+    if not new or FOREIGN_SCRIPT.search(new):
+        return old
+    if target == "th":
+        new = spoken(new)
+    if old and len(new) < max(2, int(len(old) * 0.4)):
+        return old
+    return new
+
+
 def _retranslate(flagged: dict[int, str], lang: str, target: str, title: str, hints: dict) -> set[int]:
     """แปลใหม่ทั้งประโยคของบรรทัดที่ไม่ต่อกัน พร้อมบอกเหตุผล คืน id ทุกบรรทัดที่ส่งไปแปล
-    ส่งทีละช่วงที่ติดกัน ประโยคข้างเคียงของแต่ละชุดจึงถูกต้อง แปลไม่ผ่านก็คงบทเดิม"""
+    ส่งทีละช่วงที่ติดกัน ประโยคข้างเคียงของแต่ละชุดจึงถูกต้อง แปลไม่ผ่านหรือแย่กว่าเดิมก็คงบทเดิม"""
     order, at = hints["sentences"], hints["sentence_at"]
     picked = sorted({at[i] for i in flagged})
     issues = {order[k][0].id: "; ".join(flagged[u.id] for u in order[k] if u.id in flagged) for k in picked}
@@ -921,12 +1169,15 @@ def _retranslate(flagged: dict[int, str], lang: str, target: str, title: str, hi
     for run in _runs(picked):
         for batch in _group_batches([order[k] for k in run], settings.translate_batch_size):
             context = [u for g in order[:at[batch[0][0].id]] for u in g][-6:]
+            backup = {u.id: u.target for g in batch for u in g}
             _translate_groups(batch, lang, target, context, title, {**hints, "issues": issues})
             for g in batch:
                 for u in g:
                     tried.add(u.id)
-                    if target == "th":
-                        u.target = spoken(u.target)
+                    kept = _keep_better_target(backup.get(u.id, ""), u.target, target)
+                    if kept != (u.target or "").strip() and kept == (backup.get(u.id) or "").strip():
+                        log.info("retranslate kept old line %d (new was empty/worse)", u.id)
+                    u.target = kept
     return tried
 
 
@@ -998,11 +1249,15 @@ def review_translation(utts: list[Utterance], lang: str, target: str = "th", max
         u.check_note = issues.get(u.id, "")
 
 
-def propose_turns(utts: list[Utterance], batch_size: int = 25) -> dict[int, list[str]]:
+def propose_turns(utts: list[Utterance], batch_size: int = 25,
+                  only_ids: Optional[set[int]] = None) -> dict[int, list[str]]:
     """id ประโยค → ข้อความที่ตัดตามคนพูด (เฉพาะประโยคที่ควรตัด) จากความหมายของบท
     ระบบแยกผู้พูดฟังแค่เสียง สองคนเสียงคล้ายกันพูดโต้ตอบเร็ว ๆ จะได้ท่อนเดียว แต่บทบอกได้ชัด (ถาม/ตอบ คำรับ)
-    ใช้เฉพาะคำตอบที่ต่อกันแล้วตรงกับบทเดิมทุกตัวอักษร (ไม่นับช่องว่าง) เวลาของแต่ละชิ้นหาจากเวลาของคำ"""
+    ใช้เฉพาะคำตอบที่ต่อกันแล้วตรงกับบทเดิมทุกตัวอักษร (ไม่นับช่องว่าง) เวลาของแต่ละชิ้นหาจากเวลาของคำ
+    only_ids: ถ้ามี ตรวจเฉพาะ id เหล่านี้ (ใช้หลัง gate เจอท่อนบวม)"""
     order = sorted(utts, key=lambda u: u.start)
+    if only_ids is not None:
+        order = [u for u in order if u.id in only_ids]
     src = {u.id: u.source for u in order}
     out: dict[int, list[str]] = {}
     for i in range(0, len(order), batch_size):

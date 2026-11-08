@@ -231,6 +231,18 @@ class Settings:
     translate_review: bool = _bool("TRANSLATE_REVIEW", True)
     pause_match: bool = _bool("PAUSE_MATCH", True)  # เว้นจังหวะหยุดกลางประโยคตามต้นฉบับ (pauses.py)
     min_pause_sec: float = _float("MIN_PAUSE_SEC", 0.3)  # ช่วงเงียบสั้นกว่านี้ไม่นับเป็นจังหวะหยุด
+    # ต้นฉบับภาษาเดียวกับปลายทาง: โคลนเสียงต้นฉบับ (ไม่ใช้คลัง) + รวมท่อนน้อย + ยึดจังหวะ pause
+    lip_sync_same_lang: bool = _bool("LIP_SYNC_SAME_LANG", True)
+    # ก่อนแปล: จับท่อนเวลา/บทพัง รัดเวลาจากคำ ถอดช่วงนั้นใหม่ถ้าทำได้
+    transcript_gate: bool = _bool("TRANSCRIPT_GATE", True)
+    # หลัง gate แล้วยังแย่ → ให้ Gemini แก้บทถอดเสียงเฉพาะท่อนนั้น
+    ai_fix_suspects: bool = _bool("AI_FIX_SUSPECTS", True)
+    # หลัง dub_check ไม่ผ่าน → ให้ AI เลือก retry / ย่อบท / รับป้ายควรฟัง
+    ai_dub_judge: bool = _bool("AI_DUB_JUDGE", True)
+    # บทพากย์ว่างก่อนพากย์ → กู้จาก ai_targets แล้วให้ AI แปลเติมเอง (ไม่ข้ามท่อนเงียบ)
+    ai_fill_empty: bool = _bool("AI_FILL_EMPTY", True)
+    # หลังแปล/ย่อ → ปรับสำนวนให้ออกเสียงเป็นบทละครธรรมชาติ (ลดแก้มือ)
+    ai_naturalize: bool = _bool("AI_NATURALIZE", True)
     # ความดังของเสียงร้อง กรี๊ด อุทานจากต้นฉบับในช่วงที่ไม่มีบท (0 = ตัดทิ้ง)
     nonspeech_gain: float = _float("NONSPEECH_GAIN", 1.0)
     breath_keep: bool = _bool("BREATH_KEEP", True)  # ใส่เสียงหายใจของนักแสดงในช่วงหยุดกลางประโยค

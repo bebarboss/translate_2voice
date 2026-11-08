@@ -33,7 +33,7 @@ export interface Job {
   sub_style: SubtitleStyle | null;
   speakers: string[];
   duration: number | null;
-  synth_stats: { redubbed: number; reused: number; unclear?: number } | null;
+  synth_stats: { redubbed: number; reused: number; unclear?: number; repaired?: number; quality_ok?: boolean } | null;
   voice_map: Record<string, string>;
   queue_position?: number | null; // ลำดับคิว (เฉพาะตอนรอคิว)
   speaker_names?: Record<string, string>; // ชื่อที่ผู้ใช้ตั้งให้ตัวละคร
