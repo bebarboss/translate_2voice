@@ -1,6 +1,7 @@
 """แยกว่าใครพูดตอนไหน (pyannote) และส่งออกเลเยอร์เสียงของแต่ละคน"""
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,9 @@ from ..config import settings
 from .common import Turn, rename_speakers
 
 log = logging.getLogger("dubbing.diarize")
+
+# pyannote/sklearn: บังคับจำนวนคนมากกว่าจำนวนชิ้นเสียงที่ตัดได้ → ValueError
+_CLUSTER_SAMPLES = re.compile(r"n_samples=(\d+).*n_clusters=(\d+)", re.I)
 
 _pipeline = None
 FALLBACK_MODEL = "pyannote/speaker-diarization-3.1"
@@ -74,8 +78,24 @@ def diarize_both(wav16k: Path, num_speakers: Optional[int] = None) -> tuple[list
     if audio.ndim > 1:
         audio = audio.mean(axis=1)
     data = {"waveform": torch.from_numpy(audio).unsqueeze(0), "sample_rate": sr}
-    kwargs = {"num_speakers": num_speakers} if num_speakers else {}
-    output = pipe(data, **kwargs)
+    kwargs = {"num_speakers": num_speakers} if num_speakers and num_speakers > 0 else {}
+    try:
+        output = pipe(data, **kwargs)
+    except ValueError as exc:
+        # คลิปสั้น / บังคับคนเกินชิ้นเสียงที่ตัดได้ เช่น n_samples=2 < n_clusters=3
+        m = _CLUSTER_SAMPLES.search(str(exc))
+        if not (kwargs and m):
+            raise
+        n_samp = int(m.group(1))
+        log.warning("diarize num_speakers=%s failed (%s); retry with min(speakers, %s) then auto",
+                    num_speakers, exc, n_samp)
+        if n_samp >= 2:
+            try:
+                output = pipe(data, num_speakers=n_samp)
+            except ValueError:
+                output = pipe(data)
+        else:
+            output = pipe(data)
     annotation = getattr(output, "speaker_diarization", output)  # 4.x คืนเป็น object
     exclusive = getattr(output, "exclusive_speaker_diarization", None) if settings.diar_exclusive else None
 
