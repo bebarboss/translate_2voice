@@ -647,6 +647,8 @@ export const EN: Record<string, string> = {
   "คลังเสียง": "Voice library",
   "รายละเอียดเสียง": "Voice details",
   "ของฉัน": "Mine",
+  "เพิ่มรูปโปรไฟล์ของเสียง จะแสดงในคลังเสียงให้ผู้ใช้เห็น": "Add a profile image for the voice; it will show in the voice library",
+  "บันทึกรูปแล้ว": "Image saved",
   " · {0} Hz": " · {0} Hz",
   "ลบเสียงนี้": "Delete this voice",
   "เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ": "Keep Thai dubbing voices for reuse, then assign them to characters on the review page instead of cloning the original actors",
