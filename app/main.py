@@ -887,9 +887,11 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
         v = voice_store.get(voice_id) if voice_id not in hidden else None
         if v is None or v.status != VoiceStatus.ready:
             raise HTTPException(400, f"เสียง {voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
-        owner_id = (info.get(voice_id) or {}).get("user_id")
-        if uid and not accounts.voice_allowed(uid, voice_id, actor_ids, owner_id=owner_id):
-            raise HTTPException(402, "แพ็กเกจนี้ใช้ได้เฉพาะเสียง Standard อัปเกรดที่หน้าโปรโมชันเพื่อใช้เสียงนักพากย์")
+        ainfo = info.get(voice_id)
+        owner_id = ainfo["user_id"] if ainfo else None
+        review = ainfo["review"] if ainfo else None
+        if uid and not accounts.voice_allowed(uid, voice_id, actor_ids, owner_id=owner_id, actor_review=review):
+            raise HTTPException(402, "เสียงนี้ยังไม่พร้อมใช้ หรือแพ็กเกจยังไม่มีสิทธิ์เลือกเสียงนี้")
         voice_map[speaker] = voice_id
     return store.update(job_id, voice_map=voice_map)
 
@@ -926,7 +928,8 @@ def list_voices(request: Request):
             continue
         ainfo = info.get(v.id)
         owner_id = ainfo["user_id"] if ainfo else None
-        if uid and not accounts.voice_allowed(uid, v.id, actor_ids, ent, owner_id=owner_id):
+        review = ainfo["review"] if ainfo else None
+        if uid and not accounts.voice_allowed(uid, v.id, actor_ids, ent, owner_id=owner_id, actor_review=review):
             continue
         out.append(with_actor(v, ainfo, sees_pending(request, ainfo), moods, uid))
     return out
