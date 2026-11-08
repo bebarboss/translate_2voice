@@ -93,6 +93,7 @@ export const EN: Record<string, string> = {
   "คลิปยาวสุด {0} นาที": "Clips up to {0} min",
   "ดาวน์โหลดมีลายน้ำ": "Downloads include a watermark",
   "เสียง Standard เท่านั้น": "Standard voices only",
+  "ใช้เสียงในคลังที่อนุมัติแล้วได้": "Use approved library voices",
   "เลือกเสียงได้ทั้งหมด": "All voices available",
   "นำเข้าไทม์ไลน์ได้": "Timeline import included",
   "นำเข้าไทม์ไลน์ล็อกไว้": "Timeline import locked",
