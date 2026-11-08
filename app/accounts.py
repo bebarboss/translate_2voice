@@ -54,6 +54,7 @@ class Plan:
     timeline: bool = False
     watermark: bool = False
     free_once: bool = False  # รับได้ครั้งเดียวต่อบัญชี โดยไม่ต้องชำระ
+    available: bool = True  # False = ปิดขายชั่วคราว (เช่น อยู่ระหว่างพัฒนา)
     features: tuple = ()
 
     def public_dict(self) -> dict:
@@ -61,7 +62,7 @@ class Plan:
             "id": self.id, "name": self.name, "price": self.price, "minutes": self.minutes,
             "days": self.days, "max_clip_minutes": self.max_clip_minutes, "voices": self.voices,
             "timeline": self.timeline, "watermark": self.watermark, "free_once": self.free_once,
-            "features": list(self.features),
+            "available": self.available, "features": list(self.features),
         }
 
 
@@ -78,6 +79,7 @@ def _load_plans() -> list[Plan]:
             timeline=bool(raw.get("timeline", False)),
             watermark=bool(raw.get("watermark", False)),
             free_once=bool(raw.get("free_once", False)),
+            available=bool(raw.get("available", True)),
             features=tuple(str(x) for x in feats),
         ))
     return out
@@ -188,12 +190,13 @@ def check_clip_duration(uid: Optional[str], seconds: float) -> None:
 
 
 def require_timeline(uid: Optional[str]) -> None:
+    """นำเข้าไทม์ไลน์ปิดชั่วคราว (อยู่ระหว่างพัฒนา) — แอดมินยังใช้ทดสอบได้"""
     if not billing_enabled() or not uid:
         return
     ent = entitlements(uid)
-    if ent.get("timeline") or ent.get("plan_id") == "admin":
+    if ent.get("plan_id") == "admin":
         return
-    raise AccountError(402, "นำเข้าไทม์ไลน์ใช้ได้เฉพาะแพ็กเกจมือโปร อัปเกรดที่หน้าโปรโมชัน")
+    raise AccountError(503, "นำเข้าไทม์ไลน์อยู่ระหว่างพัฒนา ยังไม่เปิดให้ใช้")
 
 
 def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str],
@@ -1054,6 +1057,8 @@ def subscribe(uid: str, plan_id: str) -> dict:
     p = plan(plan_id)
     if p is None:
         raise AccountError(404, "ไม่พบแพ็กเกจนี้")
+    if not p.available:
+        raise AccountError(503, f"แพ็กเกจ{p.name}อยู่ระหว่างพัฒนา ยังไม่เปิดให้ซื้อ")
     if p.free_once or p.price <= 0:
         return claim_trial(uid)
     return _start_payment(uid, p.price, plan_id=p.id)

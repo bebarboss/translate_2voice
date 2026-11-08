@@ -57,13 +57,15 @@ _DEFAULT_BILLING_PLANS: list[dict[str, Any]] = [
     },
     {
         "id": "pro", "name": "มือโปร", "price": 990_00, "minutes": 220, "days": 30,
-        "max_clip_minutes": 60, "voices": "all", "timeline": True, "watermark": False,
+        "max_clip_minutes": 60, "voices": "all", "timeline": False, "watermark": False,
         "free_once": False,
+        # ปิดขายชั่วคราว — นำเข้าไทม์ไลน์ยังพัฒนาอยู่
+        "available": False,
         "features": [
             "220 เครดิต / 30 วัน",
             "คลิปยาวสุด 60 นาที",
             "เลือกเสียงได้ทั้งหมด",
-            "นำเข้าไทม์ไลน์ได้",
+            "นำเข้าไทม์ไลน์ (อยู่ระหว่างพัฒนา)",
         ],
     },
 ]

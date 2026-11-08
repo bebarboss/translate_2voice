@@ -331,7 +331,7 @@ export default function DashboardPage() {
             <h2 id="shortcuts-title">{tx("ทางลัด")}</h2>
             <div className="dash-links">
               <Link href="/">{tx("ส่งคลิปใหม่")}</Link>
-              <Link href="/timeline">{tx("นำเข้าไทม์ไลน์")}</Link>
+              <Link href="/timeline">{tx("นำเข้าไทม์ไลน์")} · {tx("อยู่ระหว่างพัฒนา")}</Link>
               <Link href="/voices">{tx("คลังเสียง")}</Link>
               {config?.billing && user && !user.admin && <Link href="/promotions">{tx("เติมเครดิต")}</Link>}
             </div>

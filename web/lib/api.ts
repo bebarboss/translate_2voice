@@ -125,7 +125,9 @@ export interface ConsentChoice { terms_version: string; privacy_version: string;
 export interface Plan {
   id: string; name: string; price: number; minutes: number; days: number;
   max_clip_minutes?: number; voices?: "standard" | "all" | string;
-  timeline?: boolean; watermark?: boolean; free_once?: boolean; features?: string[];
+  timeline?: boolean; watermark?: boolean; free_once?: boolean;
+  available?: boolean; // false = ปิดขายชั่วคราว (อยู่ระหว่างพัฒนา)
+  features?: string[];
 }
 export interface Entitlements {
   plan_id: string | null; plan_name: string | null; max_clip_minutes: number;
