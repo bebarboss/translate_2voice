@@ -95,28 +95,49 @@ def _mono(path: Path) -> tuple[np.ndarray, int]:
 
 
 # ================================================================ งานจริง (รันที่ที่มีการ์ดจอ)
+def _use_as_vocals(mixed: Path, work: Path) -> tuple[Path, Path]:
+    """แทร็กที่แยกคนไว้แล้ว (ไทม์ไลน์) — ใช้เป็น vocals โดยตรง ไม่รัน Demucs; bgm เป็นความเงียบ"""
+    wav, sr = sf.read(mixed, dtype="float32")
+    if wav.ndim > 1:
+        wav = wav.mean(axis=1)
+    vocals, bgm = work / "vocals.wav", work / "bgm.wav"
+    sf.write(vocals, wav, sr)
+    sf.write(bgm, np.zeros(len(wav), dtype=np.float32), sr)
+    return vocals, bgm
+
+
 def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: Optional[int],
-                 stage: Stage) -> dict:
-    """แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง → แบ่งประโยคตามผู้พูด เขียน vocals.wav, bgm.wav ลง work"""
+                 stage: Stage, preseparated: bool = False) -> dict:
+    """แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง → แบ่งประโยคตามผู้พูด เขียน vocals.wav, bgm.wav ลง work
+    preseparated=True: แทร็กคนละคนจากไทม์ไลน์แล้ว — ข้าม Demucs และ pyannote ไปถอดเสียงเลย"""
     from .transcribe import assign_speakers
 
     separate, diarize, transcribe, _ = _models()
     voice_ok = bool(settings.hf_token) and not settings.mock_pipeline
 
-    stage("separate_vocals", 0.1)
     release("tts")  # เผื่อโมเดลพากย์จากงานก่อนยังค้างอยู่
-    vocals, bgm = separate(mixed, work, settings.demucs_model, settings.device)
-    release("audio")
-    wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
-
-    stage("diarize", 0.25)
-    if settings.mock_pipeline:
-        turns = word_turns = diarize(wav16k, num_speakers)
+    if preseparated:
+        stage("transcribe", 0.1)
+        vocals, bgm = _use_as_vocals(mixed, work)
+        wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
+        wav, sr = _mono(wav16k)
+        dur = round(len(wav) / sr, 3) if sr else 0.0
+        turns = word_turns = [Turn(0.0, max(dur, 0.01), "speaker_01")]
+        speakers = ["speaker_01"]
     else:
-        from .diarize import diarize_both
-        turns, word_turns = diarize_both(wav16k, num_speakers)
-    release("diarize")
-    speakers = sorted({t.speaker for t in turns})
+        stage("separate_vocals", 0.1)
+        vocals, bgm = separate(mixed, work, settings.demucs_model, settings.device)
+        release("audio")
+        wav16k = audio.to_mono(vocals, work / "vocals16k.wav", 16000)
+
+        stage("diarize", 0.25)
+        if settings.mock_pipeline:
+            turns = word_turns = diarize(wav16k, num_speakers)
+        else:
+            from .diarize import diarize_both
+            turns, word_turns = diarize_both(wav16k, num_speakers)
+        release("diarize")
+        speakers = sorted({t.speaker for t in turns})
 
     stage("transcribe", 0.4)
     confidence: dict[int, float] = {}
@@ -145,12 +166,13 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     utterances = assign_speakers(words, word_turns, lang=lang)
     raw_turns = list(turns)  # ช่วงพูดตามป้ายของ pyannote (relabel_turns ด้านล่างเปลี่ยนชื่อให้ตรงกับประโยค)
     hidden = []
-    if settings.overlap_recover and not settings.mock_pipeline:  # คนที่ถูกกลบตอนพูดพร้อมกัน
+    # แทร็กไทม์ไลน์คนละคนแล้ว — ไม่กู้ซ้อน/ไม่จัดกลุ่มผู้พูดซ้ำ
+    if not preseparated and settings.overlap_recover and not settings.mock_pipeline:  # คนที่ถูกกลบตอนพูดพร้อมกัน
         from . import overlap
         stage("transcribe", 0.48)
         hidden = overlap.recover(sf.read(wav16k, dtype="float32")[0], turns, utterances, words, lang)
         release("overlap", "transcribe")
-    if settings.voice_match and voice_ok:
+    if not preseparated and settings.voice_match and voice_ok:
         from . import voices
         wav, wsr = sf.read(wav16k, dtype="float32")
         # ท่อนเดียวที่มีหลายคนพูดต่อกัน (pyannote จับไม่ทัน) → แบ่งตรงจุดจบประโยคย่อยที่เสียงต่างกันชัด
@@ -324,7 +346,8 @@ def _decode(data: bytes) -> tuple[np.ndarray, int]:
 
 
 def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: Optional[int],
-                  report: Stage, voice_ref: bool = False, denoise: bool = False) -> dict:
+                  report: Stage, voice_ref: bool = False, denoise: bool = False,
+                  preseparated: bool = False) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
         mixed = work / "audio.flac"
@@ -335,7 +358,7 @@ def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: O
             return {"ref_flac": _encode(r["wav"], r["sr"]), "text": r["text"], "pitch_hz": r["pitch_hz"],
                     "quality": r["quality"], "emb": None if r["emb"] is None else r["emb"].tolist(),
                     "stats": r.get("stats")}
-        res = analyze_core(mixed, work, source_lang, num_speakers, report)
+        res = analyze_core(mixed, work, source_lang, num_speakers, report, preseparated=preseparated)
         report("transcribe", 0.5)
         features = features_core(res["utterances"], res["vocals"], res["lang"])
         return {
@@ -437,15 +460,19 @@ def _follow(stage: Stage):
 
 
 def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: Optional[int],
-            stage: Stage, check_cancel: Optional[Callable[[], None]] = None) -> dict:
-    """คืน vocals, bgm (ไฟล์ใน work), turns, words, lang, utterances, speakers"""
+            stage: Stage, check_cancel: Optional[Callable[[], None]] = None,
+            preseparated: bool = False) -> dict:
+    """คืน vocals, bgm (ไฟล์ใน work), turns, words, lang, utterances, speakers
+    preseparated=True: แทร็กคนละคนแล้ว (ไทม์ไลน์) ข้ามแยกพูด/เพลงและแยกผู้พูด"""
     if not remote():
-        return analyze_core(mixed, work, source_lang, num_speakers, stage)
+        return analyze_core(mixed, work, source_lang, num_speakers, stage, preseparated=preseparated)
 
-    stage("separate_vocals", 0.1)
+    stage("transcribe" if preseparated else "separate_vocals", 0.1)
     data = _flac(mixed, SOURCE_SR)
-    log.info("analyze on Modal: upload %.1f MB", len(data) / 1e6)
-    [res] = _run("analyze_audio", [((data, source_lang, num_speakers), {})], _follow(stage), check_cancel)
+    log.info("analyze on Modal: upload %.1f MB%s", len(data) / 1e6, " (preseparated)" if preseparated else "")
+    # ส่ง preseparated เฉพาะตอนเปิด — ฟังก์ชันบน Modal รุ่นก่อนไม่รู้จักค่านี้
+    kwargs = {"preseparated": True} if preseparated else {}
+    [res] = _run("analyze_audio", [((data, source_lang, num_speakers), kwargs)], _follow(stage), check_cancel)
     out = {"vocals": work / "vocals.wav", "bgm": work / "bgm.wav"}
     for name, key in (("vocals", "vocals_flac"), ("bgm", "bgm_flac")):
         wav, sr = _decode(res[key])

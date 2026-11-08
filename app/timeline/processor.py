@@ -265,7 +265,8 @@ def run_analyze(store, job_id: str) -> None:
         def sub(name: str, p: float, lo=lo, hi=hi) -> None:
             stage(name, lo + (hi - lo) * min(p / 0.55, 1.0))
         try:
-            res = gpu.analyze(wav, work, job.source_lang, 1, sub, cancel)
+            # แทร็กไทม์ไลน์แยกคนไว้แล้ว — ข้าม Demucs / pyannote ไปถอดเสียง+แปลเลย
+            res = gpu.analyze(wav, work, job.source_lang, 1, sub, cancel, preseparated=True)
         except RuntimeError as e:
             if "ไม่พบคำพูด" not in str(e):
                 raise

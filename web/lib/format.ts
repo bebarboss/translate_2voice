@@ -69,6 +69,10 @@ export function stepsFor(job: Job): string[] {
   if (job.phase === "synthesize") {
     return ["tts", "mix", "mux_video", ...(job.burn_subs ? ["burn_subs"] : [])];
   }
+  // ไทม์ไลน์: แทร็กแยกคนแล้ว — ไม่ดึงเสียงจากวิดีโอ / ไม่แยกพูด-เพลง / ไม่แยกผู้พูด
+  if (job.timeline) {
+    return ["timeline_render", "transcribe", "timeline_merge", "translate", "fit_lengths"];
+  }
   return [
     ...(job.source_url ? ["download"] : []),
     "extract_audio", "separate_vocals", "diarize", "transcribe", "translate", "fit_lengths",

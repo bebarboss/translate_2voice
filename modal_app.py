@@ -3,6 +3,7 @@
 deploy: modal deploy modal_app.py   (ขั้นตอนเต็มอยู่ใน README หัวข้อ "ส่งขั้นที่ใช้การ์ดจอไปรันบน Modal")
 
 - analyze_audio    : แยกเสียงพูด/เพลง (BS-RoFormer หรือ Demucs) → แยกผู้พูด (pyannote) → ถอดเสียง (faster-whisper)
+                     หรือ preseparated=True ข้ามแยกเสียง/แยกคน (แทร็กไทม์ไลน์)
 - synthesize_lines : พากย์ทีละช่วง (F5-TTS ไทย/อังกฤษ) โดยตัดเสียงตัวอย่างจาก vocals ที่ส่งมา
 ทั้งสองตัวเรียก app/pipeline/gpu.py ชุดเดียวกับโหมด local รับส่งข้อมูลเป็น bytes (FLAC) และ JSON
 ไฟล์ระหว่างทางอยู่ในโฟลเดอร์ชั่วคราวของ container เท่านั้น Volume "dubbing-models" เก็บแคชโมเดลอย่างเดียว
@@ -80,15 +81,17 @@ def _reporter(key: Optional[str]):
 @app.function(cpu=4.0, memory=16384, **GPU)
 def analyze_audio(audio_flac: bytes, source_lang: Optional[str], num_speakers: Optional[int],
                   config: Optional[dict] = None, progress_key: Optional[str] = None, voice_ref: bool = False,
-                  denoise: bool = False) -> dict:
+                  denoise: bool = False, preseparated: bool = False) -> dict:
     """เสียงต้นฉบับ (FLAC mono 44.1 kHz) → {vocals_flac, bgm_flac, turns, words, detected_lang,
     utterances, speakers, features}
-    voice_ref=True: เตรียมเสียงในคลัง → {ref_flac, text, pitch_hz, quality, emb} (denoise: ลดเสียงรบกวนหลังแยกเพลง)"""
+    voice_ref=True: เตรียมเสียงในคลัง → {ref_flac, text, pitch_hz, quality, emb} (denoise: ลดเสียงรบกวนหลังแยกเพลง)
+    preseparated=True: แทร็กคนละคนจากไทม์ไลน์แล้ว — ข้ามแยกพูด/เพลงและแยกผู้พูด"""
     from app.pipeline import gpu
 
     gpu.apply_config(config)
     try:
-        return gpu.serve_analyze(audio_flac, source_lang, num_speakers, _reporter(progress_key), voice_ref, denoise)
+        return gpu.serve_analyze(audio_flac, source_lang, num_speakers, _reporter(progress_key),
+                                 voice_ref, denoise, preseparated=preseparated)
     finally:
         models.commit()
 
