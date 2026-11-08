@@ -120,7 +120,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
         </div>
         <div className="row" style={{ gap: 10 }}>
           {changed.length > 0 && <button type="button" className="btn" disabled={!!busy} onClick={() => run("save", async () => { await save(); })}>{tx("บันทึก")}</button>}
-          <button type="button" className="btn primary" disabled={!!busy || info.missing.length > 0 || enabled.length === 0} onClick={start}
+          <button type="button" className="btn primary" disabled={!!busy || info.missing.length > 0 || enabled.length === 0} onClick={() => start()}
             title={info.missing.length ? tx("อัปโหลดไฟล์สื่อให้ครบก่อน") : enabled.length === 0 ? tx("เปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด") : undefined}>
             {busy === "start" ? tx("กำลังเริ่ม...") : tx("เริ่มถอดเสียง แล้วไปตรวจบท")}<ArrowRight />
           </button>
