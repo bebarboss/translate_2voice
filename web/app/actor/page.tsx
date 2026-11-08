@@ -3,8 +3,10 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Recorder from "@/components/Recorder";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
+import { ImagePickButton } from "@/components/VoiceDetail";
+import VoiceAvatar from "@/components/VoiceAvatar";
 import Link from "next/link";
-import { api, fileUrl, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood,
+import { api, fileUrl, uploadVoiceImage, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood,
   type UsageRow } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, MOODS, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
@@ -441,18 +443,52 @@ function Studio({ me, reload }: { me: ActorMe; reload: () => void }) {
       {me.voices.length > 0 && (
         <section className="card" aria-labelledby="my-voices">
           <h2 id="my-voices">{tx("เสียงของฉัน")}</h2>
+          <span className="dim">{tx("เพิ่มรูปโปรไฟล์ของเสียง จะแสดงในคลังเสียงให้ผู้ใช้เห็น")}</span>
           {me.voices.map((v) => (
             <div key={v.id} className="actor-voice">
-              <div className="row" style={{ justifyContent: "space-between", gap: 10 }}>
-                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                  <strong>{v.name}</strong>
-                  {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
-                    : v.status === "failed" ? <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>
-                    : v.review && REVIEW_BADGE[v.review]}
-                  <span className="dim">{tx("อารมณ์ {0}/{1}", {
-                    0: v.moods.filter((x) => x.status === "ready").length, 1: MOODS.length })}</span>
+              <div className="row" style={{ justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                <div className="row" style={{ gap: 12, alignItems: "center", minWidth: 0, flex: 1 }}>
+                  <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} size={56} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                      <strong>{v.name}</strong>
+                      {v.status === "processing" ? <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>
+                        : v.status === "failed" ? <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>
+                        : v.review && REVIEW_BADGE[v.review]}
+                      <span className="dim">{tx("อารมณ์ {0}/{1}", {
+                        0: v.moods.filter((x) => x.status === "ready").length, 1: MOODS.length })}</span>
+                    </div>
+                    <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                      <ImagePickButton label={v.image ? tx("เปลี่ยนรูป") : tx("เพิ่มรูป")} disabled={busy}
+                        onPick={async (f) => {
+                          setBusy(true);
+                          setMessage(null);
+                          try {
+                            await uploadVoiceImage(v.id, f);
+                            reload();
+                            setMessage({ kind: "info", text: tx("บันทึกรูปแล้ว") });
+                          } catch (e) {
+                            setMessage({ kind: "error", text: (e as Error).message });
+                          } finally { setBusy(false); }
+                        }} />
+                      {v.image && (
+                        <button type="button" className="btn small" disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            setMessage(null);
+                            try {
+                              await api.deleteVoiceImage(v.id);
+                              reload();
+                            } catch (e) {
+                              setMessage({ kind: "error", text: (e as Error).message });
+                            } finally { setBusy(false); }
+                          }}>{tx("ลบรูป")}</button>
+                      )}
+                      <Link href={`/voices/${v.id}`} className="btn small">{tx("รายละเอียด")}</Link>
+                    </div>
+                  </div>
                 </div>
-                <div className="row" style={{ gap: 6 }}>
+                <div className="row" style={{ gap: 6, flex: "none" }}>
                   <button type="button" className="btn small" onClick={() => {
                     const next = firstMissingMood(v);
                     pickSlot(v, next);
