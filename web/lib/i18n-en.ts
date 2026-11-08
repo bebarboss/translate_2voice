@@ -1147,7 +1147,6 @@ export const EN: Record<string, string> = {
   "1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง": "1 credit = 1 minute of clip, billed by actual length",
   "ใช้ก่อน หมดอายุพร้อมแพ็กเกจ": "Used first, expires with the plan",
   "ดูแพ็กเกจและโปรโมชันทั้งหมด": "See all plans and promotions",
-  "ดูแพ็กเกจ": "View plans",
   "ยอมรับฉบับ {0} เมื่อ {1}": "Accepted version {0} on {1}",
   "อ่าน": "Read",
   "รับทราบฉบับ {0} เมื่อ {1}": "Acknowledged version {0} on {1}",
