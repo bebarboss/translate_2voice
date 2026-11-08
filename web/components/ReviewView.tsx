@@ -10,7 +10,7 @@ import ProjectPanel from "./ProjectPanel";
 import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
-import { UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
+import { suggestedVoiceMap, UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
 import { ArrowLeft, MicIcon } from "./Icons";
 
 import { tx } from "@/lib/i18n";
@@ -32,10 +32,37 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [maxSpeedup, setMaxSpeedup] = useState(1.35);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const autoVoiceKey = useRef("");
 
   useEffect(() => {
     api.getSettings().then((s) => setMaxSpeedup(s.max_speedup)).catch(() => {});
   }, [job.id]);
+
+  // เข้าหน้าแก้บทแล้วเลือกเสียงแนะนำอัตโนมัติ ตามคลังที่แพ็กเกจใช้ได้ (ทดลอง = Standard เท่านั้น)
+  useEffect(() => {
+    if (!vc.cast || !Object.keys(vc.voices).length) return;
+    const key = `${job.id}|${speakers.join(",")}|${Object.keys(vc.voices).sort().join(",")}|${vc.cast.map((c) => c.suggestions[0]?.voice_id ?? "").join(",")}`;
+    if (autoVoiceKey.current === key) return;
+    autoVoiceKey.current = key;
+    const suggested = suggestedVoiceMap(vc.cast, vc.voices, speakers);
+    setVoiceDraft((prev) => {
+      const next: Record<string, string | null> = { ...prev };
+      let changed = false;
+      for (const s of speakers) {
+        const top = suggested[s];
+        const cur = next[s] ?? null;
+        // บังคับใช้เสียงแนะนำ หรือถ้าของเดิมใช้ไม่ได้ (ไม่อยู่ในคลังตามแพ็ก) ให้เปลี่ยนเป็นแนะนำ
+        if (top && cur !== top) {
+          next[s] = top;
+          changed = true;
+        } else if (cur && !vc.voices[cur]) {
+          next[s] = top ?? null;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [vc.cast, vc.voices, job.id, speakers]);
 
   const total = duration || (sorted.length ? sorted[sorted.length - 1].end + 1 : 1);
 
