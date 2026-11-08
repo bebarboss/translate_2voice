@@ -29,8 +29,26 @@ export type VoiceCastState = ReturnType<typeof useVoiceCast>;
 
 const describe = (v: LibraryVoice) => [v.name, v.gender && tx(GENDER_LABEL[v.gender]), v.tone].filter(Boolean).join(" · ");
 const scoreOf = (c: SpeakerVoice | undefined, id: string) => c?.suggestions.find((s) => s.voice_id === id)?.score;
-const topOf = (c: SpeakerVoice | undefined, voices: Record<string, LibraryVoice>) =>
+/** เสียงแนะนำอันดับแรกที่แพ็กเกจนี้ใช้ได้ (อยู่ในคลังที่โหลดมาแล้ว) */
+export const topSuggested = (c: SpeakerVoice | undefined, voices: Record<string, LibraryVoice>) =>
   c?.suggestions.find((s) => voices[s.voice_id])?.voice_id;
+
+/** สร้างแผนที่ตัวละคร → เสียงแนะนำ ตามคลังที่สิทธิ์แพ็กเกจอนุญาต */
+export function suggestedVoiceMap(
+  cast: SpeakerVoice[],
+  voices: Record<string, LibraryVoice>,
+  speakers?: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const list = speakers?.length
+    ? speakers.map((s) => cast.find((c) => c.speaker === s) ?? { speaker: s, voice_id: null, pitch_hz: null, gender: "" as const, suggestions: [] })
+    : cast;
+  for (const c of list) {
+    const top = topSuggested(c, voices);
+    if (top) out[c.speaker] = top;
+  }
+  return out;
+}
 
 /** ปุ่มแสดงเสียงที่ตัวละครใช้อยู่ กดแล้วเปิดแถบเลือกเสียง compact = แบบย่อสำหรับเลเยอร์บนเส้นเวลา */
 export function VoiceChoice({ vc, speaker, label, selected, compact }: {
@@ -42,7 +60,7 @@ export function VoiceChoice({ vc, speaker, label, selected, compact }: {
 }) {
   const c = vc.cast?.find((x) => x.speaker === speaker);
   const v = selected ? vc.voices[selected] : undefined;
-  const top = topOf(c, vc.voices);
+  const top = topSuggested(c, vc.voices);
   const score = selected ? scoreOf(c, selected) : undefined;
   return (
     <button type="button" className={`voice-choice${compact ? " compact" : ""}`} onClick={() => vc.open(speaker)}
@@ -102,7 +120,7 @@ export function UseSuggested({ vc, value, onApply }: {
   }
   const choice: Record<string, string> = {};
   for (const c of vc.cast) {
-    const top = topOf(c, vc.voices);
+    const top = topSuggested(c, vc.voices);
     if (top && value[c.speaker] !== top) choice[c.speaker] = top;
   }
   const n = Object.keys(choice).length;

@@ -847,8 +847,22 @@ def get_job_voices(job_id: str, request: Request):
     if not utterances:
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแยกผู้พูดเสร็จก่อน")
     profiles = library.speaker_profiles(store.dir(job_id), utterances)
-    hidden = hidden_voices(request)
-    ready = [v for v in voice_store.all() if v.status == VoiceStatus.ready and v.id not in hidden]
+    info = actors.voice_actors()
+    hidden = hidden_voices(request, info)
+    uid = current_user_id(request)
+    ent = accounts.entitlements(uid) if uid else None
+    actor_ids = set(info)
+    ready = []
+    for v in voice_store.all():
+        if v.status != VoiceStatus.ready or v.id in hidden:
+            continue
+        ainfo = info.get(v.id)
+        if uid and not accounts.voice_allowed(
+                uid, v.id, actor_ids, ent,
+                owner_id=ainfo["user_id"] if ainfo else None,
+                actor_review=ainfo["review"] if ainfo else None):
+            continue
+        ready.append(v)
     embs = {v.id: voice_store.embedding(v.id) for v in ready}
     blocked = actors.blocked_moods()
     mood_bonus = {v.id: 0.01 * min(5, sum(m.status == VoiceStatus.ready and (v.id, m.mood) not in blocked for m in v.moods))
