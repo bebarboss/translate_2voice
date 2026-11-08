@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -25,6 +26,19 @@ from .accounts import AccountError, _read, _tx
 from .config import settings
 
 log = logging.getLogger("dubbing.actors")
+
+# แคชสั้น ๆ กันหน้าคลังเสียง / นักพากย์ยิง JOIN ซ้ำทุกครั้ง (RTT ไป Supabase ~300ms+)
+_cache_lock = threading.Lock()
+_va_cache: tuple[float, dict[str, dict]] = (0.0, {})
+_mood_cache: tuple[float, dict[str, dict[str, dict]]] = (0.0, {})
+_CACHE_TTL = 20.0
+
+
+def invalidate_voice_cache() -> None:
+    global _va_cache, _mood_cache
+    with _cache_lock:
+        _va_cache = (0.0, {})
+        _mood_cache = (0.0, {})
 
 CONSENT_VERSION = "2026-11-03.3"
 # ข้อที่ต้องติ๊กทีละข้อ (บันทึกว่ายอมรับข้อไหน) ต้องครบทุกข้อถึงจะสมัครหรือส่งเสียงได้
@@ -286,6 +300,7 @@ def withdraw(uid: str) -> list[str]:
         db.execute("DELETE FROM actor_voices WHERE user_id = ?", (uid,))
         if ids:
             db.execute(f"DELETE FROM actor_moods WHERE voice_id IN ({','.join('?' * len(ids))})", ids)
+    invalidate_voice_cache()
     return ids
 
 
@@ -351,6 +366,7 @@ def add_voice(voice_id: str, uid: str) -> None:
     with _tx() as db:
         db.execute("INSERT INTO actor_voices (voice_id, user_id, review, created_at) VALUES (?, ?, 'draft', ?)",
                    (voice_id, uid, time.time()))
+    invalidate_voice_cache()
 
 
 def resubmit_voice(voice_id: str) -> None:
@@ -359,6 +375,7 @@ def resubmit_voice(voice_id: str) -> None:
     with _tx() as db:
         db.execute("UPDATE actor_voices SET review = 'draft', note = '', reviewed_at = NULL, reviewed_by = NULL "
                    "WHERE voice_id = ?", (voice_id,))
+    invalidate_voice_cache()
 
 
 def remove_voice(voice_id: str) -> None:
@@ -366,6 +383,7 @@ def remove_voice(voice_id: str) -> None:
     with _tx() as db:
         db.execute("DELETE FROM actor_voices WHERE voice_id = ?", (voice_id,))
         db.execute("DELETE FROM actor_moods WHERE voice_id = ?", (voice_id,))
+    invalidate_voice_cache()
 
 
 # ---------------------------------------------------------------- เสียงอารมณ์ (ตรวจแยกทีละอารมณ์)
@@ -376,6 +394,7 @@ def add_mood(voice_id: str, mood: str) -> None:
         db.execute("INSERT INTO actor_moods (voice_id, mood, review, created_at) VALUES (?, ?, 'draft', ?) "
                    "ON CONFLICT (voice_id, mood) DO UPDATE SET review = 'draft', note = '', created_at = excluded.created_at, "
                    "reviewed_at = NULL, reviewed_by = NULL", (voice_id, mood, time.time()))
+    invalidate_voice_cache()
 
 
 def submit_for_review(voice_id: str, ready_moods: list[str]) -> None:
@@ -410,12 +429,14 @@ def submit_for_review(voice_id: str, ready_moods: list[str]) -> None:
                 changed = True
         if not changed:
             raise AccountError(400, "ชุดนี้ส่งตรวจแล้ว หรือไม่มีฉบับร่างที่ต้องส่ง")
+    invalidate_voice_cache()
 
 
 def remove_mood(voice_id: str, mood: str) -> None:
     _init()
     with _tx() as db:
         db.execute("DELETE FROM actor_moods WHERE voice_id = ? AND mood = ?", (voice_id, mood))
+    invalidate_voice_cache()
 
 
 def review_mood(voice_id: str, mood: str, approve: bool, note: str, by: str) -> None:
@@ -427,15 +448,24 @@ def review_mood(voice_id: str, mood: str, approve: bool, note: str, by: str) -> 
                    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (voice_id, mood) DO UPDATE SET review = excluded.review, "
                    "note = excluded.note, reviewed_at = excluded.reviewed_at, reviewed_by = excluded.reviewed_by",
                    (voice_id, mood, "approved" if approve else "rejected", note, time.time(), time.time(), by))
+    invalidate_voice_cache()
 
 
 def mood_reviews() -> dict[str, dict[str, dict]]:
     """id เสียง → อารมณ์ → {review, note} (เฉพาะอารมณ์ที่ตรวจแยก)"""
+    global _mood_cache
     _init()
+    now = time.time()
+    with _cache_lock:
+        at, data = _mood_cache
+        if at and now - at < _CACHE_TTL:
+            return {vid: {m: dict(r) for m, r in moods.items()} for vid, moods in data.items()}
     out: dict[str, dict[str, dict]] = {}
     for r in _read("SELECT voice_id, mood, review, note FROM actor_moods"):
         out.setdefault(r["voice_id"], {})[r["mood"]] = {"review": r["review"], "note": r["note"]}
-    return out
+    with _cache_lock:
+        _mood_cache = (time.time(), out)
+    return {vid: {m: dict(r) for m, r in moods.items()} for vid, moods in out.items()}
 
 
 def mood_review(voice_id: str, mood: str, voice_review: Optional[str] = None) -> Optional[str]:
@@ -455,10 +485,19 @@ def blocked_moods() -> set[tuple[str, str]]:
 
 def voice_actors() -> dict[str, dict]:
     """id เสียง → {user_id, stage_name, review, note} ของเสียงที่นักพากย์อัด"""
+    global _va_cache
     _init()
+    now = time.time()
+    with _cache_lock:
+        at, data = _va_cache
+        if at and now - at < _CACHE_TTL:
+            return {k: dict(v) for k, v in data.items()}
     rows = _read("SELECT v.voice_id, v.user_id, v.review, v.note, a.stage_name FROM actor_voices v "
                  "JOIN actors a ON a.user_id = v.user_id")
-    return {r["voice_id"]: dict(r) for r in rows}
+    out = {r["voice_id"]: dict(r) for r in rows}
+    with _cache_lock:
+        _va_cache = (time.time(), out)
+    return {k: dict(v) for k, v in out.items()}
 
 
 def review_voice(voice_id: str, approve: bool, note: str, by: str) -> None:
@@ -468,6 +507,7 @@ def review_voice(voice_id: str, approve: bool, note: str, by: str) -> None:
             raise AccountError(404, "ไม่ใช่เสียงของนักพากย์")
         db.execute("UPDATE actor_voices SET review = ?, note = ?, reviewed_at = ?, reviewed_by = ? WHERE voice_id = ?",
                    ("approved" if approve else "rejected", note, time.time(), by, voice_id))
+    invalidate_voice_cache()
 
 
 # ---------------------------------------------------------------- บันทึกการใช้เสียงและค่าตอบแทน
@@ -547,10 +587,21 @@ def report(month: Optional[str], uid: Optional[str] = None) -> list[dict]:
            + (f"WHERE {' AND '.join(where)} " if where else "") +
            "GROUP BY u.actor_id, u.month, a.stage_name, us.email "
            "ORDER BY u.month DESC, seconds DESC")
-    paid = {(r["actor_id"], r["month"]): r["paid"] for r in
-            _read("SELECT actor_id, month, SUM(amount) AS paid FROM actor_payouts GROUP BY actor_id, month")}
+    paid_sql = "SELECT actor_id, month, SUM(amount) AS paid FROM actor_payouts GROUP BY actor_id, month"
+    # อ่านสองคำสั่งในธุรกรรมเดียว (SET LOCAL ครั้งเดียว) แทนยืม connection คนละครั้ง
+    if settings.db_backend == "supabase":
+        from . import pgstore
+        with pgstore.borrow() as db:
+            db.execute("BEGIN")
+            paid_rows = db.execute(paid_sql).fetchall()
+            rows = db.execute(sql, tuple(args)).fetchall()
+            db.execute("COMMIT")
+    else:
+        paid_rows = _read(paid_sql)
+        rows = _read(sql, *args)
+    paid = {(r["actor_id"], r["month"]): r["paid"] for r in paid_rows}
     out = []
-    for r in _read(sql, *args):
+    for r in rows:
         amount = amount_of(r["seconds"])
         p = paid.get((r["actor_id"], r["month"]), 0)
         due = amount - p

@@ -183,16 +183,8 @@ def checkout() -> psycopg.Connection:
             with _created_lock:
                 _created = max(0, _created - 1)
             raise
-    try:
-        _ensure_search_path(raw)
-    except Exception:
-        try:
-            raw.close()
-        except Exception:
-            pass
-        with _created_lock:
-            _created = max(0, _created - 1)
-        return _open()
+    # search_path ตั้งตอน Conn.execute (pipeline SET LOCAL + คำสั่ง) — อย่า SET+COMMIT แยก
+    # เพราะ transaction pooler ทำให้เสีย RTT เพิ่มทุกครั้งที่ borrow
     return raw
 
 
@@ -237,10 +229,23 @@ class Conn:
     def __init__(self, raw: psycopg.Connection):
         self.raw = raw
         self._in_tx = False
+        self._path_set = False
 
     @property
     def closed(self) -> bool:
         return self.raw.closed
+
+    def _run(self, sql: str, params=()):
+        """รัน SQL ใน schema studio — นอกธุรกรรมส่ง SET LOCAL คู่กับคำสั่งใน pipeline (1 RTT)"""
+        q = _sql(sql)
+        if self._in_tx:
+            if not self._path_set:
+                self.raw.execute("SET LOCAL search_path TO studio")
+                self._path_set = True
+            return self.raw.execute(q, params)
+        with self.raw.pipeline():
+            self.raw.execute("SET LOCAL search_path TO studio")
+            return self.raw.execute(q, params)
 
     def execute(self, sql: str, params=()) -> Result:
         head = sql.strip().rstrip(";").upper()
@@ -249,19 +254,23 @@ class Conn:
         if head.startswith("BEGIN"):
             if not self._in_tx:
                 self.raw.execute("BEGIN")
+                self.raw.execute("SET LOCAL search_path TO studio")
                 self._in_tx = True
+                self._path_set = True
             return Result([])
         if head == "COMMIT":
             self.raw.commit()
             self._in_tx = False
+            self._path_set = False
             return Result([])
         if head == "ROLLBACK":
             self.raw.rollback()
             self._in_tx = False
+            self._path_set = False
             return Result([])
         in_tx = self._in_tx
         try:
-            cur = self.raw.execute(_sql(sql), params)
+            cur = self._run(sql, params)
             rows = [Row(r) for r in cur.fetchall()] if cur.description else []
             if not in_tx:
                 self.raw.commit()
@@ -272,6 +281,7 @@ class Conn:
             except Exception:
                 pass
             self._in_tx = False
+            self._path_set = False
             raise
 
     def executemany(self, sql: str, seq) -> Result:
@@ -290,13 +300,31 @@ class Conn:
             name = head.split("(", 1)[1].split(")", 1)[0].strip().lower()
             if not _IDENT.match(name):
                 raise RuntimeError("ชื่อตารางไม่ถูกต้อง")
-            cur = self.raw.execute(
-                "SELECT column_name AS name FROM information_schema.columns "
-                "WHERE table_schema = 'studio' AND table_name = %s ORDER BY ordinal_position", (name,))
-            rows = [Row(r) for r in cur.fetchall()]
-            if not self._in_tx:
-                self.raw.commit()
-            return Result(rows)
+            in_tx = self._in_tx
+            try:
+                sql = ("SELECT column_name AS name FROM information_schema.columns "
+                       "WHERE table_schema = 'studio' AND table_name = %s ORDER BY ordinal_position")
+                if in_tx:
+                    if not self._path_set:
+                        self.raw.execute("SET LOCAL search_path TO studio")
+                        self._path_set = True
+                    cur = self.raw.execute(sql, (name,))
+                else:
+                    with self.raw.pipeline():
+                        self.raw.execute("SET LOCAL search_path TO studio")
+                        cur = self.raw.execute(sql, (name,))
+                rows = [Row(r) for r in cur.fetchall()]
+                if not in_tx:
+                    self.raw.commit()
+                return Result(rows)
+            except Exception:
+                try:
+                    self.raw.rollback()
+                except Exception:
+                    pass
+                self._in_tx = False
+                self._path_set = False
+                raise
         if head.startswith("PRAGMA USER_VERSION"):
             return Result([Row({"user_version": 1})])
         return Result([])

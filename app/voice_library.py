@@ -20,6 +20,20 @@ MOODS: tuple[str, ...] = get_args(Mood)
 
 log = logging.getLogger("dubbing.voices")
 
+# None = ยังไม่รู้, True/False = มี/ไม่มีตาราง voices บน PostgREST (กันยิง 404 ซ้ำทุกครั้ง)
+_cloud_voices: Optional[bool] = None
+
+
+def _mark_cloud(ok: bool, err: Optional[Exception] = None) -> None:
+    global _cloud_voices
+    _cloud_voices = ok
+    if not ok and err is not None:
+        log.warning("ปิด sync คลังเสียงกับ Supabase REST แล้ว ใช้ไฟล์ในเครื่อง: %s", err)
+
+
+def _cloud_enabled() -> bool:
+    return db.enabled() and _cloud_voices is not False
+
 
 class VoiceStore:
     def __init__(self, data_dir: Path):
@@ -36,11 +50,13 @@ class VoiceStore:
             self._voices[v.id] = v
 
     def _load(self) -> list[LibraryVoice]:
-        if db.enabled():
+        if _cloud_enabled():
             try:
-                return [from_row(r) for r in db.select("voices", select=f"{VOICE_COLS},voice_moods(*)")]
+                rows = [from_row(r) for r in db.select("voices", select=f"{VOICE_COLS},voice_moods(*)")]
+                _mark_cloud(True)
+                return rows
             except db.DBError as e:
-                log.warning("อ่านคลังเสียงจาก Supabase ไม่ได้ ใช้ไฟล์ voice.json แทน: %s", e)
+                _mark_cloud(False, e)
         voices = []
         for f in self.root.glob("*/voice.json"):
             try:
@@ -51,12 +67,15 @@ class VoiceStore:
 
     def _write(self, v: LibraryVoice) -> None:
         _atomic_write(self.dir(v.id) / "voice.json", v.model_dump_json(indent=2))
-        if db.enabled():
-            try:
-                push(v)
-            except db.DBError as e:
-                # ไฟล์ในเครื่องเป็นต้นฉบับอยู่แล้ว — อย่าทำให้ทั้งคำขอล้มเพราะ REST ขัดข้องชั่วคราว
-                log.error("บันทึกคลังเสียงลง Supabase ไม่ได้ (ใช้ไฟล์ในเครื่องต่อ): %s", e)
+        if not _cloud_enabled():
+            return
+        try:
+            push(v)
+            _mark_cloud(True)
+        except db.DBError as e:
+            # ไฟล์ในเครื่องเป็นต้นฉบับอยู่แล้ว — อย่าทำให้ทั้งคำขอล้มเพราะ REST ขัดข้องชั่วคราว
+            _mark_cloud(False, e)
+            log.error("บันทึกคลังเสียงลง Supabase ไม่ได้ (ใช้ไฟล์ในเครื่องต่อ): %s", e)
 
     def dir(self, voice_id: str) -> Path:
         return self.root / voice_id
@@ -136,10 +155,12 @@ class VoiceStore:
     def delete(self, voice_id: str) -> None:
         with self._lock:
             self._voices.pop(voice_id, None)
-            if db.enabled():
+            if _cloud_enabled():
                 try:
                     db.delete("voices", id=f"eq.{voice_id}")
+                    _mark_cloud(True)
                 except db.DBError as e:
+                    _mark_cloud(False, e)
                     log.error("ลบคลังเสียงใน Supabase ไม่ได้: %s", e)
             shutil.rmtree(self.dir(voice_id), ignore_errors=True)
 
@@ -149,11 +170,14 @@ class VoiceStore:
             path.unlink(missing_ok=True)
         else:
             np.save(path, emb.astype(np.float32))
-        if db.enabled():
-            try:
-                db.update("voices", {"embedding": db.vector(emb)}, id=f"eq.{voice_id}")
-            except db.DBError as e:
-                log.error("บันทึกลายเสียงลง Supabase ไม่ได้: %s", e)
+        if not _cloud_enabled():
+            return
+        try:
+            db.update("voices", {"embedding": db.vector(emb)}, id=f"eq.{voice_id}")
+            _mark_cloud(True)
+        except db.DBError as e:
+            _mark_cloud(False, e)
+            log.error("บันทึกลายเสียงลง Supabase ไม่ได้: %s", e)
 
     def embedding(self, voice_id: str) -> Optional[np.ndarray]:
         path = self.dir(voice_id) / "embedding.npy"

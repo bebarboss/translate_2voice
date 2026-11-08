@@ -212,6 +212,7 @@ export interface LibraryVoice {
   actor?: string | null; // ชื่อนักพากย์ (เสียงที่นักพากย์อัดเอง)
   review?: "draft" | "pending" | "approved" | "rejected" | null; // draft = อัดแล้วยังไม่ส่งตรวจ
   review_note?: string;
+  mine?: boolean; // เจ้าของเสียงนักพากย์นี้ (แก้รูป/ข้อมูลได้)
   created_at: string;
   updated_at: string;
 }
@@ -548,6 +549,7 @@ export const api = {
     request<Job>(`/jobs/${id}/voices`, json("PUT", choice)),
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
+  getVoice: (id: string) => request<LibraryVoice>(`/voices/${id}`),
 
   listProjects: () => request<Project[]>("/projects"),
   createProject: (body: ProjectInput) => request<Project>("/projects", json("POST", body)),

@@ -390,6 +390,92 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 .avatar { flex: none; width: 56px; height: 56px; border-radius: 12px; object-fit: cover; background: var(--surface-2); color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; }
 .btn.disabled { opacity: .5; pointer-events: none; }
 
+/* คลังเสียงแนว Pixabay: แถวแนวนอน + waveform */
+.voice-list { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--surface); }
+a.voice-row {
+  text-decoration: none; color: inherit; cursor: pointer;
+  display: grid; grid-template-columns: 48px minmax(140px, 200px) minmax(120px, 1fr) 48px minmax(100px, 160px) 40px;
+  align-items: center; gap: 14px; padding: 12px 16px;
+  border-bottom: 1px solid var(--border); transition: background .15s;
+}
+a.voice-row:last-child { border-bottom: 0; }
+a.voice-row:hover { background: rgba(var(--fg-rgb), .035); }
+.voice-row-id { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.voice-row-name { font-size: 14px; font-weight: 600; word-break: break-word; line-height: 1.3; }
+.voice-row-by { font-size: 12px; color: var(--dim); }
+.voice-row-wave { min-width: 0; height: 36px; display: flex; align-items: center; }
+.voice-row-dur { font-size: 13px; color: var(--muted); text-align: right; }
+.voice-row-tags { min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--dim); line-height: 1.35; }
+.voice-row-tags span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.voice-row-actions { display: flex; justify-content: flex-end; }
+.wave-play { width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--border-2); background: rgba(var(--fg-rgb), .04); display: inline-grid; place-items: center; padding: 0; }
+.wave-play:hover { border-color: var(--accent); color: var(--accent); }
+
+.wave-bars {
+  width: 100%; height: 100%; display: flex; align-items: center; gap: 1.5px;
+  --wave: rgba(var(--fg-rgb), .28); --wave-on: var(--accent);
+}
+.wave-bars.is-clickable { cursor: pointer; }
+.wave-bar {
+  flex: 1 1 0; min-width: 1px; max-width: 4px; border-radius: 1px;
+  background: var(--wave); align-self: center; transition: background .12s;
+}
+.wave-bars.is-active .wave-bar.is-filled,
+.wave-bar.is-filled { background: var(--wave-on); }
+.wave-bars.is-clickable:hover .wave-bar { background: rgba(var(--fg-rgb), .4); }
+.wave-bars.is-clickable:hover .wave-bar.is-filled { background: var(--accent-hover); }
+
+/* หน้ารายละเอียดเสียง */
+.voice-detail { display: flex; flex-direction: column; gap: 18px; }
+.voice-hero {
+  position: relative; overflow: hidden; border-radius: 20px;
+  background: linear-gradient(135deg, #2a211c 0%, #1a1512 55%, #241810 100%);
+  border: 1px solid rgba(255, 138, 76, .22); color: #f5efe9;
+  min-height: 168px;
+}
+.voice-hero-bg {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+  opacity: .22; filter: saturate(.85) blur(1px); pointer-events: none;
+}
+.voice-hero-inner { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 18px; padding: 22px 24px 20px; }
+.voice-hero-top { display: flex; align-items: center; gap: 14px; }
+.voice-hero-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.voice-hero-name { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.01em; word-break: break-word; color: #fff; }
+.voice-hero-by { font-size: 13px; color: rgba(255, 245, 235, .72); }
+.voice-hero-wave { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; gap: 10px; }
+.voice-hero-time { font-size: 12px; color: rgba(255, 245, 235, .65); text-align: center; }
+.voice-hero-bars { height: 44px; --wave: rgba(255, 245, 235, .35); --wave-on: #ffb27f; }
+.play-round {
+  flex: none; width: 52px; height: 52px; border-radius: 999px; border: 0;
+  background: var(--accent-grad); color: #1a0e06; display: grid; place-items: center;
+  cursor: pointer; box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  transition: transform .15s var(--ease), filter .15s;
+}
+.play-round:hover { filter: brightness(1.06); transform: scale(1.04); }
+.play-round:disabled { opacity: .5; cursor: default; transform: none; }
+.voice-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; align-items: start; }
+.voice-detail-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.voice-side-card { gap: 12px; position: sticky; top: 16px; }
+.voice-stats { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.voice-stats > div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.voice-stats dt { margin: 0; color: var(--dim); }
+.voice-stats dd { margin: 0; color: var(--text-2); text-align: right; }
+
+@media (max-width: 860px) {
+  a.voice-row {
+    grid-template-columns: 48px minmax(0, 1fr) 40px;
+    grid-template-areas: "av id play" "av wave play" "av meta play";
+  }
+  a.voice-row > :nth-child(1) { grid-area: av; }
+  a.voice-row > .voice-row-id { grid-area: id; }
+  a.voice-row > .voice-row-wave { grid-area: wave; }
+  a.voice-row > .voice-row-dur { grid-area: meta; text-align: left; }
+  a.voice-row > .voice-row-tags { display: none; }
+  a.voice-row > .voice-row-actions { grid-area: play; }
+  .voice-detail-grid { grid-template-columns: 1fr; }
+  .voice-side-card { position: static; }
+}
+
 /* หมวดหมู่ของเสียงในคลัง */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .chip { height: 30px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--border-2); background: rgba(var(--fg-rgb), .03); color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }

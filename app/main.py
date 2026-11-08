@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -45,6 +46,11 @@ worker = Worker(store, voice_store)
 async def lifespan(_: FastAPI):
     worker.start()
     backup.start()
+    try:  # อุ่นแคชนักพากย์ตั้งแต่สตาร์ท หน้าคลังเสียงโหลดครั้งแรกไม่ต้องรอ JOIN ไกล
+        actors.voice_actors()
+        actors.mood_reviews()
+    except Exception:
+        logging.getLogger("dubbing.actors").exception("อุ่นแคชเสียงนักพากย์ไม่สำเร็จ")
     yield
 
 
@@ -138,8 +144,14 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
     voice_id = request.path_params.get("voice_id")
     if voice_id and voice_id in hidden_voices(request):
         raise HTTPException(404, "ไม่พบเสียงนี้ในคลัง")
-    if path.startswith(("/admin", "/system")) or (
-            path.startswith(ADMIN_WRITES) and request.method not in ("GET", "HEAD")):
+    if path.startswith(("/admin", "/system")):
+        raise HTTPException(403, "เฉพาะผู้ดูแลระบบ")
+    if path.startswith(ADMIN_WRITES) and request.method not in ("GET", "HEAD"):
+        # เจ้าของเสียงนักพากย์แก้เมตาดาต้า/รูป/อารมณ์ของเสียงตัวเองได้ (POST /voices สร้างใหม่ยังเป็นแอดมิน)
+        if path.startswith("/voices/") and voice_id:
+            own = actors.voice_actors().get(voice_id)
+            if own and own["user_id"] == user["id"]:
+                return
         raise HTTPException(403, "เฉพาะผู้ดูแลระบบ")
 
 
@@ -147,20 +159,23 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
 app.router.dependencies.append(Depends(access_guard))
 
 
-def hidden_voices(request: Request) -> set[str]:
-    """เสียงของนักพากย์ที่ผู้ดูแลยังไม่อนุมัติ: ซ่อนจากทุกคน ยกเว้นผู้ดูแลและนักพากย์เจ้าของเสียง"""
+def hidden_voices(request: Request, info: Optional[dict] = None) -> set[str]:
+    """เสียงของนักพากย์ที่ผู้ดูแลยังไม่อนุมัติ: ซ่อนจากทุกคน ยกเว้นผู้ดูแลและนักพากย์เจ้าของเสียง
+    info = ผล actors.voice_actors() ที่คำนวณไว้แล้ว (ไม่ยิงฐานซ้ำ)"""
     user = getattr(request.state, "user", None)
     if user is None or accounts.is_admin(user):
         return set()
-    return {v for v, a in actors.voice_actors().items() if a["review"] != "approved" and a["user_id"] != user["id"]}
+    rows = info if info is not None else actors.voice_actors()
+    return {v for v, a in rows.items() if a["review"] != "approved" and a["user_id"] != user["id"]}
 
 
 def with_actor(v: LibraryVoice, info: Optional[dict], show_pending: bool = True,
-               moods_info: Optional[dict] = None) -> LibraryVoice:
+               moods_info: Optional[dict] = None, viewer_id: Optional[str] = None) -> LibraryVoice:
     """เติมชื่อนักพากย์และสถานะตรวจของเสียงหลักและเสียงอารมณ์ (ไม่เก็บกับเสียง)
     show_pending=False: ซ่อนเสียงอารมณ์ที่ยังไม่ผ่านการตรวจ (ผู้ใช้ทั่วไปที่ไม่ใช่เจ้าของเสียง)"""
+    mine = bool(info and viewer_id and info["user_id"] == viewer_id)
     if info is None:
-        return v
+        return v.model_copy(update={"mine": False})
     reviews = (moods_info if moods_info is not None else actors.mood_reviews()).get(v.id, {})
     moods = []
     for m in v.moods:
@@ -168,7 +183,7 @@ def with_actor(v: LibraryVoice, info: Optional[dict], show_pending: bool = True,
         if show_pending or r["review"] == "approved":
             moods.append(m.model_copy(update={"review": r["review"], "review_note": r["note"]}))
     return v.model_copy(update={"actor": info["stage_name"], "review": info["review"], "review_note": info["note"],
-                                "moods": moods})
+                                "moods": moods, "mine": mine})
 
 
 def sees_pending(request: Request, info: Optional[dict]) -> bool:
@@ -859,8 +874,9 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
     if job.status not in EDITABLE:
         raise HTTPException(409, "เปลี่ยนเสียงได้เมื่องานไม่ได้กำลังทำงานอยู่เท่านั้น")
     voice_map = dict(job.voice_map)
-    hidden = hidden_voices(request)
-    actor_ids = set(actors.voice_actors())
+    info = actors.voice_actors()
+    hidden = hidden_voices(request, info)
+    actor_ids = set(info)
     uid = current_user_id(request)
     for speaker, voice_id in choice.items():
         if speaker not in job.speakers:
@@ -871,7 +887,8 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
         v = voice_store.get(voice_id) if voice_id not in hidden else None
         if v is None or v.status != VoiceStatus.ready:
             raise HTTPException(400, f"เสียง {voice_id} ไม่มีในคลังหรือยังเตรียมไม่เสร็จ")
-        if uid and not accounts.voice_allowed(uid, voice_id, actor_ids):
+        owner_id = (info.get(voice_id) or {}).get("user_id")
+        if uid and not accounts.voice_allowed(uid, voice_id, actor_ids, owner_id=owner_id):
             raise HTTPException(402, "แพ็กเกจนี้ใช้ได้เฉพาะเสียง Standard อัปเกรดที่หน้าโปรโมชันเพื่อใช้เสียงนักพากย์")
         voice_map[speaker] = voice_id
     return store.update(job_id, voice_map=voice_map)
@@ -897,16 +914,21 @@ def _clean_categories(values: list[str]) -> list[str]:
 
 @app.get("/voices", response_model=list[LibraryVoice], dependencies=[Depends(require_key)])
 def list_voices(request: Request):
-    info, hidden, moods = actors.voice_actors(), hidden_voices(request), actors.mood_reviews()
+    info = actors.voice_actors()
+    moods = actors.mood_reviews()
+    hidden = hidden_voices(request, info)
     actor_ids = set(info)
     uid = current_user_id(request)
+    ent = accounts.entitlements(uid) if uid else None
     out = []
     for v in voice_store.all():
         if v.id in hidden:
             continue
-        if uid and not accounts.voice_allowed(uid, v.id, actor_ids):
+        ainfo = info.get(v.id)
+        owner_id = ainfo["user_id"] if ainfo else None
+        if uid and not accounts.voice_allowed(uid, v.id, actor_ids, ent, owner_id=owner_id):
             continue
-        out.append(with_actor(v, info.get(v.id), sees_pending(request, info.get(v.id)), moods))
+        out.append(with_actor(v, ainfo, sees_pending(request, ainfo), moods, uid))
     return out
 
 
@@ -951,7 +973,8 @@ async def create_voice(
 @app.get("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
 def get_voice(voice_id: str, request: Request):
     info = actors.voice_actors().get(voice_id)
-    return with_actor(get_voice_or_404(voice_id), info, sees_pending(request, info))
+    return with_actor(get_voice_or_404(voice_id), info, sees_pending(request, info),
+                      viewer_id=current_user_id(request))
 
 
 @app.patch("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
@@ -1599,7 +1622,7 @@ def _own_voice(user, voice_id: str) -> LibraryVoice:
     info = actors.voice_actors().get(voice_id)
     if info is None or info["user_id"] != user["id"]:
         raise HTTPException(404, "ไม่พบเสียงนี้")
-    return with_actor(get_voice_or_404(voice_id), info)
+    return with_actor(get_voice_or_404(voice_id), info, viewer_id=user["id"])
 
 
 @app.get("/legal/actor", dependencies=[Depends(require_key)])
@@ -1611,18 +1634,31 @@ def actor_consent():
 @app.get("/actor/me", dependencies=[Depends(require_key)])
 def actor_me(user=Depends(require_user)):
     """สถานะนักพากย์ของผู้ใช้ ความยินยอม เสียงที่ส่ง และยอดค่าตอบแทนย้อนหลัง 6 เดือน"""
-    info = actors.voice_actors()
-    voices = [with_actor(v, info[v.id]) for v in voice_store.all()
-              if v.id in info and info[v.id]["user_id"] == user["id"]]
-    c = actors.consent(user["id"])
-    return {"actor": actors.actor(user["id"]),
+    uid = user["id"]
+    # คิวรีไป Supabase ขนานกัน — แต่ละคำสั่งกิน RTT ~300ms ถ้ารันทีละตัวหน้าโหลดหลายวินาที
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        f_info = pool.submit(actors.voice_actors)
+        f_moods = pool.submit(actors.mood_reviews)
+        f_actor = pool.submit(actors.actor, uid)
+        f_consent = pool.submit(actors.consent, uid)
+        f_payment = pool.submit(actors.payment_out, uid)
+        f_usage = pool.submit(actors.summary, uid)
+        f_payouts = pool.submit(actors.payouts, uid)
+        f_mood_usage = pool.submit(actors.mood_usage, uid)
+        info, moods = f_info.result(), f_moods.result()
+        a, c = f_actor.result(), f_consent.result()
+        payment, usage = f_payment.result(), f_usage.result()
+        payout_rows, mood_usage = f_payouts.result(), f_mood_usage.result()
+    voices = [with_actor(v, info[v.id], True, moods, uid) for v in voice_store.all()
+              if v.id in info and info[v.id]["user_id"] == uid]
+    return {"actor": a,
             "consent": {"version": c["version"], "accepted_at": c["accepted_at"]} if c else None,
-            "consent_current": actors.has_consent(user["id"]), "consent_version": actors.CONSENT_VERSION,
+            "consent_current": bool(c and c["version"] == actors.CONSENT_VERSION),
+            "consent_version": actors.CONSENT_VERSION,
             "rate": settings.actor_rate, "voices": [v.model_dump(mode="json") for v in voices],
-            "payment": actors.payment_out(user["id"]), "banks": actors.BANKS,
+            "payment": payment, "banks": actors.BANKS,
             "wht": {"percent": settings.actor_wht_percent, "min": settings.actor_wht_min},
-            "usage": actors.summary(user["id"]), "payouts": actors.payouts(user["id"]),
-            "mood_usage": actors.mood_usage(user["id"])}
+            "usage": usage, "payouts": payout_rows, "mood_usage": mood_usage}
 
 
 @app.post("/actor/apply", dependencies=[Depends(require_key)])
@@ -1887,7 +1923,7 @@ def admin_review_actor(user_id: str, body: Review, admin=Depends(require_admin))
 def admin_actor_voices(_=Depends(require_admin)):
     """เสียงทั้งหมดที่นักพากย์ส่ง (รอตรวจขึ้นก่อน)"""
     info, moods = actors.voice_actors(), actors.mood_reviews()
-    out = [with_actor(v, info[v.id], True, moods) for v in voice_store.all() if v.id in info]
+    out = [with_actor(v, info[v.id], True, moods) for v in voice_store.all() if v.id in info]  # แอดมินดูทั้งหมด mine=False
     pending = lambda v: v.review == "pending" or any(m.review == "pending" for m in v.moods)  # noqa: E731
     return sorted(out, key=lambda v: not pending(v))
 

@@ -196,11 +196,17 @@ def require_timeline(uid: Optional[str]) -> None:
     raise AccountError(402, "นำเข้าไทม์ไลน์ใช้ได้เฉพาะแพ็กเกจมือโปร อัปเกรดที่หน้าโปรโมชัน")
 
 
-def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str]) -> bool:
-    """แพ็กทดลองใช้ได้เฉพาะเสียง standard (ไม่ใช่เสียงนักพากย์)"""
+def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str],
+                  ent: Optional[dict] = None, *, owner_id: Optional[str] = None) -> bool:
+    """แพ็กทดลองใช้ได้เฉพาะเสียง standard (ไม่ใช่เสียงนักพากย์)
+    เจ้าของเสียงนักพากย์เห็นและใช้เสียงตัวเองได้เสมอ (ไม่ถูกแพ็กทดลองซ่อนจากคลัง)
+    ent = สิทธิ์ที่คำนวณไว้แล้ว (ส่งมาจาก list_voices เพื่อไม่ยิงฐานข้อมูลซ้ำทุกเสียง)"""
     if not billing_enabled() or not uid:
         return True
-    ent = entitlements(uid)
+    if owner_id and owner_id == uid:
+        return True
+    if ent is None:
+        ent = entitlements(uid)
     if ent.get("voices") == "all" or ent.get("plan_id") == "admin":
         return True
     if ent.get("voices") == "standard":

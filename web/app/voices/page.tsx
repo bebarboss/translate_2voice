@@ -1,55 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, uploadJob, uploadVoice, uploadVoiceImage, uploadVoiceMood, type Gender, type LibraryVoice, type Mood, type VoiceAnalysis, type VoiceMood } from "@/lib/api";
-import { GENDER_LABEL, MOODS, MOOD_LABEL, TONES, VOICE_STAGE_LABEL, fmtWhen } from "@/lib/format";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { api, fileUrl, uploadJob, uploadVoice, uploadVoiceImage, type Gender, type LibraryVoice } from "@/lib/api";
+import { GENDER_LABEL, TONES, VOICE_STAGE_LABEL } from "@/lib/format";
 import CategoryPicker from "@/components/CategoryPicker";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
+import { ImagePickButton } from "@/components/VoiceDetail";
+import WaveBars, { fmtClock } from "@/components/WaveBars";
 import { UploadIcon } from "@/components/Icons";
 import VoiceAvatar from "@/components/VoiceAvatar";
 import { useAuth } from "@/lib/useAuth";
-
 import { tx } from "@/lib/i18n";
+
 const ACCEPT = ".wav,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wma,.mp4,.mov,.mkv,.webm";
 const GENDERS: Gender[] = ["", "male", "female"];
-const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 
-const OTHER_VOICES_WARN = 0.2; // ท่อนเสียงคนอื่นเกินสัดส่วนนี้ เตือนว่าไฟล์มีหลายคนพูด
-
-const fmtMin = (sec: number) => (sec >= 90 ? tx("{0} นาที", { 0: (sec / 60).toFixed(1) }) : tx("{0} วินาที", { 0: Math.round(sec) }));
-
-/** ผลประเมินไฟล์ที่อัปโหลดทั้งไฟล์: ประเมินกี่ท่อน และมีเสียงคนอื่นปนแค่ไหน */
-function AnalysisNote({ a }: { a: VoiceAnalysis }) {
-  const other = a.other_voices ?? 0;
-  return (
-    <>
-      <span className="dim">
-        
-        {tx("ประเมินทั้งไฟล์")}{a.source_sec ? ` ${fmtMin(a.source_sec)}` : ""}
-        {a.speech_sec ? tx(" · เสียงพูด {0}", { 0: fmtMin(a.speech_sec) }) : ""}
-        {a.windows ? tx(" · {0} ท่อน เลือกท่อนที่ชัดที่สุด", { 0: a.windows }) : ""}
-      </span>
-      {other >= OTHER_VOICES_WARN && (
-        <div className="alert warn">
-          
-          {tx("พบเสียงคนอื่นปนราว")} {Math.round(other * 100)}{tx("% ของไฟล์ ระบบเลือกเฉพาะเสียงของคนที่พูดมากที่สุด ถ้าเสียงตัวอย่างไม่ใช่คนที่ต้องการ ใช้ไฟล์ที่มีแค่เสียงคนนั้น")}
-        </div>
-      )}
-    </>
-  );
-}
-
-/** ปุ่มเลือกรูป (input file ซ่อนอยู่ในปุ่ม) */
-function ImagePickButton({ label, onPick, disabled }: { label: string; onPick: (f: File) => void; disabled?: boolean }) {
-  return (
-    <label className={`btn small${disabled ? " disabled" : ""}`} style={{ cursor: disabled ? "default" : "pointer" }}>
-      {label}
-      <input type="file" accept={IMAGE_ACCEPT} className="sr-only" disabled={disabled}
-        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onPick(f); }} />
-    </label>
-  );
-}
+type AddMode = "single" | "multi";
 
 function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g: Gender) => void; label: string }) {
   return (
@@ -63,11 +31,7 @@ function GenderPicker({ value, onChange, label }: { value: Gender; onChange: (g:
   );
 }
 
-type AddMode = "single" | "multi";
-
-/** เพิ่มเสียงเข้าคลังจากไฟล์หรือลิงก์
- *  single: คลิปที่มีคนเดียวพูด เพิ่มเป็นเสียงเลย
- *  multi : คลิปที่มีหลายคนพูด ส่งเป็นงานแยกผู้พูด (ไม่แปลไม่พากย์) แล้วไปหน้าเลือกบันทึกเสียงของแต่ละคน */
+/** เพิ่มเสียงเข้าคลังจากไฟล์หรือลิงก์ */
 function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: string[] }) {
   const router = useRouter();
   const [mode, setMode] = useState<AddMode>("single");
@@ -210,7 +174,6 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
         {multi ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <p className="muted" style={{ margin: 0 }}>
-              
               {tx("ระบบแยกเพลงออก แยกเสียงของแต่ละคน และถอดเสียงให้ (ไม่แปล ไม่พากย์) แล้วพาไปหน้าที่ให้ฟังเสียงแต่ละคน ตั้งชื่อว่าเป็นเสียงของใคร และเลือกบันทึกลงคลังทีละคน")}
             </p>
             <div className="field">
@@ -297,275 +260,58 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
   );
 }
 
-/** เสียงอารมณ์หนึ่ง: ฟัง แก้ข้อความ ลองใหม่ ลบ */
-function MoodRow({ v, m, preview, run, canEdit }: {
-  v: LibraryVoice;
-  m: VoiceMood;
-  canEdit: boolean;
-  preview: ReturnType<typeof usePreview>;
-  run: (fn: () => Promise<unknown>) => Promise<boolean>;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(m.text);
-  useEffect(() => { if (!editing) setText(m.text); }, [m.text, editing]);
-  const save = async () => {
-    if (text.trim() && await run(() => api.updateVoiceMood(v.id, m.mood, text.trim()))) setEditing(false);
-  };
-  return (
-    <div className="mood-row">
-      <div className="row" style={{ gap: 8 }}>
-        <span className="badge awaiting_review">{tx(MOOD_LABEL[m.mood])}</span>
-        {m.review === "pending" && <span className="badge warn">{tx("รอผู้ดูแลตรวจ")}</span>}
-        {m.review === "rejected" && <span className="badge failed">{tx("ไม่ผ่านการตรวจ")}</span>}
-        {m.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[m.stage] ?? m.stage}...</span>}
-        {m.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
-        {m.status === "ready" && m.quality != null && m.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}
-        {m.status === "ready" && (m.analysis?.other_voices ?? 0) >= OTHER_VOICES_WARN && <span className="badge warn">{tx("มีเสียงคนอื่นปน")}</span>}
-        <span className="row" style={{ marginLeft: "auto", gap: 6 }}>
-          {canEdit && m.status === "ready" && !editing && <button type="button" className="icon-btn" onClick={() => setEditing(true)}>{tx("แก้ข้อความ")}</button>}
-          {canEdit && m.status === "failed" && <button type="button" className="icon-btn" onClick={() => run(() => api.retryVoiceMood(v.id, m.mood))}>{tx("ลองใหม่")}</button>}
-          {canEdit && !(m.status === "processing" && m.stage !== "queued") && (
-            <button type="button" className="icon-btn" aria-label={tx("ลบอารมณ์{0}", { 0: tx(MOOD_LABEL[m.mood]) })}
-              onClick={() => window.confirm(tx("ลบเสียงอารมณ์{0}? ประโยคที่เลือกอารมณ์นี้จะกลับไปใช้เสียงปกติ", { 0: tx(MOOD_LABEL[m.mood]) }))
-                && run(() => api.deleteVoiceMood(v.id, m.mood))}>{tx("ลบ")}</button>
-          )}
-          {m.status === "ready" && (
-            <PreviewButton url={fileUrl.voiceMood(v.id, m.mood, v.updated_at)} playing={preview.playing} onToggle={preview.toggle} />
-          )}
-        </span>
-      </div>
-      {m.status === "failed" && m.error && <div className="alert error">{m.error}</div>}
-      {editing ? (
-        <div className="field">
-          <label className="sr-only" htmlFor={`mx-${v.id}-${m.mood}`}>{tx("ข้อความที่พูดในเสียงอารมณ์นี้")}</label>
-          <textarea id={`mx-${v.id}-${m.mood}`} className="textarea" rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-          <div className="row" style={{ gap: 6 }}>
-            <button type="button" className="btn small primary" onClick={save}>{tx("บันทึก")}</button>
-            <button type="button" className="btn small" onClick={() => setEditing(false)}>{tx("ยกเลิก")}</button>
-          </div>
-        </div>
-      ) : m.status === "ready" && (
-        <span className="dim">“{m.text}” · {m.duration?.toFixed(1)}  {tx("วินาที")}</span>
-      )}
-    </div>
-  );
-}
-
-/** เสียงตัวอย่างอารมณ์อื่นของเสียงนี้ เลือกใช้ทีละประโยคในหน้าแก้บท */
-function MoodSection({ v, preview, run, canEdit }: {
-  v: LibraryVoice;
-  canEdit: boolean;
-  preview: ReturnType<typeof usePreview>;
-  run: (fn: () => Promise<unknown>) => Promise<boolean>;
-}) {
-  const missing = MOODS.filter((m) => !v.moods.some((x) => x.mood === m));
-  const [mood, setMood] = useState<Mood | "">("");
-  const [progress, setProgress] = useState<number | null>(null);
-  const pick = missing.includes(mood as Mood) ? (mood as Mood) : missing[0];
-  const add = (file: File | undefined) => {
-    if (!file || !pick) return;
-    setProgress(0);
-    run(() => uploadVoiceMood(v.id, file, pick, setProgress).promise).finally(() => setProgress(null));
-  };
-  return (
-    <div className="moods">
-      <span className="label">{tx("เสียงอารมณ์อื่น")}</span>
-      {v.moods.map((m) => <MoodRow key={m.mood} v={v} m={m} preview={preview} run={run} canEdit={canEdit} />)}
-      {canEdit && missing.length > 0 && (
-        <div className="row" style={{ gap: 8 }}>
-          <label className="sr-only" htmlFor={`am-${v.id}`}>{tx("อารมณ์ที่จะเพิ่ม")}</label>
-          <select id={`am-${v.id}`} className="spk-select" value={pick} onChange={(e) => setMood(e.target.value as Mood)}
-            disabled={progress !== null}>
-            {missing.map((m) => <option key={m} value={m}>{tx(MOOD_LABEL[m])}</option>)}
-          </select>
-          {progress !== null ? (
-            <span className="mono">{tx("กำลังอัปโหลด")} {Math.round(progress * 100)}%</span>
-          ) : (
-            <label className="btn small" style={{ cursor: "pointer" }}>
-              
-              {tx("เพิ่มคลิปอารมณ์นี้")}
-              <input type="file" accept={ACCEPT} className="sr-only"
-                onChange={(e) => { add(e.target.files?.[0]); e.target.value = ""; }} />
-            </label>
-          )}
-        </div>
-      )}
-      <span className="dim">{canEdit ? tx("ใช้คนพากย์คนเดิม พูดด้วยอารมณ์นั้น 10 วินาทีขึ้นไป แล้ว") : ""}{tx("เลือกอารมณ์ให้แต่ละประโยคในหน้าแก้บท")}</span>
-    </div>
-  );
-}
-
-function VoiceCard({ v, preview, onChanged, known, canEdit }: {
-  v: LibraryVoice;
-  canEdit: boolean;
-  preview: ReturnType<typeof usePreview>;
-  onChanged: () => void;
-  known: string[];
-}) {
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(v.name);
-  const [gender, setGender] = useState<Gender>(v.gender);
-  const [tone, setTone] = useState(v.tone);
-  const [description, setDescription] = useState(v.description ?? "");
-  const [categories, setCategories] = useState<string[]>(v.categories ?? []);
-  const [text, setText] = useState(v.text);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (editing) return;
-    setName(v.name); setGender(v.gender); setTone(v.tone); setDescription(v.description ?? ""); setCategories(v.categories ?? []);
-    setText(v.text);
-  }, [v, editing]);
-
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setError("");
-    try {
-      await fn();
-      onChanged();
-      return true;
-    } catch (e) {
-      setError((e as Error).message);
-      return false;
-    } finally { setBusy(false); }
-  };
-
-  const save = async () => {
-    // ข้อความในเสียงตัวอย่างมีเฉพาะเสียงที่เตรียมเสร็จ เสียงที่ยังไม่เสร็จแก้ได้แค่ข้อมูลอื่น
-    const ready = v.status === "ready";
-    if (!name.trim() || (ready && !text.trim())) return setError(tx("ชื่อและข้อความในเสียงต้องไม่ว่าง"));
-    const ok = await run(() => api.updateVoice(v.id, {
-      name: name.trim(), gender, tone: tone.trim(), description: description.trim(), categories,
-      ...(ready ? { text: text.trim() } : {}),
-    }));
-    if (ok) setEditing(false);
-  };
-
-  const remove = () => {
-    if (window.confirm(tx("ลบเสียง \"{0}\" ออกจากคลัง? ตัวละครที่ใช้เสียงนี้จะกลับไปใช้เสียงต้นฉบับ", { 0: v.name }))) run(() => api.deleteVoice(v.id));
-  };
-
+/** แถวแนวนอนแนว Pixabay — รูป · ชื่อ · waveform · ความยาว · หมวด */
+function VoiceRow({ v, preview }: { v: LibraryVoice; preview: ReturnType<typeof usePreview> }) {
   const audioUrl = fileUrl.voice(v.id, v.updated_at);
+  const on = preview.playing === audioUrl;
+  const stop = (e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); };
+  const by = v.actor || (v.mine ? tx("ของฉัน") : "");
+
   return (
-    <article className="card" style={{ gap: 12 }}>
-      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", flexWrap: "nowrap" }}>
-        <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-word" }}>{v.name}</span>
-          {v.actor && <span className="dim" style={{ fontSize: 13 }}>{tx("พากย์โดย")} {v.actor}</span>}
-          <div className="row" style={{ gap: 6 }}>
-            {v.review === "pending" && <span className="badge awaiting_review">{tx("รอผู้ดูแลตรวจ")}</span>}
-            {v.review === "rejected" && <span className="badge failed">{tx("ไม่ผ่านการตรวจ")}</span>}
-            {(v.categories ?? []).map((c) => <span key={c} className="badge category">{c}</span>)}
-            {v.gender && <span className="badge queued">{tx(GENDER_LABEL[v.gender])}</span>}
-            {v.tone && <span className="badge awaiting_review">{v.tone}</span>}
-            {v.moods.some((m) => m.status === "ready") && (
-              <span className="badge done">{tx("อารมณ์ {0}/{1}", { 0: v.moods.filter((m) => m.status === "ready" && (m.review == null || m.review === "approved")).length, 1: MOODS.length })}</span>
-            )}
-            {v.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>}
-            {v.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
-            {v.status === "ready" && v.quality != null && v.quality < 2.3 && <span className="badge warn">{tx("มีเสียงรบกวน")}</span>}
-          </div>
-        </div>
-        {v.status === "ready" && <PreviewButton url={audioUrl} playing={preview.playing} onToggle={preview.toggle} />}
+    <Link href={`/voices/${v.id}`} className="voice-row">
+      <VoiceAvatar name={v.name} url={v.image ? fileUrl.voiceImage(v.id, v.updated_at) : ""} size={48} />
+      <div className="voice-row-id">
+        <span className="voice-row-name">{v.name}</span>
+        {by && <span className="voice-row-by">{by}</span>}
+        {v.status === "processing" && <span className="badge running">{VOICE_STAGE_LABEL[v.stage] ?? v.stage}...</span>}
+        {v.status === "failed" && <span className="badge failed">{tx("เตรียมเสียงไม่สำเร็จ")}</span>}
+        {v.review === "pending" && <span className="badge awaiting_review">{tx("รอผู้ดูแลตรวจ")}</span>}
       </div>
-
-      {v.status === "failed" && v.error && <div className="alert error">{v.error}</div>}
-      {!editing && v.description && (
-        <p className="muted" style={{ margin: 0, fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{v.description}</p>
-      )}
-
-      {editing ? (
-        <>
-          <div className="field">
-            <span className="label">{tx("รูป")}</span>
-            <div className="row" style={{ gap: 10 }}>
-              <ImagePickButton label={v.image ? tx("เปลี่ยนรูป") : tx("เพิ่มรูป")} disabled={busy}
-                onPick={(f) => run(() => uploadVoiceImage(v.id, f))} />
-              {v.image && (
-                <button type="button" className="btn small" disabled={busy}
-                  onClick={() => run(() => api.deleteVoiceImage(v.id))}>{tx("ลบรูป")}</button>
-              )}
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor={`n-${v.id}`}>{tx("ชื่อเสียง")}</label>
-            <input id={`n-${v.id}`} className="input" maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <span className="label">{tx("เพศ")}</span>
-            <div className="seg" role="group" aria-label={tx("เพศของเสียง")} style={{ alignSelf: "flex-start" }}>
-              {(["male", "female", ""] as Gender[]).map((g) => (
-                <button key={g || "none"} type="button" aria-pressed={gender === g} onClick={() => setGender(g)}>{tx(GENDER_LABEL[g])}</button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor={`t-${v.id}`}>{tx("โทนเสียง")}</label>
-            <input id={`t-${v.id}`} className="input" list="tones-edit" maxLength={80} value={tone} onChange={(e) => setTone(e.target.value)} />
-            <datalist id="tones-edit">{TONES.map((t) => <option key={t} value={tx(t)} />)}</datalist>
-          </div>
-          <div className="field">
-            <span className="label" id={`c-${v.id}`}>{tx("หมวดหมู่")}</span>
-            <CategoryPicker id={`c-${v.id}`} value={categories} onChange={setCategories} known={known} />
-          </div>
-          <div className="field">
-            <label htmlFor={`d-${v.id}`}>{tx("รายละเอียด")}</label>
-            <textarea id={`d-${v.id}`} className="textarea" rows={3} maxLength={1000} value={description}
-              onChange={(e) => setDescription(e.target.value)} />
-          </div>
-          {v.status === "ready" && (
-            <div className="field">
-              <label htmlFor={`x-${v.id}`}>{tx("ข้อความที่พูดในเสียงตัวอย่าง")}</label>
-              <textarea id={`x-${v.id}`} className="textarea" rows={3} value={text} onChange={(e) => setText(e.target.value)} />
-              <span className="dim">{tx("ฟังตัวอย่างแล้วแก้ให้ตรงทุกคำ ระบบพากย์จะเลียนเสียงได้แม่นขึ้น")}</span>
-            </div>
-          )}
-        </>
-      ) : v.status === "ready" && (
-        <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6 }}>“{v.text}”</p>
-      )}
-
-      {v.status === "ready" && (
-        <span className="dim">
-          {v.duration?.toFixed(1)}  {tx("วินาที")}{v.pitch_hz ? tx(" · ระดับเสียง {0} Hz", { 0: Math.round(v.pitch_hz) }) : ""}
-          {v.quality != null ? tx(" · ความชัด {0}/4.5", { 0: v.quality.toFixed(1) }) : ""}  {tx("· เพิ่มเมื่อ")} {fmtWhen(v.created_at)}
-        </span>
-      )}
-      {v.status === "ready" && v.analysis && <AnalysisNote a={v.analysis} />}
-      {v.status === "ready" && !editing && (canEdit || v.moods.length > 0) && <MoodSection v={v} preview={preview} run={run} canEdit={canEdit} />}
-      {error && <div className="alert error" role="alert">{error}</div>}
-
-      {canEdit && <div className="row" style={{ gap: 8 }}>
-        {editing ? (
-          <>
-            <button type="button" className="btn small primary" onClick={save} disabled={busy}>{busy ? tx("กำลังบันทึก...") : tx("บันทึก")}</button>
-            <button type="button" className="btn small" onClick={() => setEditing(false)} disabled={busy}>{tx("ยกเลิก")}</button>
-          </>
+      <div className="voice-row-wave" onClick={stop}>
+        {v.status === "ready" ? (
+          <WaveBars
+            seed={v.id}
+            bars={56}
+            active={on}
+            progress={on ? preview.progress : 0}
+            onClick={() => preview.toggle(audioUrl)}
+          />
         ) : (
-          <>
-            {v.status !== "processing" && <button type="button" className="btn small" onClick={() => setEditing(true)}>{tx("แก้ไข")}</button>}
-            {v.status === "failed" && <button type="button" className="btn small" onClick={() => run(() => api.retryVoice(v.id))} disabled={busy}>{tx("ลองใหม่")}</button>}
-            {!(v.status === "processing" && v.stage !== "queued") && (
-              <button type="button" className="btn small danger" style={{ marginLeft: "auto" }} onClick={remove} disabled={busy}>{tx("ลบ")}</button>
-            )}
-          </>
+          <span className="dim" style={{ fontSize: 13 }}>—</span>
         )}
-      </div>}
-    </article>
+      </div>
+      <span className="voice-row-dur mono">{v.status === "ready" ? fmtClock(v.duration) : "–:––"}</span>
+      <div className="voice-row-tags">
+        {(v.categories ?? []).slice(0, 2).map((c) => <span key={c}>{c}</span>)}
+        {v.gender && <span>{tx(GENDER_LABEL[v.gender])}</span>}
+        {v.tone && <span>{v.tone}</span>}
+      </div>
+      <div className="voice-row-actions" onClick={stop}>
+        {v.status === "ready" && (
+          <PreviewButton url={audioUrl} playing={preview.playing} onToggle={preview.toggle} label="" className="icon-btn wave-play" />
+        )}
+      </div>
+    </Link>
   );
 }
 
 export default function VoicesPage() {
   const [voices, setVoices] = useState<LibraryVoice[] | null>(null);
   const [error, setError] = useState("");
-  const [filter, setFilter] = useState(""); // "" = ทุกหมวด
+  const [filter, setFilter] = useState("");
   const preview = usePreview();
   const { config, user, loaded } = useAuth();
-  // เปิดระบบบัญชีแล้ว เพิ่ม แก้ และลบเสียงได้เฉพาะผู้ดูแล ผู้ใช้ทั่วไปดูและฟังได้อย่างเดียว (API ตรวจซ้ำอีกชั้น)
-  const canEdit = loaded && (!config?.auth || !!user?.admin);
-  // หมวดที่ใช้อยู่ในคลัง (เรียงตามจำนวนเสียงมากไปน้อย) ใช้ทำปุ่มกรองและเป็นตัวเลือกตอนตั้งหมวด
+  const canUpload = loaded && (!config?.auth || !!user?.admin);
   const known = useMemo(() => {
     const count = new Map<string, number>();
     voices?.forEach((v) => (v.categories ?? []).forEach((c) => count.set(c, (count.get(c) ?? 0) + 1)));
@@ -580,7 +326,6 @@ export default function VoicesPage() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // ระหว่างมีเสียงกำลังเตรียม ถามสถานะทุก 2 วินาที
   const processing = voices?.some((v) => v.status === "processing" || v.moods.some((m) => m.status === "processing")) ?? false;
   useEffect(() => {
     if (!processing) return;
@@ -589,21 +334,19 @@ export default function VoicesPage() {
   }, [processing, refresh]);
 
   return (
-    <main className="page" style={{ maxWidth: 1100 }}>
+    <main className="page" style={{ maxWidth: 1080 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>{tx("คลังเสียง")}</h1>
         <p className="muted" style={{ margin: 0 }}>
-          
           {tx("เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ")}
         </p>
       </div>
 
-      {canEdit && <UploadCard onUploaded={refresh} known={known} />}
+      {canUpload && <UploadCard onUploaded={refresh} known={known} />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
       <section aria-label={tx("เสียงในคลัง")} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>
-          
           {tx("เสียงในคลัง")} {shown?.length ? `(${shown.length}${filter ? tx(" จาก {0}", { 0: voices?.length }) : ""})` : ""}
         </h2>
         {known.length > 0 && (
@@ -617,8 +360,8 @@ export default function VoicesPage() {
         {shown === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
           : voices?.length === 0 ? <div className="empty">{tx("ยังไม่มีเสียงในคลัง")}</div>
           : (
-            <div className="grid-2">
-              {shown.map((v) => <VoiceCard key={v.id} v={v} preview={preview} onChanged={refresh} known={known} canEdit={canEdit} />)}
+            <div className="voice-list">
+              {shown.map((v) => <VoiceRow key={v.id} v={v} preview={preview} />)}
             </div>
           )}
       </section>

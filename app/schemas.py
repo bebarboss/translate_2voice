@@ -254,6 +254,7 @@ class LibraryVoice(BaseModel):
     actor: Optional[str] = None  # ชื่อในวงการของนักพากย์
     review: Optional[str] = None  # draft / pending / approved / rejected ผู้ใช้ทั่วไปเห็นเฉพาะ approved
     review_note: str = ""
+    mine: bool = False  # ผู้เรียกเป็นเจ้าของเสียงนักพากย์นี้ (แก้รูป/ข้อมูลในคลังได้)
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 
