@@ -707,7 +707,9 @@ export function uploadTimeline(
   form.append("target_lang", opts.targetLang);
   if (opts.genre) form.append("genre", opts.genre);
   if (opts.glossary) form.append("glossary", opts.glossary);
-  form.append("review", String(opts.review));
+  // ไทม์ไลน์: หยุดที่หน้าตรวจบทเสมอ และเริ่มถอดเสียงเลยถ้าไฟล์สื่อครบ
+  form.append("review", "true");
+  form.append("start", "true");
   return upload<TimelineState>("timeline", form, onProgress);
 }
 

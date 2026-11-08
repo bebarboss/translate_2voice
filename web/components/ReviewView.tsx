@@ -19,8 +19,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   onChanged: () => void;
   onCancelEdit?: () => void;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const tr = useTranscript(job, onChanged, () => videoRef.current?.currentTime ?? 0);
+  const mediaRef = useRef<HTMLMediaElement>(null);
+  const tr = useTranscript(job, onChanged, () => mediaRef.current?.currentTime ?? 0);
   const { lines, sorted, speakers, dirty, busy, setBusy, message, setMessage } = tr;
   const [voiceDraft, setVoiceDraft] = useState<Record<string, string | null>>(job.voice_map ?? {});
   const vc = useVoiceCast(job.id);
@@ -98,7 +98,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   }, [active, follow]);
 
   const seek = useCallback((sec: number) => {
-    const v = videoRef.current;
+    const v = mediaRef.current;
     if (v) v.currentTime = sec + 0.01;
     setT(sec + 0.01);
   }, []);
@@ -188,17 +188,28 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       <div className="split">
         <section className="main" aria-label={tx("วิดีโอ")}>
           <div className="video-box">
-            <video ref={videoRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
-              onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
-              onSeeked={(e) => setT(e.currentTarget.currentTime)}
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-              onPlay={() => setPicked(null)} />
+            {job.timeline ? (
+              <audio ref={mediaRef} src={fileUrl.source(job.id)} controls preload="metadata"
+                style={{ width: "100%", margin: "24px 16px" }}
+                onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
+                onSeeked={(e) => setT(e.currentTarget.currentTime)}
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                onPlay={() => setPicked(null)} />
+            ) : (
+              <video ref={mediaRef} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
+                onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
+                onSeeked={(e) => setT(e.currentTarget.currentTime)}
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                onPlay={() => setPicked(null)} />
+            )}
             {speaking && tr.draftOf(speaking).target && (
               <div className="caption"><span>{stripPauseMarks(tr.draftOf(speaking).target)}</span></div>
             )}
           </div>
           <div className="row dim" style={{ justifyContent: "space-between" }}>
-            <span>{tx("วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("ที่กำลังแก้")}</span>
+            <span>{job.timeline
+              ? tx("เสียงต้นฉบับจากไทม์ไลน์ · แก้บทด้านขวา แล้วกดเริ่มพากย์")
+              : <>{tx("วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("ที่กำลังแก้")}</>}</span>
             <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
           </div>
 
@@ -226,7 +237,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
               : sorted.map((u, idx) => (
                 <LineCard key={u.id} u={u} tr={tr} isLast={idx === sorted.length - 1} retake={!!onCancelEdit}
                   active={active?.id === u.id} speaking={speaking?.id === u.id} tooLong={tooLong(u)}
-                  onSeek={seek} onFocusText={() => { if (videoRef.current?.paused) seek(u.start); }}
+                  onSeek={seek} onFocusText={() => { if (mediaRef.current?.paused) seek(u.start); }}
                   boxRef={(el) => { lineRefs.current[u.id] = el; }} />
               ))}
           </div>
