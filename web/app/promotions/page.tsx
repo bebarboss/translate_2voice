@@ -88,6 +88,9 @@ export default function PromotionsPage() {
   const paying = busy ? (slip ? tx("กำลังสร้างรายการ...") : stripe ? tx("กำลังไปหน้าชำระเงิน...") : tx("กำลังซื้อ...")) : null;
 
   const planAction = (p: Plan) => {
+    if (p.available === false) {
+      return <span className="badge awaiting_review">{tx("อยู่ระหว่างพัฒนา")}</span>;
+    }
     if (p.free_once || p.price <= 0) {
       if (!ent?.trial_available && sub?.plan_id !== "trial") {
         return <span className="dim">{tx("รับไปแล้ว")}</span>;
@@ -142,13 +145,16 @@ export default function PromotionsPage() {
         <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{tx("แพ็กเกจ")}</h2>
         <div className="plans">
           {plans.map((p) => (
-            <article key={p.id} className={`card plan${p.id === sub?.plan_id ? " current" : ""}`}>
+            <article key={p.id} className={`card plan${p.id === sub?.plan_id ? " current" : ""}${p.available === false ? " dim" : ""}`}>
               <span style={{ fontSize: 17, fontWeight: 600 }}>{tx(p.name)}</span>
               <span style={{ fontSize: 26, fontWeight: 600 }}>
                 {p.price <= 0 ? tx("ฟรี") : fmtBaht(p.price)}
                 {p.price > 0 && <span className="dim"> / {p.days}  {tx("วัน")}</span>}
               </span>
               <span className="muted">{fmtCredits(p.minutes)}{p.max_clip_minutes != null ? ` · ${tx("คลิปยาวสุด {0} นาที", { 0: p.max_clip_minutes })}` : ""}</span>
+              {p.available === false && (
+                <span className="muted" style={{ fontSize: 13 }}>{tx("แพ็กเกจนี้ยังไม่เปิดขาย — อยู่ระหว่างพัฒนา")}</span>
+              )}
               <ul className="dim" style={{ margin: "8px 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.45 }}>
                 {(p.features?.length ? p.features : []).map((f) => <li key={f}>{tx(f)}</li>)}
                 {!p.features?.length && (

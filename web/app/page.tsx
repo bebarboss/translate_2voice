@@ -111,7 +111,9 @@ export default function UploadPage() {
       </div>
       <span className="dim" style={{ marginTop: -8 }}>
         
-        {tx("ตัดต่อใน Premiere Pro หรือ DaVinci Resolve แยกเสียงคนละแทร็กไว้แล้ว?")} <Link href="/timeline">{tx("นำเข้าไทม์ไลน์")}</Link>  {tx("ได้แทร็กพากย์ไทยกลับไปวางในโปรเจกต์เลย")}
+        {tx("ตัดต่อใน Premiere Pro หรือ DaVinci Resolve แยกเสียงคนละแทร็กไว้แล้ว?")}{" "}
+        <Link href="/timeline">{tx("นำเข้าไทม์ไลน์")}</Link>
+        {" "}{tx("(อยู่ระหว่างพัฒนา)")}
       </span>
 
       {mode === "file" ? (
