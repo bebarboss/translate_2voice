@@ -645,7 +645,6 @@ export const EN: Record<string, string> = {
   "รายละเอียดเสียง": "Voice details",
   "ของฉัน": "Mine",
   " · {0} Hz": " · {0} Hz",
-  "ความยาว": "Duration",
   "ลบเสียงนี้": "Delete this voice",
   "เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ": "Keep Thai dubbing voices for reuse, then assign them to characters on the review page instead of cloning the original actors",
   "เสียงในคลัง": "Library voices",
