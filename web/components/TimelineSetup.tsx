@@ -23,6 +23,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
   const [progress, setProgress] = useState<number | null>(null);
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const mediaRef = useRef<HTMLInputElement>(null);
+  const autoStarted = useRef(false);
 
   const apply = (tl: TimelineInfo) => {
     setInfo(tl);
@@ -33,11 +34,8 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
     api.listVoices().then((v) => setVoices(v.filter((x) => x.status === "ready"))).catch(() => setVoices([]));
   }, [job.id]);
 
-  if (!info) {
-    return <main className="page">{message ? <div className="alert error" role="alert">{message.text}</div> : <div className="empty">{tx("กำลังโหลด...")}</div>}</main>;
-  }
-  const tracks = info.tracks.filter((t) => t.clips.length > 0);
-  const set = (i: number, patch: Partial<Draft>) => setDrafts({ ...drafts, [i]: { ...drafts[i], ...patch } });
+  const tracks = (info?.tracks ?? []).filter((t) => t.clips.length > 0);
+  const set = (i: number, patch: Partial<Draft>) => setDrafts((d) => ({ ...d, [i]: { ...d[i], ...patch } }));
   const changed = tracks.filter((t) => JSON.stringify(drafts[t.index]) !== JSON.stringify(draftOf(t)));
   const enabled = tracks.filter((t) => drafts[t.index]?.enabled);
   // ชื่อเดียวกัน = ผู้พูดคนเดียวกัน (ตาม API) สีตามลำดับชื่อที่เจอ
@@ -61,13 +59,33 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
     setBusy(key); setMessage(null);
     try { await fn(); } finally { setBusy(""); }
   };
+  const start = (fromAuto = false) => run("start", async () => {
+    if (!(await save())) return;
+    try {
+      await api.startTimeline(job.id);
+      onChanged();
+    } catch (e) {
+      if (fromAuto) autoStarted.current = false;
+      setMessage({ kind: "error", text: (e as Error).message });
+    }
+  });
   const uploadMissing = (files: File[]) => run("media", async () => {
     if (!files.length) return;
     setProgress(0);
     try {
       const s = await uploadTimelineMedia(job.id, files, setProgress).promise;
-      setInfo(s.timeline);
-      setMessage({ kind: "info", text: s.timeline.missing.length ? tx("ยังขาดอีก {0} ไฟล์", { 0: s.timeline.missing.length }) : tx("ไฟล์สื่อครบแล้ว") });
+      apply(s.timeline);
+      if (s.timeline.missing.length) {
+        setMessage({ kind: "info", text: tx("ยังขาดอีก {0} ไฟล์", { 0: s.timeline.missing.length }) });
+      } else {
+        setMessage({ kind: "info", text: tx("ไฟล์สื่อครบแล้ว กำลังเริ่มถอดเสียงและแปล — เสร็จแล้วจะพาไปหน้าตรวจบท") });
+        if (!autoStarted.current) {
+          autoStarted.current = true;
+          if (!(await save())) { autoStarted.current = false; return; }
+          await api.startTimeline(job.id);
+          onChanged();
+        }
+      }
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
     } finally {
@@ -75,11 +93,20 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
       if (mediaRef.current) mediaRef.current.value = "";
     }
   });
-  const start = () => run("start", async () => {
-    if (!(await save())) return;
-    try { await api.startTimeline(job.id); onChanged(); }
-    catch (e) { setMessage({ kind: "error", text: (e as Error).message }); }
-  });
+
+  // ไฟล์สื่อครบตอนเปิดหน้า — เริ่มเลยเพื่อไปหน้าตรวจบทหลังแปล
+  useEffect(() => {
+    if (!info || autoStarted.current || busy || info.missing.length > 0) return;
+    const hasDialogue = info.tracks.some((t) => t.enabled && t.clips.length > 0);
+    if (!hasDialogue) return;
+    autoStarted.current = true;
+    start(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- เริ่มครั้งเดียวเมื่อสื่อครบ
+  }, [info]);
+
+  if (!info) {
+    return <main className="page">{message ? <div className="alert error" role="alert">{message.text}</div> : <div className="empty">{tx("กำลังโหลด...")}</div>}</main>;
+  }
 
   return (
     <main className="page" style={{ maxWidth: 1080 }}>
@@ -95,7 +122,7 @@ export default function TimelineSetup({ job, onChanged }: { job: Job; onChanged:
           {changed.length > 0 && <button type="button" className="btn" disabled={!!busy} onClick={() => run("save", async () => { await save(); })}>{tx("บันทึก")}</button>}
           <button type="button" className="btn primary" disabled={!!busy || info.missing.length > 0 || enabled.length === 0} onClick={start}
             title={info.missing.length ? tx("อัปโหลดไฟล์สื่อให้ครบก่อน") : enabled.length === 0 ? tx("เปิดอย่างน้อยหนึ่งแทร็กเป็นบทพูด") : undefined}>
-            {busy === "start" ? tx("กำลังเริ่ม...") : tx("เริ่มถอดเสียงและแปล")}<ArrowRight />
+            {busy === "start" ? tx("กำลังเริ่ม...") : tx("เริ่มถอดเสียง แล้วไปตรวจบท")}<ArrowRight />
           </button>
         </div>
       </div>

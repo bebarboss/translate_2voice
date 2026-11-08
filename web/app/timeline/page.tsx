@@ -21,7 +21,6 @@ export default function TimelineImportPage() {
   const [targetLang, setTargetLang] = useState<TargetLang>("th");
   const [genre, setGenre] = useState("");
   const [glossary, setGlossary] = useState("");
-  const [review, setReview] = useState(true);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -50,7 +49,7 @@ export default function TimelineImportPage() {
     setBusy(true); setError(""); setProgress(0);
     try {
       const up = uploadTimeline(file, [], {
-        fps: fps ? Number(fps) : null, sourceLang, targetLang, genre: genre.trim(), glossary: glossary.trim(), review,
+        fps: fps ? Number(fps) : null, sourceLang, targetLang, genre: genre.trim(), glossary: glossary.trim(), review: true,
       }, setProgress);
       abortRef.current = up.abort;
       const { job } = await up.promise;
@@ -84,7 +83,7 @@ export default function TimelineImportPage() {
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>{tx("นำเข้าไทม์ไลน์จากโปรแกรมตัดต่อ")}</h1>
         <p className="muted" style={{ margin: 0 }}>
           
-          {tx("ส่งไทม์ไลน์ที่แยกเสียงแต่ละคนไว้คนละแทร็ก ระบบถอดเสียงทีละแทร็ก แปล พากย์ให้พอดีแต่ละคลิป แล้วส่งกลับเป็นไฟล์ XML / FCPXML ที่มีแทร็กพากย์ไทยแยกคน และเสียงแยกแทร็ก 48 kHz")}
+          {tx("ส่งไทม์ไลน์ที่แยกเสียงแต่ละคนไว้คนละแทร็ก ระบบถอดเสียง แปล แล้วพาไปหน้าตรวจบทก่อนพากย์ — แก้บทได้เหมือนงานคลิปปกติ แล้วส่งกลับเป็น XML / FCPXML พร้อมเสียงแยกแทร็ก 48 kHz")}
         </p>
       </div>
 
@@ -132,10 +131,6 @@ export default function TimelineImportPage() {
             {FPS.map((f) => <option key={f} value={f}>{f} fps</option>)}
           </select>
         </div>
-        <label className="card tight check">
-          <span className="t"><span>{tx("ตรวจบทก่อนพากย์")}</span><small>{tx("หยุดรอให้แก้บทหลังแปลเสร็จ")}</small></span>
-          <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
-        </label>
         <div className="card tight field">
           <label htmlFor="genre">{tx("แนวเรื่อง (ถ้ารู้)")}</label>
           <input id="genre" className="input" list="genres" maxLength={80} value={genre} onChange={(e) => setGenre(e.target.value)} />
