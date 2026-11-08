@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { api, fileUrl, uploadJob, uploadVoice, uploadVoiceImage, type Gender, type LibraryVoice } from "@/lib/api";
+import { api, fileUrl, uploadJob, uploadVoice, uploadVoiceImage, type Entitlements, type Gender, type LibraryVoice } from "@/lib/api";
 import { GENDER_LABEL, TONES, VOICE_STAGE_LABEL } from "@/lib/format";
 import CategoryPicker from "@/components/CategoryPicker";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
@@ -309,9 +309,11 @@ export default function VoicesPage() {
   const [voices, setVoices] = useState<LibraryVoice[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
+  const [ent, setEnt] = useState<Entitlements | null>(null);
   const preview = usePreview();
   const { config, user, loaded } = useAuth();
   const canUpload = loaded && (!config?.auth || !!user?.admin);
+  const trialVoicesOnly = !!config?.billing && !user?.admin && ent?.voices === "standard";
   const known = useMemo(() => {
     const count = new Map<string, number>();
     voices?.forEach((v) => (v.categories ?? []).forEach((c) => count.set(c, (count.get(c) ?? 0) + 1)));
@@ -325,6 +327,11 @@ export default function VoicesPage() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!config?.billing || !user || user.admin) { setEnt(null); return; }
+    api.wallet().then((w) => setEnt(w.entitlements ?? null)).catch(() => setEnt(null));
+  }, [config?.billing, user]);
 
   const processing = voices?.some((v) => v.status === "processing" || v.moods.some((m) => m.status === "processing")) ?? false;
   useEffect(() => {
@@ -341,6 +348,14 @@ export default function VoicesPage() {
           {tx("เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ")}
         </p>
       </div>
+
+      {trialVoicesOnly && (
+        <div className="alert info" role="status">
+          {tx("บัญชีทดลองใช้ได้เฉพาะเสียง Standard (ที่แอดมินเพิ่ม) เสียงนักพากย์ต้องอัปเกรดแพ็กเกจ")}
+          {" "}
+          <Link href="/promotions">{tx("ดูโปรโมชัน")}</Link>
+        </div>
+      )}
 
       {canUpload && <UploadCard onUploaded={refresh} known={known} />}
 

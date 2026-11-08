@@ -154,7 +154,7 @@ export default function PromotionsPage() {
                 {!p.features?.length && (
                   <>
                     {p.watermark && <li>{tx("ดาวน์โหลดมีลายน้ำ")}</li>}
-                    {p.voices === "standard" && <li>{tx("ใช้เสียงในคลังที่อนุมัติแล้วได้")}</li>}
+                    {p.voices === "standard" && <li>{tx("เสียง Standard เท่านั้น")}</li>}
                     {p.voices === "all" && <li>{tx("เลือกเสียงได้ทั้งหมด")}</li>}
                     {p.timeline ? <li>{tx("นำเข้าไทม์ไลน์ได้")}</li> : p.id !== "trial" && <li>{tx("นำเข้าไทม์ไลน์ล็อกไว้")}</li>}
                   </>

@@ -891,7 +891,7 @@ def set_job_voices(job_id: str, choice: dict[str, Optional[str]], request: Reque
         owner_id = ainfo["user_id"] if ainfo else None
         review = ainfo["review"] if ainfo else None
         if uid and not accounts.voice_allowed(uid, voice_id, actor_ids, owner_id=owner_id, actor_review=review):
-            raise HTTPException(402, "เสียงนี้ยังไม่พร้อมใช้ หรือแพ็กเกจยังไม่มีสิทธิ์เลือกเสียงนี้")
+            raise HTTPException(402, "แพ็กเกจทดลองใช้ได้เฉพาะเสียง Standard อัปเกรดที่หน้าโปรโมชันเพื่อใช้เสียงนักพากย์")
         voice_map[speaker] = voice_id
     return store.update(job_id, voice_map=voice_map)
 

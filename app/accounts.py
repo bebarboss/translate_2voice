@@ -50,7 +50,7 @@ class Plan:
     minutes: int  # เครดิตต่อรอบ (1 เครดิต = 1 นาที)
     days: int = 30
     max_clip_minutes: float = 60.0
-    voices: str = "all"  # standard = เสียงแอดมิน + นักพากย์ที่อนุมัติแล้ว, all = ทุกเสียง
+    voices: str = "all"  # standard = เฉพาะเสียงที่แอดมินเพิ่ม (ไม่ใช่นักพากย์), all = ทุกเสียง
     timeline: bool = False
     watermark: bool = False
     free_once: bool = False  # รับได้ครั้งเดียวต่อบัญชี โดยไม่ต้องชำระ
@@ -199,9 +199,11 @@ def require_timeline(uid: Optional[str]) -> None:
 def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str],
                   ent: Optional[dict] = None, *, owner_id: Optional[str] = None,
                   actor_review: Optional[str] = None) -> bool:
-    """เสียงในคลังที่ใช้ได้: เสียงที่แอดมินเพิ่ม + เสียงนักพากย์ที่อนุมัติแล้ว
+    """แพ็กทดลอง (voices=standard) ใช้ได้เฉพาะเสียงที่แอดมินเพิ่ม ไม่ใช่เสียงนักพากย์
     เจ้าของเห็นและใช้เสียงตัวเองได้เสมอ (แม้ยังรอตรวจ)
+    actor_review รับจาก list/เลือกเสียง แต่แพ็กทดลองไม่เปิดเสียงนักพากย์ถึงอนุมัติแล้ว
     ent = สิทธิ์ที่คำนวณไว้แล้ว (ส่งมาจาก list_voices เพื่อไม่ยิงฐานข้อมูลซ้ำทุกเสียง)"""
+    _ = actor_review
     if not billing_enabled() or not uid:
         return True
     if owner_id and owner_id == uid:
@@ -210,11 +212,9 @@ def voice_allowed(uid: Optional[str], voice_id: str, actor_voice_ids: set[str],
         ent = entitlements(uid)
     if ent.get("voices") == "all" or ent.get("plan_id") == "admin":
         return True
-    if ent.get("voices") != "standard":
-        return False
-    if voice_id not in actor_voice_ids:
-        return True
-    return actor_review == "approved"
+    if ent.get("voices") == "standard":
+        return voice_id not in actor_voice_ids
+    return False
 
 
 # ---------------------------------------------------------------- ฐานข้อมูล
