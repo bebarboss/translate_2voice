@@ -231,8 +231,9 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
 
       {job.synth_stats && (
         <span className="dim" style={{ marginTop: -12 }}>
-          
           {tx("รอบล่าสุดพากย์ใหม่")} {job.synth_stats.redubbed}  {tx("ประโยค · ใช้เสียงเดิม")} {job.synth_stats.reused}  {tx("ประโยค")}
+          {!!job.synth_stats.repaired && <> · {tx("ซ่อมท่อนอัตโนมัติ")} {job.synth_stats.repaired}</>}
+          {job.synth_stats.quality_ok === false && <> · {tx("ยังมีประโยคควรฟัง")}</>}
         </span>
       )}
       {sorted.some((u) => u.heard) && (

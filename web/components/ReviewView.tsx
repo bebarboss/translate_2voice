@@ -28,6 +28,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [t, setT] = useState(0);
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
+  const [triageOnly, setTriageOnly] = useState(true); // โชว์เฉพาะท่อนที่ควรตรวจ (ลดงานมือ)
   const [picked, setPicked] = useState<number | null>(null); // บล็อกที่คลิกเลือก (ลากขอบได้) ล้างเมื่อเล่นวิดีโอ
   const [maxSpeedup, setMaxSpeedup] = useState(1.35);
   const listRef = useRef<HTMLDivElement>(null);
@@ -128,12 +129,15 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
   const onDub = async () => {
     const empty = sorted.filter((u) => !tr.draftOf(u).target.trim()).length;
-    if (empty && !window.confirm(tx("มี {0} ประโยคที่บทว่าง ประโยคเหล่านั้นจะไม่ถูกพากย์ พากย์ต่อเลยไหม?", { 0: empty }))) return;
     setBusy("dub");
     setMessage(null);
     try {
       // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยเข้าคิวพากย์
+      // บทว่าง: เซิร์ฟเวอร์ให้ AI วิเคราะห์แล้วเติมเองก่อนพากย์ (AI_FILL_EMPTY)
       await saveAll();
+      if (empty) {
+        setMessage({ kind: "info", text: tx("พบบทว่าง {0} ประโยค — AI จะเติมให้อัตโนมัติแล้วพากย์", { 0: empty }) });
+      }
       await api.synthesize(job.id);
       onChanged();
     } catch (e) {
@@ -148,6 +152,13 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     return !!text.trim() && estimateSeconds(text, job.target_lang) > dur * maxSpeedup;
   };
   const longCount = sorted.filter(tooLong).length;
+  const flagged = useMemo(() => sorted.filter((u) => {
+    const d = tr.draftOf(u);
+    return !d.target.trim() || !!u.unclear || !!(u.check_note || "").trim()
+      || !!(u.heard || "").trim() || tooLong(u);
+  }), [sorted, tr.drafts, maxSpeedup, job.target_lang]);
+  // triage: โชว์เฉพาะท่อนเสี่ยง — ถ้าไม่มีเลย โชว์ทั้งหมด
+  const listLines = triageOnly && flagged.length > 0 ? flagged : sorted;
 
   return (
     <main className="page wide">
@@ -225,20 +236,35 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
         </section>
 
         <aside className="side card" aria-label={tx("บทพากย์")} style={{ padding: 0, gap: 0, overflow: "hidden" }}>
-          <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
-            <h2 style={{ fontSize: 16 }}>{tx("บทพากย์")} {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>{tx("ยาวเกินเวลา")} {longCount}</span>}</h2>
-            <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
-              <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
-                style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
-              
-              {tx("เลื่อนตามคลิป")}
-            </label>
+          <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 8 }}>
+            <h2 style={{ fontSize: 16 }}>
+              {tx("บทพากย์")}
+              {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>{tx("ยาวเกินเวลา")} {longCount}</span>}
+              {flagged.length > 0 && (
+                <span className="badge awaiting_review" style={{ marginLeft: 6 }}>
+                  {tx("ควรตรวจ {0}/{1}", { 0: flagged.length, 1: sorted.length })}
+                </span>
+              )}
+            </h2>
+            <div className="row" style={{ gap: 12 }}>
+              <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}
+                title={tx("โชว์เฉพาะท่อนว่าง / ป้ายควรตรวจ / ไม่ชัด / ยาวเกิน — ท่อนอื่นข้ามได้")}>
+                <input type="checkbox" checked={triageOnly} onChange={(e) => setTriageOnly(e.target.checked)}
+                  style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+                {tx("เฉพาะที่ควรตรวจ")}
+              </label>
+              <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
+                <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
+                  style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+                {tx("เลื่อนตามคลิป")}
+              </label>
+            </div>
           </div>
           <div className="lines" ref={listRef}>
             {lines === null ? <div className="empty">{tx("กำลังโหลดบท...")}</div>
               : sorted.length === 0 ? <div className="empty">{tx("ไม่พบบทพูดในคลิปนี้")}</div>
-              : sorted.map((u, idx) => (
-                <LineCard key={u.id} u={u} tr={tr} isLast={idx === sorted.length - 1} retake={!!onCancelEdit}
+              : listLines.map((u, idx) => (
+                <LineCard key={u.id} u={u} tr={tr} isLast={idx === listLines.length - 1} retake={!!onCancelEdit}
                   active={active?.id === u.id} speaking={speaking?.id === u.id} tooLong={tooLong(u)}
                   onSeek={seek} onFocusText={() => { if (mediaRef.current?.paused) seek(u.start); }}
                   boxRef={(el) => { lineRefs.current[u.id] = el; }} />

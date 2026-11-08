@@ -79,6 +79,8 @@ class SynthStats(BaseModel):
     redubbed: int = 0  # ประโยคที่พากย์ใหม่รอบล่าสุด
     reused: int = 0  # ประโยคที่ใช้เสียงเดิม
     unclear: int = 0  # ประโยคที่ตรวจแล้วเสียงพากย์ไม่ตรงบท (ควรฟัง)
+    repaired: int = 0  # ท่อนที่ระบบซ่อมเวลา/บทจาก words ก่อนพากย์
+    quality_ok: bool = True  # ผ่านเกณฑ์อัตโนมัติ (ไม่มีบรรทัดควรฟังหลัง retry)
 
 
 class Job(BaseModel):

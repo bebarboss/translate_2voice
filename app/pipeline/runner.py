@@ -111,6 +111,44 @@ def run_analyze(store: JobStore, job_id: str) -> None:
         (d / "recheck.json").write_text(json.dumps(res["recheck"]), encoding="utf-8")
     store.update(job_id, detected_lang=lang)
     utterances = hallucination.clean(utterances)
+    from . import repair as repair_mod
+    from . import translate as translate_mod
+    # analyze_core อาจ gate ไปแล้วบน GPU — รันซ้ำแบบเบาได้ (idempotent) และกันงานที่ข้าม gate
+    utterances, words, n_repair = repair_mod.repair_transcript(utterances, words, turns, lang)
+    gate = {}
+    if settings.transcript_gate:
+        utterances, words, gate = repair_mod.gate_before_translate(
+            utterances, words, turns, lang, d / "vocals.wav")
+        if gate.get("retranscribed") or gate.get("bloated") or n_repair:
+            log.info("job %s: transcript gate %s repair=%s", job_id, gate, n_repair)
+    # ท่อนบวมหลัง gate → ให้ AI เสนอจุดเปลี่ยนคน แล้วตัดด้วยลายเสียงอีกครั้ง
+    bloated_ids = {u.id for u in repair_mod.suspects(utterances, lang) if repair_mod.is_bloated(u, lang)}
+    if bloated_ids and settings.turn_split and settings.typhoon_api_key and not settings.mock_pipeline:
+        try:
+            stage("split_turns", 0.53)
+            proposals = translate_mod.propose_turns(utterances, only_ids=bloated_ids)
+            if proposals:
+                split, cuts = gpu.resplit_turns(res["vocals"], d, utterances, words, proposals, lang,
+                                                job.num_speakers, stage, cancel)
+                log.info("AI split bloated turns: %d proposed, %d cuts", len(proposals), cuts)
+                if cuts:
+                    utterances, turns = split, relabel_turns(turns, split)
+                    res["speakers"] = sorted({u.speaker for u in split})
+                    store.update(job_id, speakers=res["speakers"])
+                    save_turns(turns, d / "turns.json")
+                    utterances, words, _ = repair_mod.repair_transcript(utterances, words, turns, lang)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bloated turn split failed: %s", exc)
+    # ท่อนยังน่าสงสัย → Gemini ซ่อมบทถอดเสียง
+    if settings.ai_fix_suspects and settings.typhoon_api_key and not settings.mock_pipeline:
+        title = Path(job.filename or "").stem
+        n_fix = translate_mod.fix_suspect_sources(utterances, lang, title, cancel)
+        if n_fix:
+            log.info("job %s: AI fixed %d suspect lines", job_id, n_fix)
+    if n_repair or settings.transcript_gate or bloated_ids:
+        (d / "words.json").write_text(json.dumps([w.__dict__ for w in words], ensure_ascii=False), encoding="utf-8")
     store.save_transcript(job_id, utterances)
 
     if job.library:  # งานเก็บเสียงเข้าคลัง ใช้แค่ผลแยกผู้พูด ไม่ต้องแปล
@@ -163,9 +201,21 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
+    # ปรับสำนวนให้เป็นบทพูดธรรมชาติก่อนตรวจต่อเนื่อง
+    if settings.ai_naturalize and settings.typhoon_api_key and not settings.mock_pipeline:
+        stage("naturalize", lo + span * 0.85)
+        try:
+            n_nat = translate_mod.naturalize_dialogue(utterances, job.target_lang, cancel)
+            if n_nat:
+                store.save_transcript(job_id, utterances)
+                log.info("job %s: naturalized %d lines", job_id, n_nat)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("naturalize failed for job %s: %s", job_id, exc)
     if settings.translate_review and not settings.mock_pipeline and settings.typhoon_api_key:
         stage("review_translation", lo + span * 0.9)
-        try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว
+        try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว (รอบแปลใหม่ที่แย่กว่าจะถูกทิ้งใน _retranslate)
             translate_mod.review_translation(utterances, lang, job.target_lang, runtime_settings.get().max_speedup,
                                              title, hints, cancel)
         except Cancelled:
@@ -173,6 +223,12 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         except Exception as exc:  # noqa: BLE001
             log.warning("translation review failed for job %s: %s", job_id, exc)
         store.save_transcript(job_id, utterances)
+    # บทว่างหลังแปล → AI เติมก่อนเข้าหน้าตรวจ / ก่อนพากย์
+    n_fill = translate_mod.fill_empty_targets(
+        utterances, lang, job.target_lang, title, hints, check_cancel=cancel)
+    if n_fill:
+        store.save_transcript(job_id, utterances)
+        log.info("job %s: AI filled %d empty targets after translate", job_id, n_fill)
     from .. import memory
     memory.save_ai_targets(store.dir(job_id), utterances)  # เทียบภายหลังว่าผู้ใช้แก้บรรทัดไหน
     from .. import quality
@@ -278,7 +334,7 @@ def _pause_holes(g: list, p, orig: np.ndarray, sr: int, words: Optional[list]) -
 
 def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
                    voices_: Optional[dict] = None, pinned: frozenset = frozenset(),
-                   mood=lambda u: "", part=lambda u: None) -> list[list]:
+                   mood=lambda u: "", part=lambda u: None, merge_short: bool = True) -> list[list]:
     """รวมท่อนที่พูดต่อกันเป็นประโยคเดียว (คนเดิม เว้นไม่เกิน max_gap และท่อนก่อนยังไม่จบประโยค) แล้วพากย์รวดเดียว
 
     ถ้าพากย์ทีละท่อน ทุกท่อนจะลงเสียงเหมือนจบประโยคและขาดเป็นช่วง ๆ ฟังไม่ต่อเนื่อง
@@ -287,6 +343,7 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     pinned: ผู้พูดที่ผู้ใช้เลือกเสียงจากคลังให้ ท่อนของคนนี้ห้ามไปรวมกับคนอื่น (และกลับกัน) ไม่งั้นได้เสียงผิดตัว
     mood: อารมณ์ที่ใช้พากย์ของแต่ละท่อน ท่อนต่างอารมณ์ใช้เสียงตัวอย่างคนละอัน จึงไม่รวมกัน
     part: ท่อนต่างค่ากันห้ามรวมกัน (งานไทม์ไลน์: คนละคลิปหรือคนละแทร็ก ไม่ให้เสียงพากย์ข้ามรอยตัด)
+    merge_short: รวมท่อนสั้นเข้าข้างเคียง (ปิดในโหมดซิงค์ปากภาษาเดียวกัน)
     """
     from .transcribe import SENTENCE_END
     from .voices import clearly_different, of_run
@@ -301,6 +358,9 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
             g.append(u)
         else:
             groups.append([u])
+
+    if not merge_short:
+        return groups
 
     # ท่อนสั้นมาก (คำเดียว) F5-TTS พากย์เดี่ยว ๆ แล้วมักได้เสียงมั่ว และมักเป็นหัวหรือหางประโยคที่ถูกแยกผู้พูดผิด
     # → ต่อเข้ากับประโยคที่ติดกัน ยกเว้นเสียงต่างกันชัด (อีกคนพูดแทรก เช่น "Mom!") ให้พากย์ด้วยเสียงตัวเอง
@@ -387,6 +447,34 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if not utterances:
         raise RuntimeError("ไม่มีบทให้พากย์")
 
+    # ซ่อมท่อนพังจาก words (งานเก่าที่วิเคราะห์ก่อนมีขั้นนี้ / เวลาวรรณยุกต์ยืดผิด)
+    from . import repair as repair_mod
+    words_pre = _load_words(d)
+    turns_pre = load_turns(d)
+    utterances, words_fixed, n_repair = repair_mod.repair_transcript(
+        utterances, words_pre, turns_pre, source_lang)
+    if n_repair:
+        if words_fixed is not None:
+            (d / "words.json").write_text(
+                json.dumps([w.__dict__ for w in words_fixed], ensure_ascii=False), encoding="utf-8")
+        store.save_transcript(job_id, utterances)
+        log.info("job %s: repaired %s before synthesize", job_id, n_repair)
+    # บทว่าง (แปลไม่ครบ / ถูกล้างตอนตรวจ) → กู้จาก ai_targets หรือให้ AI แปลเติม ก่อนจัดกลุ่มพากย์
+    empty_n = sum(1 for u in utterances if not (u.target or "").strip() and (u.source or "").strip())
+    if empty_n:
+        from . import translate as translate_mod
+        title = Path(job.filename or "").stem
+        n_fill = translate_mod.fill_empty_targets(
+            utterances, source_lang, target, title, job_dir=d, check_cancel=cancel)
+        if n_fill:
+            store.save_transcript(job_id, utterances)
+            log.info("job %s: AI filled %d empty targets before synthesize", job_id, n_fill)
+    # รอบก่อนเสียงไม่ตรงบท → บังคับพากย์ใหม่ (ไม่ใช้แคช) แล้วล้างป้ายเพื่อตรวจใหม่
+    for u in utterances:
+        if u.heard or (u.heard_score is not None and u.heard_score < settings.dub_check_min):
+            u.take = int(u.take or 0) + 1
+        u.heard, u.heard_score = "", None
+
     video = Path(job.input_path)
     total = audio.probe_duration(video)
     vocals = d / "vocals.wav"
@@ -428,7 +516,12 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     voice_map = None
     if settings.voice_match and gpu.voice_tools():
         voice_map = gpu.voice_profiles(d, utterances, orig, orig_sr)
-    library_refs = _library_refs(job, voice_store, target)
+    # โหมดซิงค์ปาก: ต้นฉบับภาษาเดียวกับปลายทาง → โคลนเสียงต้นฉบับ ไม่ใช้คลัง + รวมท่อนน้อย
+    same_lang = bool(source_lang) and source_lang == target
+    lip_sync = settings.lip_sync_same_lang and same_lang
+    library_refs = {} if lip_sync else _library_refs(job, voice_store, target)
+    if lip_sync:
+        log.info("job %s: lip-sync same-lang (%s→%s) original voices, tight groups", job_id, source_lang, target)
     # ประโยคที่ให้ระบบเลือกอารมณ์ (mood = "") ของตัวละครที่เสียงในคลังมีเสียงอารมณ์: เลือกใหม่เฉพาะบทที่เปลี่ยน
     pending = [(u, sorted(k for k in library_refs[u.speaker] if k)) for u in utterances
                if not u.mood and u.target.strip() and u.mood_auto_text != u.target
@@ -450,17 +543,22 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         from ..timeline import model as tl_model, processor as tl
         timeline = tl_model.load(d)
         clip_spans, part = tl.speaker_spans(timeline), tl.dub_part(timeline)
-    groups = _speech_groups([u for u in utterances if u.target.strip()], voices_=voice_map,
-                            pinned=frozenset(library_refs), mood=mood_of, part=part)
+    groups = _speech_groups(
+        [u for u in utterances if u.target.strip()], voices_=voice_map,
+        pinned=frozenset(library_refs), mood=mood_of, part=part,
+        max_gap=0.15 if lip_sync else 0.6, merge_short=not lip_sync)
     words = _load_words(d)
     if library_refs:
         log.info("library voices: %s", {s: sorted(k) for s, k in library_refs.items()})
     library_paths = {key: path for refs in library_refs.values() for key, path, _, _ in refs.values()}
 
+    # ซิงค์ปากบังคับจังหวะหยุดตามต้นฉบับ แม้ PAUSE_MATCH=0
+    use_pauses = (settings.pause_match or lip_sync) and not settings.mock_pipeline
+
     def marked_chunks(p: _Plan) -> dict:
         """ประโยคที่มีจุด / ใส่ช่วงที่แบ่งไว้ในคีย์ด้วย: วิธีแบ่งตาม / เปลี่ยน (แก้บท หรือปรับ pauses.plan) ต้องพากย์ใหม่
         ประโยคที่ไม่มี / คีย์เหมือนเดิม ใช้เสียงเดิมต่อได้"""
-        if not settings.pause_match or settings.mock_pipeline or not any(pauses.MARK in u.target for u in p.g):
+        if not use_pauses or not any(pauses.MARK in u.target for u in p.g):
             return {}
         if not p.chunks:
             p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
@@ -473,7 +571,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                         pauses=[settings.pause_match, settings.min_pause_sec, 3],
+                         pauses=[use_pauses, settings.min_pause_sec, 3],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
                          # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
                          **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))
@@ -530,7 +628,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         """พากย์ทั้งชุดผ่าน gpu.synthesize_lines แล้วต่อช่วงย่อยของแต่ละประโยคเป็นเสียงเดียว"""
         lines = []
         for p in batch:
-            if not settings.pause_match or settings.mock_pipeline:
+            if not use_pauses:
                 p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, pauses.strip_marks(p.text()))]
             else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
                 p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
@@ -566,6 +664,16 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
             p.voice = out
 
+    def _save_plan(p: _Plan) -> None:
+        voice = audio.fade(p.voice[: int(p.limit_sec * sr)], sr)
+        first = p.g[0]
+        key = key_for(p, p.text())
+        sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
+        sf.write(_take_file(tts_dir, first.id, key), voice, sr)
+        (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key}), encoding="utf-8")
+        done[p.i] = voice
+        p.voice = voice
+
     # ---- พากย์: บนเครื่องนี้ทีละประโยค (เสร็จแล้วเก็บแคชทันที) บน Modal ส่งทุกประโยคเป็นชุดพร้อมกัน
     batches = ([plans] if plans else []) if gpu.remote() else [[p] for p in plans]
     for batch in batches:
@@ -588,13 +696,47 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             render(again, 0.88, 0.92)
         for p in batch:
             # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
-            voice = audio.fade(p.voice[: int(p.limit_sec * sr)], sr)
-            first = p.g[0]
-            key = key_for(p, p.text())
-            sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
-            sf.write(_take_file(tts_dir, first.id, key), voice, sr)
-            (tts_dir / f"{first.id:04d}.json").write_text(json.dumps({"key": key}), encoding="utf-8")
-            done[p.i] = voice
+            _save_plan(p)
+
+    # เสียงพากย์ยังไม่ตรงบท → AI ตัดสิน retry / ย่อบท / accept แล้วทำตามนั้น
+    unclear_plans = [p for p in plans if any(u.heard for u in p.g)]
+    if unclear_plans and not settings.mock_pipeline:
+        from .translate import judge_dub_quality, shorten
+        judge_lines = []
+        for p in unclear_plans:
+            u0 = next((u for u in p.g if u.heard), p.g[0])
+            judge_lines.append({
+                "id": p.g[0].id, "target": p.text(), "heard": u0.heard or "",
+                "score": u0.heard_score if u0.heard_score is not None else 0.0,
+                "seconds": p.slot,
+            })
+        decisions = judge_dub_quality(judge_lines, cancel)
+        log.info("job %s: dub judge %s", job_id, decisions)
+        retry_plans, shorten_plans = [], []
+        for p in unclear_plans:
+            action = decisions.get(p.g[0].id, "retry")
+            if action == "accept":
+                continue
+            if action == "shorten" and can_shorten:
+                before = p.text()
+                shorten(p.g, target, target_ratio=0.85)
+                if p.text() != before:
+                    shorten_plans.append(p)
+                else:
+                    retry_plans.append(p)
+            else:
+                retry_plans.append(p)
+        redo = shorten_plans + retry_plans
+        if redo:
+            for p in redo:
+                for u in p.g:
+                    u.take = int(u.take or 0) + 1
+                    u.heard, u.heard_score = "", None
+            log.info("job %s: AI re-dub %d (shorten=%d retry=%d)",
+                     job_id, len(redo), len(shorten_plans), len(retry_plans))
+            render(redo, 0.88, 0.93)
+            for p in redo:
+                _save_plan(p)
 
     clips = [(g[0].start, done[i]) for i, g in enumerate(groups)]
     plans_by_i = {p.i: p for p in plans}
@@ -606,7 +748,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     unclear = sum(1 for g in groups if g[0].heard)
     if unclear:
         log.info("job %s: %d lines may not match the script: %s", job_id, unclear, [g[0].id for g in groups if g[0].heard])
-    store.update(job_id, synth_stats=SynthStats(redubbed=redubbed, reused=reused, unclear=unclear))
+    store.update(job_id, synth_stats=SynthStats(
+        redubbed=redubbed, reused=reused, unclear=unclear,
+        repaired=n_repair, quality_ok=(unclear == 0)))
 
     stage("mix", 0.93)
     if not settings.mock_pipeline:

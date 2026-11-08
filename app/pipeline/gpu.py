@@ -208,6 +208,14 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     if unclear:
         from .transcribe import mark_unclear
         recheck["unclear_lines"] = mark_unclear(utterances, unclear)
+    # ซ่อมท่อนพัง + ถอดช่วงน่าสงสัยใหม่ก่อนส่งไปแปล (รันบนเครื่องที่มี Whisper)
+    if settings.transcript_gate and not settings.mock_pipeline and words:
+        from . import repair as repair_mod
+        stage("transcribe", 0.5)
+        utterances, words, gate = repair_mod.gate_before_translate(
+            utterances, words, turns, lang or "", wav16k)
+        speakers = sorted({u.speaker for u in utterances} | set(speakers or []))
+        log.info("transcript gate after ASR: %s", gate)
     return {"vocals": vocals, "bgm": bgm, "turns": turns, "words": words, "lang": lang,
             "utterances": utterances, "speakers": speakers, "recheck": recheck}
 
