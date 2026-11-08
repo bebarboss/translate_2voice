@@ -1,0 +1,9 @@
+{
+  "id": "wow_th",
+  "tags": ["child", "shout", "thai", "snapshot"],
+  "language": "th",
+  "mode": "snapshot",
+  "job_ref": "6ce3e4247a7a",
+  "audio_offset": 30.5,
+  "description": "อุทานสั้น 'ว้าว' — เสียงสั้นที่ VAD มักตัดทิ้ง"
+}

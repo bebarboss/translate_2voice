@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import accounts, actors, backup, consent, memory, notify, projects, quality, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -46,6 +46,7 @@ worker = Worker(store, voice_store)
 async def lifespan(_: FastAPI):
     worker.start()
     backup.start()
+    daily_metrics.start()  # ทุก 23:59 Asia/Bangkok ประเมินงาน done ในวันนั้น เก็บลง DB
     try:  # อุ่นแคชนักพากย์ตั้งแต่สตาร์ท หน้าคลังเสียงโหลดครั้งแรกไม่ต้องรอ JOIN ไกล
         actors.voice_actors()
         actors.mood_reviews()
@@ -526,6 +527,7 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
     utterances = store.load_transcript(job_id)
     if not utterances:
         raise HTTPException(409, "งานนี้ยังไม่มีบท")
+    before = [u.model_copy(deep=True) for u in utterances]
     by_id = {u.id: u for u in utterances}
     moved = False
     for edit in edits:
@@ -557,7 +559,7 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
                                          "ต้องยาวอย่างน้อย 0.2 วินาทีและอยู่ในคลิป")
             moved |= (start, end) != (u.start, u.end)
             u.start, u.end = start, end
-    _save_lines(job, utterances, moved)
+    _save_lines(job, utterances, moved, before=before, stage="review")
     return utterances
 
 
@@ -576,11 +578,19 @@ def _editable_lines(job_id: str) -> tuple[Job, list[Utterance]]:
     return job, utterances
 
 
-def _save_lines(job: Job, utterances: list[Utterance], moved: bool) -> None:
-    """บันทึกบท ถ้าช่วงพูดของตัวละครเปลี่ยน สร้างเสียงแยกรายคนใหม่ (ปุ่มฟังเสียงแยก และเสียงตัวอย่างตอนเลือกเสียง)"""
+def _save_lines(job: Job, utterances: list[Utterance], moved: bool,
+                before: Optional[list[Utterance]] = None, *, stage: str = "review") -> None:
+    """บันทึกบท ถ้าช่วงพูดของตัวละครเปลี่ยน สร้างเสียงแยกรายคนใหม่ (ปุ่มฟังเสียงแยก และเสียงตัวอย่างตอนเลือกเสียง)
+    ถ้าส่ง before มา จะบันทึก diff ลง data/corrections/ เป็น candidate ชุดทอง"""
     from .transcript_edit import export_stems
 
     store.save_transcript(job.id, utterances)
+    if before is not None:
+        try:
+            from .gold import record_corrections
+            record_corrections(job.id, before, utterances, stage=stage)
+        except Exception:
+            logging.getLogger(__name__).exception("บันทึก corrections ชุดทองไม่สำเร็จ job=%s", job.id)
     if moved:
         export_stems(store.dir(job.id), utterances, job.speakers)
 
@@ -594,6 +604,7 @@ def split_line(job_id: str, line_id: int, body: UtteranceSplit):
     from .transcript_edit import split
 
     job, utterances = _editable_lines(job_id)
+    before = [x.model_copy(deep=True) for x in utterances]
     i = next((k for k, u in enumerate(utterances) if u.id == line_id), None)
     if i is None:
         raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
@@ -605,7 +616,7 @@ def split_line(job_id: str, line_id: int, body: UtteranceSplit):
     except ValueError as e:
         raise HTTPException(400, str(e))
     utterances[i:i + 1] = [a, b]
-    _save_lines(job, utterances, False)
+    _save_lines(job, utterances, False, before=before, stage="split")
     return utterances
 
 
@@ -616,6 +627,7 @@ def merge_line(job_id: str, line_id: int):
     from .transcript_edit import merge
 
     job, utterances = _editable_lines(job_id)
+    before = [x.model_copy(deep=True) for x in utterances]
     i = next((k for k, u in enumerate(utterances) if u.id == line_id), None)
     if i is None:
         raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
@@ -623,7 +635,7 @@ def merge_line(job_id: str, line_id: int):
         raise HTTPException(400, "เป็นประโยคสุดท้าย ไม่มีประโยคถัดไปให้รวม")
     moved = utterances[i + 1].speaker != utterances[i].speaker
     utterances[i:i + 2] = [merge(utterances[i], utterances[i + 1])]
-    _save_lines(job, utterances, moved)
+    _save_lines(job, utterances, moved, before=before, stage="merge")
     return utterances
 
 
@@ -634,6 +646,7 @@ def duplicate_line(job_id: str, line_id: int, body: LineDuplicate):
     ใช้ตอนสองคนพูดพร้อมกันแต่ถอดเสียงได้แค่คนเดียว: วางสำเนาซ้อนเวลาเดิมให้อีกตัวละคร แล้วแก้บท
     ตัวละครเดียวกันวางทับช่วงที่ตัวเองพูดอยู่แล้วไม่ได้ (คนเดียวพูดทับตัวเองไม่ได้)"""
     job, utterances = _editable_lines(job_id)
+    before = [x.model_copy(deep=True) for x in utterances]
     src = next((u for u in utterances if u.id == line_id), None)
     if src is None:
         raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
@@ -650,7 +663,7 @@ def duplicate_line(job_id: str, line_id: int, body: LineDuplicate):
     new = src.model_copy(update={"id": max(u.id for u in utterances) + 1, "speaker": speaker,
                                  "start": start, "end": end, "take": 0})
     utterances = sorted(utterances + [new], key=lambda u: u.start)
-    _save_lines(job, utterances, True)
+    _save_lines(job, utterances, True, before=before, stage="duplicate")
     return utterances
 
 
@@ -659,12 +672,13 @@ def duplicate_line(job_id: str, line_id: int, body: LineDuplicate):
 def delete_line(job_id: str, line_id: int):
     """ลบประโยค (เช่นประโยคที่วางผิด หรือเสียงที่ไม่ต้องพากย์) ช่วงนั้นจะไม่มีเสียงพากย์"""
     job, utterances = _editable_lines(job_id)
+    before = [x.model_copy(deep=True) for x in utterances]
     if not any(u.id == line_id for u in utterances):
         raise HTTPException(404, f"ไม่พบประโยค id={line_id}")
     if len(utterances) == 1:
         raise HTTPException(400, "ต้องเหลืออย่างน้อยหนึ่งประโยค")
     utterances = [u for u in utterances if u.id != line_id]
-    _save_lines(job, utterances, True)
+    _save_lines(job, utterances, True, before=before, stage="delete")
     return utterances
 
 
@@ -1879,6 +1893,23 @@ def admin_backups(_=Depends(require_admin)):
 def admin_quality(days: int = 30, _=Depends(require_admin)):
     """สัดส่วนบรรทัดที่ผู้ใช้แก้จากที่ AI ทำ (คำแปล ผู้พูด เวลา) รวม รายสัปดาห์ และแยกคู่ภาษา"""
     return quality.summary(max(1, min(days, 365)))
+
+
+@app.get("/admin/job-metrics/daily", dependencies=[Depends(require_key)])
+def admin_job_metrics_daily(days: int = 30, _=Depends(require_admin)):
+    """สรุปคะแนนงานอัตโนมัติรายวัน (cron 23:59) — ใช้เทียบก่อน/หลังแก้ pipeline ไม่ใช่คนแก้บท"""
+    return daily_metrics.list_daily(max(1, min(days, 365)))
+
+
+@app.post("/admin/job-metrics/daily/run", dependencies=[Depends(require_key)])
+def admin_job_metrics_daily_run(day: str = "", _=Depends(require_admin)):
+    """รันประเมินรายวันทันที day=YYYY-MM-DD ว่าง = วันนี้ตามกรุงเทพ"""
+    from datetime import date as date_cls, datetime as dt
+
+    from .daily_metrics import BKK
+
+    run_day = date_cls.fromisoformat(day) if day else dt.now(BKK).date()
+    return daily_metrics.run_for_date(run_day, store=store)
 
 
 @app.get("/admin/quality/lines", dependencies=[Depends(require_key)])

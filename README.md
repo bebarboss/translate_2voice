@@ -54,6 +54,10 @@ modal_app.py           ฟังก์ชันบน Modal GPU L4 (analyze_audi
 web/                   หน้าเว็บ Next.js (ดู web/README.md)
 notebooks/colab_server.ipynb   รัน API บน Google Colab
 scripts/client_example.py      ตัวอย่างเรียก API จาก Python
+scripts/score_jobs.py          คะแนนงานจริงจาก vocals/transcript/tts
+scripts/run_daily_metrics.py   ประเมินงาน done รายวัน เก็บลง Supabase (cron 23:59)
+scripts/score_gold.py          คะแนนชุดคลิปทอง (regression เสริม)
+fixtures/gold/                 เคส regression ตะโกน/เด็ก/noisy
 ```
 
 ## ต้องมีก่อนรัน
@@ -225,6 +229,42 @@ Vercel รับ body ได้ไม่เกิน 4.5 MB หน้าเว�
 - `exporter.py` เขียน Final Cut Pro XML ด้วย OTIO และเขียน FCPXML 1.9 เอง (ตัวเขียนของ OTIO ใช้กับไทม์ไลน์ที่ไม่ได้มาจาก Final Cut ไม่ได้)
 - `timecode.py` อัตราเฟรม NTSC ใช้เศษส่วนจริง (30000/1001) และ drop-frame ตาม SMPTE
 - ทดสอบ: `pip install pytest` แล้ว `python -m pytest tests/timeline` (ไฟล์ตัวอย่างใน `tests/timeline/fixtures/` เขียนตามรูปแบบที่ Premiere และ Resolve ส่งออก)
+
+## วัดจาก job จริง + ให้ระบบปรับเอง
+
+คะแนนหลักมาจากไฟล์ในงานที่พากย์เสร็จแล้ว (ไม่พึ่งคนแก้บท ซึ่งอาจแก้ไม่ถูก):
+
+| สัญญาณ | ต้นฉบับ | ผล |
+| --- | --- | --- |
+| `speech_coverage` | ช่วงมีเสียงบน `vocals.wav` | ช่วงใน `transcript.json` |
+| `length_vs_source` | รวมเวลาพูดต้นฉบับ | รวมเวลาพากย์ / ประมาณจากบท |
+| `translate_fidelity` | `source` (+ glossary) | `target` (ว่าง/สั้นยาว/ศัพท์) |
+| `prosody_match` | ความดัง/pitch ต้นฉบับ | ไฟล์พากย์รายท่อน |
+| `lip_overflow` | ช่องปาก + ท่อนถัดไป | ความยาว `tts` ล้น/สั้นเกิน |
+| `term_consistency` | glossary / ชื่อ / ต้นฉบับซ้ำ | สะกดใน `target` ทั้งเรื่อง |
+| `speaker_confusion` | `turns.json` + pitch | ป้ายผู้พูด / ทับเวลา / กระโดดเสียง |
+| `dub_match` | บท `target` | `heard_score` จากเสียงพากย์ |
+| `timing_fit` | ความยาวช่องปาก | ไฟล์ `tts/*.wav` |
+| `recheck_gain` | — | `recheck.json` |
+
+ทุกงานที่เสร็จจะเขียน `metrics.json` อัตโนมัติ
+
+```powershell
+python scripts/score_jobs.py
+python scripts/score_jobs.py --write --nudge
+python scripts/run_daily_metrics.py              # ประเมินงาน done วันนี้ (กรุงเทพ) เก็บลง DB
+python scripts/run_daily_metrics.py --date 2026-11-09
+python -m pytest tests/test_job_metrics.py -q
+```
+
+- **Daily metrics cron** (23:59 Asia/Bangkok): API สแกนงาน `done` ในวันนั้น → `job_metrics` → ตาราง `job_metric_scores` / `job_metric_daily` (ต้องรัน `supabase/migrations/20261109020000_job_metrics_daily.sql`) อ่านที่ `GET /admin/job-metrics/daily`
+- **Auto-heal ASR** (`AUTO_HEAL_ASR=1`): ถ้า coverage ต่ำระหว่างวิเคราะห์ → ผ่อน VAD ชั่วคราว + fill_gaps/recheck หนึ่งรอบ เก็บผลที่ดีกว่า
+- **Same-lang**: ต้นทาง = ปลายทาง → คัดลอก `source → target` ทันที ห้ามเข้า review/พากย์ด้วยบทว่าง
+- **เกตก่อนพากย์**: บทว่างเหลือ หรือ `speech_coverage` &lt; `MIN_COVERAGE_SYNTHESIZE` (ค่าเริ่ม 0.70) → ปฏิเสธ พร้อมข้อความให้แปล/วิเคราะห์ใหม่
+- **`RETRANSCRIBE_NOISY`**: เปิดเป็นค่าเริ่มต้น
+- **Auto knobs** (`AUTO_KNOBS=1`): หลังมีสถิติหลายงาน ระบบขยับ `whisper_vad_threshold` / `fill_gap` / `dub_check_min` ในขอบเขตปลอดภัย เก็บที่ `data/metrics/knobs.json` (ไม่ต้องแก้ `.env` เอง)
+
+ชุดทอง (`fixtures/gold/`, `scripts/score_gold.py`) ยังใช้เป็น regression เสริมได้
 
 ## เคล็ดลับ
 

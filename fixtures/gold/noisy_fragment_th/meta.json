@@ -1,0 +1,9 @@
+{
+  "id": "noisy_fragment_th",
+  "tags": ["noisy", "shout", "ja", "snapshot"],
+  "language": "ja",
+  "mode": "snapshot",
+  "job_ref": "31bf66443c72",
+  "audio_offset": 26.7,
+  "description": "ท่อนสั้น テスト ใกล้เสียงตะโกน — ตรวจว่าไม่หายจาก snapshot"
+}

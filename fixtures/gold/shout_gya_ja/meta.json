@@ -1,0 +1,9 @@
+{
+  "id": "shout_gya_ja",
+  "tags": ["shout", "ja", "snapshot"],
+  "language": "ja",
+  "mode": "snapshot",
+  "job_ref": "31bf66443c72",
+  "audio_offset": 84.8,
+  "description": "เสียงตะโกน ギャー จากงานจริง — snapshot ตรวจว่า transcript ยังครอบคลุมช่วงนี้"
+}

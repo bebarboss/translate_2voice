@@ -603,6 +603,27 @@ def spoken(text: str) -> str:
     return text.replace("ฯ", "")
 
 
+def same_lang(lang: str, target: str) -> bool:
+    """ภาษาต้นทาง = ปลายทาง (เทียบ 2 ตัวอักษรแรก เช่น th / th-TH)"""
+    a, b = (lang or "").strip().lower()[:2], (target or "").strip().lower()[:2]
+    return bool(a) and a == b
+
+
+def ensure_same_lang_targets(utts: list[Utterance], lang: str, target: str = "th") -> int:
+    """ภาษาเดียวกัน: เติม target จาก source ทันที (ไม่รอ API) คืนจำนวนบรรทัดที่เติม"""
+    if not same_lang(lang, target):
+        return 0
+    n = 0
+    for u in utts:
+        src = (u.source or "").strip()
+        if src and not (u.target or "").strip():
+            u.target = src
+            n += 1
+    if n:
+        log.info("same-lang: copied source → target on %d empty lines", n)
+    return n
+
+
 # ---------------- ฟังก์ชันหลัก ----------------
 def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          on_progress: Optional[Callable[[float], None]] = None,
@@ -610,11 +631,16 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          hints: Optional[dict] = None) -> None:
     """hints: genre (แนวเรื่อง), glossary (ชื่อเฉพาะ บรรทัดละคำ เช่น ドラえもん = โดราเอมอน), names (ผู้พูด → ชื่อตัวละคร)"""
     hints = _with_order(utts, hints)
-    if lang == target:
+    if same_lang(lang, target):
+        ensure_same_lang_targets(utts, lang, target)
+        # บังคับให้ทุกท่อนที่มีต้นฉบับมีบทพากย์ (กัน target เป็นช่องว่าง)
         for u in utts:
-            u.target = u.target or u.source
-        if settings.typhoon_api_key:
+            if (u.source or "").strip() and not (u.target or "").strip():
+                u.target = u.source
+        if settings.typhoon_api_key and not settings.mock_pipeline:
             proofread(utts, target, on_progress, check_cancel, title)
+            # proofread ห้ามเหลือบทว่าง
+            ensure_same_lang_targets(utts, lang, target)
         return
 
     # โมเดลแปลบนเครื่องต้องใช้การ์ดจอ โหมด modal จึงแปลด้วย Typhoon API เสมอ
@@ -910,11 +936,15 @@ def naturalize_dialogue(utts: list[Utterance], target: str = "th",
             old = (u.target or "").strip()
             if not text or text == old:
                 continue
-            # ไม่ให้ยาวพุ่งเกินเวลาพูดมาก และไม่หดจนเสียใจความ
-            if estimate_seconds(text, target) > max(u.duration, 0.5) * 1.25:
+            # คงจังหวะปาก: ไม่ยาวเกินเวลา×fit_tolerance และไม่หดจนเสียใจความ
+            if estimate_seconds(text, target) > max(u.duration, 0.5) * settings.fit_tolerance:
                 continue
             if len(text) < max(2, int(len(old) * 0.45)):
                 continue
+            if estimate_seconds(text, target) < u.duration * settings.fit_min_ratio and u.duration >= 1.0:
+                # สั้นกว่าเกณฑ์ขยาย — อย่าทำให้แย่กว่าบทเดิม
+                if estimate_seconds(text, target) < estimate_seconds(old, target):
+                    continue
             u.target = text
             changed += 1
     if changed:
@@ -925,13 +955,19 @@ def naturalize_dialogue(utts: list[Utterance], target: str = "th",
 def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", title: str = "",
                        hints: Optional[dict] = None, job_dir: Optional[Path] = None,
                        check_cancel: Optional[Callable[[], None]] = None) -> int:
-    """เติมบทพากย์ที่ว่างก่อนพากย์: กู้จาก ai_targets.json ก่อน แล้วให้ AI แปลบรรทัดที่เหลือ
+    """เติมบทพากย์ที่ว่างก่อนพากย์: same-lang คัดลอกทันที → กู้ ai_targets → AI แปล
     คืนจำนวนบรรทัดที่เติมได้ (ลดท่อนเงียบตอนตัด vocals ต้นฉบับออก)"""
-    if settings.mock_pipeline or not settings.ai_fill_empty:
-        return 0
+    # ภาษาเดียวกันไม่ต้องพึ่ง API / ธง AI_FILL_EMPTY
+    filled = ensure_same_lang_targets(utts, lang, target)
+    if settings.mock_pipeline:
+        return filled
     empty = [u for u in utts if not (u.target or "").strip() and (u.source or "").strip()]
     if not empty:
-        return 0
+        return filled
+    if not settings.ai_fill_empty:
+        if filled:
+            log.info("filled %d empty targets (same-lang only; AI_FILL_EMPTY off)", filled)
+        return filled
     ai: dict[int, str] = {}
     if job_dir is not None:
         try:
@@ -939,7 +975,6 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
             ai = {int(k): str(v) for k, v in raw.items() if v}
         except (OSError, ValueError, TypeError):
             ai = {}
-    filled = 0
     still: list[Utterance] = []
     for u in empty:
         prev = (ai.get(u.id) or "").strip()
@@ -950,7 +985,7 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
             still.append(u)
     if not still:
         if filled:
-            log.info("filled %d empty targets from ai_targets", filled)
+            log.info("filled %d empty targets from same-lang/ai_targets", filled)
         return filled
     if not settings.typhoon_api_key:
         log.warning("empty targets remain %s (no API key to fill)", [u.id for u in still])
@@ -960,7 +995,7 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
     for u in still:
         if check_cancel:
             check_cancel()
-        if lang == target:
+        if same_lang(lang, target):
             u.target = u.source
         else:
             context = [x for x in order if x.target.strip() and x.start < u.start][-6:]
@@ -1222,7 +1257,8 @@ def review_translation(utts: list[Utterance], lang: str, target: str = "th", max
     """ตรวจบทหลังแปล บรรทัดที่ควรให้คนดูติดป้ายไว้ใน check_note
     - continuous: หาบรรทัดที่ความหมายไม่ต่อกัน แปลใหม่ไม่เกิน REVIEW_ROUNDS รอบ ยังไม่ผ่านจึงติดป้าย
     - อื่น ๆ (teaser หรือไม่รู้ประเภท): ตรวจชื่อและศัพท์อย่างเดียว ติดป้ายโดยไม่แก้บท เพราะฉากไม่ต้องต่อกัน"""
-    if lang == target:
+    if same_lang(lang, target):
+        ensure_same_lang_targets(utts, lang, target)
         return
     hints = _with_order(utts, hints)
     order = [u for g in hints["sentences"] for u in g]

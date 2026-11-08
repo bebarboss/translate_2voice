@@ -106,6 +106,27 @@ def diarize_both(wav16k: Path, num_speakers: Optional[int] = None) -> tuple[list
     turns = turns_of(annotation)
     if not turns:
         raise RuntimeError("ไม่พบเสียงพูดในคลิป")
+
+    # อัตโนมัติแล้วได้คนเดียวทั้งคลิปยาว → ลองบังคับอย่างน้อย 2 คน (สัมภาษณ์/สตรีทมักพลาด)
+    if not num_speakers:
+        n_spk = len({t.speaker for t in turns})
+        dur = max(t.end for t in turns) - min(t.start for t in turns)
+        if n_spk < 2 and dur >= 15.0:
+            try:
+                output2 = pipe(data, min_speakers=2, max_speakers=8)
+                ann2 = getattr(output2, "speaker_diarization", output2)
+                turns2 = turns_of(ann2)
+                n2 = len({t.speaker for t in turns2})
+                if n2 >= 2:
+                    log.info("diarize auto found 1 speaker over %.1fs → retry min_speakers=2 got %d", dur, n2)
+                    output = output2
+                    annotation = ann2
+                    exclusive = (getattr(output2, "exclusive_speaker_diarization", None)
+                                 if settings.diar_exclusive else None)
+                    turns = turns2
+            except Exception as exc:  # noqa: BLE001
+                log.warning("diarize min_speakers=2 retry failed: %s", exc)
+
     renamed = rename_speakers(turns)
     names = {t.speaker: r.speaker for t, r in zip(turns, renamed)}
     only = [Turn(t.start, t.end, names.get(t.speaker, t.speaker)) for t in turns_of(exclusive)] if exclusive else []

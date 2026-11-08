@@ -34,11 +34,11 @@ def _int(name: str, default: int) -> int:
 # แพ็กเกจเริ่มต้น (ทับด้วย BILLING_PLANS เป็น JSON ได้) — ราคาเป็นสตางค์
 _DEFAULT_BILLING_PLANS: list[dict[str, Any]] = [
     {
-        "id": "trial", "name": "ทดลอง", "price": 0, "minutes": 5, "days": 30,
+        "id": "trial", "name": "ทดลอง", "price": 0, "minutes": 2, "days": 30,
         "max_clip_minutes": 2, "voices": "standard", "timeline": False, "watermark": True,
         "free_once": True,
         "features": [
-            "ฟรี 5 เครดิต ครั้งเดียวต่อบัญชี",
+            "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี",
             "คลิปยาวสุด 2 นาที",
             "เสียง Standard (ที่แอดมินเพิ่ม)",
             "ดาวน์โหลดมีลายน้ำ",
@@ -176,6 +176,17 @@ class Settings:
     # ถอดเสียง (faster-whisper)
     whisper_model: str = _env("WHISPER_MODEL", "large-v3")
     whisper_compute_type: str = _env("WHISPER_COMPUTE_TYPE", "float16")
+    # VAD (Silero): ค่าเริ่มต้น 0.5 มักตัดเสียงเด็ก/ตะโกน/อุทานทิ้ง — ผ่อน threshold + เก็บช่วงสั้น
+    whisper_vad_threshold: float = _float("WHISPER_VAD_THRESHOLD", 0.35)
+    whisper_vad_min_speech_ms: int = _int("WHISPER_VAD_MIN_SPEECH_MS", 100)
+    whisper_vad_min_silence_ms: int = _int("WHISPER_VAD_MIN_SILENCE_MS", 400)
+    whisper_vad_speech_pad_ms: int = _int("WHISPER_VAD_SPEECH_PAD_MS", 600)
+    # ช่วงที่มีคนพูดแต่ไม่มีคำ → ถอดซ้ำโดยปิด VAD (กู้ตะโกนสั้นได้ถ้า ≥ ค่านี้)
+    whisper_fill_gap_sec: float = _float("WHISPER_FILL_GAP_SEC", 0.4)
+    # วัด coverage จาก vocals แล้วซ่อม ASR อัตโนมัติหนึ่งรอบถ้าต่ำ
+    auto_heal_asr: bool = _bool("AUTO_HEAL_ASR", True)
+    # ปรับ VAD/fill_gap/dub_check จากสถิติหลาย job (data/metrics/knobs.json)
+    auto_knobs: bool = _bool("AUTO_KNOBS", True)
 
     # แปลภาษา (Typhoon)
     typhoon_api_key: str = _env("TYPHOON_API_KEY")
@@ -219,7 +230,7 @@ class Settings:
     fit_tolerance: float = _float("FIT_TOLERANCE", 1.1)
     # บทที่คาดว่าพูดได้ไม่ถึงสัดส่วนนี้ของเวลาที่ตัวละครพูดจริง ให้ Typhoon ขยายบทให้เต็มเวลาขึ้น
     # (เสียงพากย์จบก่อนปากหยุดขยับ ดูไม่ตรงภาพ) 0 = ไม่ขยาย
-    fit_min_ratio: float = _float("FIT_MIN_RATIO", 0.6)
+    fit_min_ratio: float = _float("FIT_MIN_RATIO", 0.7)  # บทสั้นเกิน → ขยายให้ใกล้เวลาปาก (เดิม 0.6)
     # นับช่วงเงียบหลังประโยคเป็นเวลาพูดได้อีกไม่เกินกี่วินาที ตอนคิดความยาวบท (0 = ใช้แค่ช่วงที่นักแสดงพูด
     # เพราะตอนพากย์ยังบีบเสียงให้พอดีช่วงที่นักแสดงพูด ถ้าเผื่อตรงนี้เสียงจะเร็วขึ้นแทน)
     fit_slack: float = _float("FIT_SLACK", 0.0)
@@ -257,7 +268,9 @@ class Settings:
     # ช่วงที่สองคนพูดพร้อมกัน แยกเสียงแล้วถอดคำพูดของคนที่ถูกกลบเป็นประโยคแยก (overlap.py)
     overlap_recover: bool = _bool("OVERLAP_RECOVER", True)
     # ถอดรอบสองจากเสียงต้นฉบับ (มีเพลง) เฉพาะช่วงที่ถอดไม่มั่นใจ ไม่มีคำ หรือเพลงดังทับ (transcribe.recheck_noisy)
-    retranscribe_noisy: bool = _bool("RETRANSCRIBE_NOISY", False)
+    retranscribe_noisy: bool = _bool("RETRANSCRIBE_NOISY", True)
+    # ห้ามพากย์ถ้า speech_coverage ต่ำกว่านี้ (ต้องวิเคราะห์ใหม่ / auto-heal ก่อน)
+    min_coverage_synthesize: float = _float("MIN_COVERAGE_SYNTHESIZE", 0.70)
     # สองคนพูดต่อกันแต่ระบบแยกผู้พูดรวมเป็นท่อนเดียว (เสียงคล้ายกัน เช่น การ์ตูน): ให้ Typhoon/Gemini อ่านบทแล้วเสนอจุดเปลี่ยนคน
     # ตัดจริงเฉพาะจุดที่ลายเสียงสองฝั่งคล้ายกันต่ำกว่า TURN_SPLIT_SIM แล้วจัดกลุ่มผู้พูดใหม่ (turns.py)
     turn_split: bool = _bool("TURN_SPLIT", True)

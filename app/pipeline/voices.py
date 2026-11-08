@@ -222,11 +222,18 @@ def cluster_lines(utts: list, voices: dict[int, Voice], max_speakers: int = 20) 
     affinity = np.clip(emb @ emb.T, 0.0, None)
     np.fill_diagonal(affinity, 0.0)
     k, vectors = _eigen_count(affinity, min(max_speakers, len(known) - 1))
-    k = min(max(k, len({u.speaker for u in utts})), len(known) - 1, max_speakers)
+    n_diar = len({u.speaker for u in utts})
+    k = min(max(k, n_diar), len(known) - 1, max_speakers)
+    # pyannote มักรวมบทสัมภาษณ์/หลายคนเสียงใกล้กันเป็นคนเดียวทั้งคลิป
+    # → บังคับลองอย่างน้อย 2 กลุ่มเมื่อมีประโยควัดได้พอ และห้ามรวมกลับเหลือคนเดียว
+    force_multi = n_diar <= 1 and len(known) >= 4
+    if force_multi:
+        k = min(max(k, 2), len(known) - 1, max_speakers)
     labels = _spectral(vectors, k) if k > 1 else np.zeros(len(known), dtype=int)
     groups = [[u for u, lab in zip(known, labels) if lab == c] for c in sorted(set(labels))]
 
-    # รวมกลุ่มที่ลายเสียงเหมือนกันมากและระดับเสียงใกล้กัน และกลุ่มที่มีประโยคเดียว (มักเป็นเสียงรบกวน) เข้ากลุ่มที่ใกล้สุด
+    # รวมกลุ่มที่ลายเสียงเหมือนกันมากและระดับเสียงใกล้กัน
+    # กลุ่มเดียว (เคยใช้ voice_min_sim=0.2) รวมง่ายเกินจนเหลือคนเดียวทั้งคลิป — ใช้เกณฑ์ merge เดียวกัน
     while len(groups) > 1:
         cents = [of_run(g, voices) for g in groups]
         best = None
@@ -239,11 +246,17 @@ def cluster_lines(utts: list, voices: dict[int, Voice], max_speakers: int = 20) 
                     continue
                 close_pitch = not (np.isfinite(cents[i].pitch) and np.isfinite(cents[j].pitch)
                                    and abs(cents[i].pitch - cents[j].pitch) > settings.voice_max_pitch_diff)
-                lonely = len(groups[i]) == 1 and s >= settings.voice_min_sim
-                if (i < j and s >= settings.diar_merge_sim and close_pitch) or lonely:
+                # รวมได้เฉพาะเมื่อคล้ายจริง (diar_merge_sim) — กลุ่มเดี่ยวก็ไม่ยกเว้นเกณฑ์นี้
+                if i < j and s >= settings.diar_merge_sim and close_pitch:
                     if best is None or s > best[0]:
                         best = (s, i, j)
         if best is None:
+            break
+        # pyannote บอกคนเดียวทั้งคลิป → อย่ารวมกลับเหลือกลุ่มเดียว (เพลง/สตรีทมักดึงลายเสียงเข้าหากัน)
+        if force_multi and len(groups) == 2:
+            break
+        # อย่ารวมเหลือกลุ่มเดียวถ้าคู่ที่คล้ายที่สุดยังไม่ถึงเกณฑ์ชัด
+        if len(groups) == 2 and best[0] < settings.diar_merge_sim + 0.05:
             break
         _, i, j = best
         groups[j] = groups[j] + groups[i]
