@@ -139,13 +139,15 @@ def actor_reviewed(uid: str, approve: bool, note: str) -> None:
     send(u["email"], "ใบสมัครนักพากย์ได้รับอนุมัติ" if approve else "ผลใบสมัครนักพากย์", lines, "/actor", "ไปหน้านักพากย์")
 
 
-def voice_reviewed(uid: str, voice_name: str, approve: bool, note: str) -> None:
+def voice_reviewed(uid: str, voice_name: str, approve: bool, note: str, bonus: int = 0) -> None:
     u = _user(uid)
     if u is None:
         return
     lines = [f"สวัสดีคุณ{u['name']}"]
     if approve:
         lines.append(f"เสียง “{voice_name}” ผ่านการตรวจแล้ว ผู้ใช้ทุกคนเลือกใช้พากย์ได้ตั้งแต่ตอนนี้")
+        if bonus > 0:
+            lines.append(f"ได้รับโบนัส {bonus} เครดิตจากการอนุมัติเสียงนี้ (เครดิตเติม ไม่หมดอายุ)")
     else:
         lines.append(f"เสียง “{voice_name}” ยังไม่ผ่านการตรวจ" + (f": {note}" if note else "") + " อัดใหม่แล้วส่งอีกครั้งได้")
     send(u["email"], f"ผลตรวจเสียง: {voice_name}", lines, "/actor", "ไปหน้านักพากย์")

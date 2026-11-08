@@ -183,6 +183,8 @@ export const EN: Record<string, string> = {
   "ถอนความยินยอมได้ตลอดเวลาที่หน้านี้ ระบบจะลบเสียงทั้งหมดของคุณออกจากคลังทันที": "You can withdraw consent on this page at any time. All your voices will be removed from the library immediately",
   "สมัครเป็นนักพากย์": "Become a voice actor",
   "อัดเสียงของคุณเข้าคลังเสียง ให้ผู้ใช้ทุกคนเลือกใช้พากย์ได้ และรับค่าตอบแทนตามเวลาที่เสียงของคุณถูกใช้ ผู้ดูแลจะตรวจใบสมัครก่อน": "Record your voice into the voice library so every user can choose it for dubbing, and earn money for the time your voice is used. An admin reviews applications first",
+  "อัดเสียงของคุณเข้าคลังเสียง ให้ผู้ใช้ทุกคนเลือกใช้พากย์ได้ และรับค่าตอบแทนตามเวลาที่เสียงของคุณถูกใช้ ผู้ดูแลจะตรวจใบสมัครก่อน · เมื่อเสียงถูกอนุมัติขึ้นคลังจะได้รับโบนัส 5 เครดิต": "Record your voice into the voice library so every user can choose it for dubbing, and earn money for the time your voice is used. An admin reviews applications first · When a voice is approved for the library you get a 5-credit bonus",
+  "โบนัสอนุมัติเสียง": "Voice approval bonus",
   "ชื่อในวงการ (แสดงคู่กับเสียง)": "Stage name (shown with your voice)",
   "เพศของเสียง": "Voice gender",
   "ประสบการณ์ / สไตล์เสียง": "Experience / voice style",
