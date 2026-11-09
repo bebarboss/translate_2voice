@@ -1,0 +1,125 @@
+# Pakdee API (+ หน้าเว็บ optional) บน VPS
+# จากโฟลเดอร์รากโปรเจกต์:
+#   cp .env.example .env   # แล้วใส่คีย์จริง
+#   cp deploy/.env.vps.example deploy/.env
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+#
+# ค่าเริ่มต้น: WORKER=modal (ไม่ต้องมี GPU บน VPS) + Caddy ออก HTTPS ให้โดเมน
+# หน้าเว็บ: ใส่ profile web หรือปล่อยไว้ที่ Vercel แล้วชี้ BACKEND_URL มาที่ API_DOMAIN
+# Postgres อยู่ใน Docker network เท่านั้น (ไม่เปิดพอร์ต 5432 สู่สาธารณะ)
+
+name: pakdee-vps
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pakdee}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ตั้ง POSTGRES_PASSWORD ใน deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-pakdee}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    # ไม่ publish 5432 — API เชื่อมที่โฮสต์ db:5432 ในเครือข่าย compose เท่านั้น
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      args:
+        ML: "0"
+    image: thai-dubbing-api:vps
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ../.env
+    environment:
+      DATA_DIR: /app/data
+      BACKUP_DIR: /app/backups
+      FONTS_DIR: ""
+      WORKER: ${WORKER:-modal}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      # จำกัด CORS ให้โดเมนจริง (ทับ .env ถ้าตั้งใน deploy/.env)
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      # ทับ URL จาก ../.env ให้ชี้ Postgres ใน compose (รหัสผ่านต้องตรง POSTGRES_*)
+      SUPABASE_DB_URL: ${SUPABASE_DB_URL:-postgresql://${POSTGRES_USER:-pakdee}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pakdee}?sslmode=disable}
+      DB_BACKEND: ${DB_BACKEND:-supabase}
+    volumes:
+      - ../data:/app/data
+      - ${BACKUP_PATH:-../backups}:/app/backups
+    # ไม่ mount ซอร์สโค้ด — ใช้ image ที่ build แล้วเท่านั้น
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      # เมื่อเปิด --profile web จะรอ container หน้าเว็บก่อนรับทราฟฟิก
+      web:
+        condition: service_started
+        required: false
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?ตั้ง API_DOMAIN ใน deploy/.env เช่น api.example.com}
+      WEB_DOMAIN: ${WEB_DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      # ค่าเริ่มต้น = API อย่างเดียว; โปรไฟล์ web สลับเป็น Caddyfile.web ด้านล่าง
+      - ${CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # รันหน้าเว็บบน VPS (เมื่อ Vercel เต็มโควต้า หรืออยากรวมโดเมน)
+  # ใน deploy/.env ตั้ง WEB_DOMAIN + CADDYFILE=./Caddyfile.web แล้ว:
+  #   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d --build
+  web:
+    profiles: [web]
+    build:
+      context: ../frontend
+      dockerfile: ../deploy/frontend.Dockerfile
+      args:
+        BACKEND_URL: ${INTERNAL_BACKEND_URL:-http://api:8000}
+        API_KEY: ${WEB_API_KEY:-}
+        DIRECT_UPLOAD: ${DIRECT_UPLOAD:-1}
+    image: thai-dubbing-web:vps
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # runtime: เบราว์เซอร์อัปโหลดตรงไปที่ API สาธารณะ
+      # ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com
+      BACKEND_URL: ${PUBLIC_BACKEND_URL:?ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com}
+      API_KEY: ${WEB_API_KEY:-}
+      DIRECT_UPLOAD: ${DIRECT_UPLOAD:-1}
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+    expose:
+      - "3000"
+
+volumes:
+  pg_data:
+  caddy_data:
+  caddy_config:

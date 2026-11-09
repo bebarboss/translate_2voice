@@ -1,15 +1,14 @@
 # API บนเครื่อง + Cloudflare Tunnel เปิดให้หน้าเว็บบน Vercel เรียกได้
-# ขั้นที่ใช้การ์ดจอรันบน Modal (WORKER=modal ต้อง modal deploy modal_app.py ก่อน และใส่ MODAL_TOKEN_ID/SECRET ใน .env)
-# รัน: docker compose up -d --build   ค่าทั้งหมดอ่านจาก .env (ดู .env.example หมวด Docker / Tunnel)
+# ขั้นที่ใช้การ์ดจอรันบน Modal (WORKER=modal ต้อง modal deploy modal_app.py จากโฟลเดอร์ backend/ ก่อน)
+# รันจากรากโปรเจกต์: docker compose up -d --build
 # รันโมเดลบนการ์ดจอเครื่องนี้แทน: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
-# ดูลิงก์: docker compose logs tunnel | grep trycloudflare
-# ใช้ ngrok แทน: docker compose stop tunnel && docker compose --profile ngrok up -d ngrok
 services:
   api:
-    build: .
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     image: thai-dubbing-api
     restart: unless-stopped
-    # บังคับรัน API (กัน image ที่เคย commit ผิดเป็น sleep)
     entrypoint: ["python"]
     command: ["run.py"]
     env_file: .env
@@ -22,13 +21,10 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
-      # ไฟล์สำรองข้อมูล (backup.py) ตั้ง BACKUP_PATH ใน .env เป็นโฟลเดอร์ที่ซิงก์ขึ้นคลาวด์หรือดิสก์อีกลูก
       - ${BACKUP_PATH:-./backups}:/app/backups
-      - ./app:/app/app
-      - ./run.py:/app/run.py
+      - ./backend/app:/app/app
+      - ./backend/run.py:/app/run.py
 
-  # Cloudflare quick tunnel ฟรี ไม่จำกัดปริมาณข้อมูล แต่ลิงก์ *.trycloudflare.com เปลี่ยนทุกครั้งที่ container เริ่มใหม่
-  # (ต้องแก้ BACKEND_URL บน Vercel ตาม) และรับ request ได้ครั้งละไม่เกิน 100 MB
   tunnel:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
@@ -36,7 +32,6 @@ services:
       - api
     command: ["tunnel", "--no-autoupdate", "--url", "http://api:8000"]
 
-  # ngrok แบบฟรีได้ข้อมูลแค่ราว 1 GB ต่อเดือน เต็มแล้วจะตอบ ERR_NGROK_725
   ngrok:
     image: ngrok/ngrok:latest
     profiles: [ngrok]
@@ -47,5 +42,4 @@ services:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
     command: ["http", "api:8000", "--url", "${NGROK_DOMAIN}"]
     ports:
-      # หน้าดูคำขอที่ผ่าน ngrok http://localhost:4040
       - "127.0.0.1:4040:4040"

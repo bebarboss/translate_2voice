@@ -2,10 +2,11 @@
 
 Pakdee (พากย์ดี) — ระบบพากย์คลิปละครต่างประเทศเป็นภาษาไทยหรืออังกฤษ ด้วยเสียงที่โคลนจากนักแสดงต้นฉบับ ตัวละครแบรนด์เป็นนกแก้ว แบ่งเป็นสองส่วน
 
-**คู่มือผู้ใช้:** [docs/user-manual.md](docs/user-manual.md)
+**คู่มือผู้ใช้:** [docs/user-manual.md](docs/user-manual.md)  
+**Deploy บน VPS:** [docs/deploy-vps.md](docs/deploy-vps.md) (`deploy/`)
 
-- **API** (โฟลเดอร์หลัก) — FastAPI รันโมเดลบนการ์ดจอเครื่องตัวเอง หรือส่งเฉพาะขั้นที่ใช้การ์ดจอไป Modal (`WORKER=modal`)
-- **หน้าเว็บ** (`web/`) — Next.js สำหรับอัปโหลด ตรวจบท และดาวน์โหลด
+- **Backend** (`backend/`) — FastAPI รันโมเดลบนการ์ดจอเครื่องตัวเอง หรือส่งเฉพาะขั้นที่ใช้การ์ดจอไป Modal (`WORKER=modal`)
+- **Frontend** (`frontend/`) — Next.js สำหรับอัปโหลด ตรวจบท และดาวน์โหลด
 
 ```
 คลิปต้นฉบับ หรือลิงก์ (YouTube, TikTok, Facebook, Bilibili ผ่าน yt-dlp)
@@ -34,32 +35,21 @@ Pakdee (พากย์ดี) — ระบบพากย์คลิปละ
 ## โครงสร้างโปรเจกต์
 
 ```
-app/
-  main.py              จุดเข้า API (FastAPI)
-  config.py            ค่าตั้งค่าจาก .env
-  runtime_settings.py  ค่าที่ปรับจากหน้าเว็บ เก็บใน data/settings.json
-  schemas.py           โครงสร้างข้อมูล
-  jobs.py              เก็บสถานะงาน + คิว (local ทีละงาน, modal หลายงานพร้อมกัน) + ยกเลิก
-  pipeline/
-    download.py        รับลิงก์ด้วย yt-dlp
-    audio.py           FFmpeg, Demucs, ตัดคลิป, ยืดหดเวลา
-    diarize.py         pyannote + เลเยอร์เสียงแต่ละคน
-    transcribe.py      faster-whisper + จับคู่คำกับผู้พูด
-    translate.py       Typhoon แปล ทำคำอ่าน และย่อบท
-    tts.py             F5-TTS ไทยและอังกฤษ
-    mix.py             วางเสียงตามเวลา ผสม รวมวิดีโอ
-    subs.py            ทำ .srt ฝังซับ และรายชื่อฟอนต์
-    runner.py          ร้อยทุกขั้นเข้าด้วยกัน + พากย์ใหม่เฉพาะประโยคที่เปลี่ยน
-    gpu.py             ขั้นที่ใช้การ์ดจอ เรียกบนเครื่องนี้หรือบน Modal ตาม WORKER
-    mock.py            โหมดทดสอบที่ไม่ต้องใช้โมเดล
-modal_app.py           ฟังก์ชันบน Modal GPU L4 (analyze_audio, synthesize_lines)
-web/                   หน้าเว็บ Next.js (ดู web/README.md)
-notebooks/colab_server.ipynb   รัน API บน Google Colab
-scripts/client_example.py      ตัวอย่างเรียก API จาก Python
-scripts/score_jobs.py          คะแนนงานจริงจาก vocals/transcript/tts
-scripts/run_daily_metrics.py   ประเมินงาน done รายวัน เก็บลง Supabase (cron 23:59)
-scripts/score_gold.py          คะแนนชุดคลิปทอง (regression เสริม)
-fixtures/gold/                 เคส regression ตะโกน/เด็ก/noisy
+backend/                 API (Python / FastAPI)
+  app/                   โค้ด API + pipeline
+  tests/                 pytest
+  scripts/               สคริปต์ดูแลระบบ / migrate
+  supabase/              SQL อ้างอิง schema
+  fixtures/              ชุด regression
+  notebooks/             Colab ฯลฯ
+  modal_app.py           Modal GPU (analyze_audio, synthesize_lines)
+  Dockerfile             image ของ API
+  requirements*.txt
+frontend/                หน้าเว็บ Next.js (ดู frontend/README.md)
+deploy/                  Docker Compose + Caddy บน VPS
+docs/                    คู่มือ
+data/                    ไฟล์งาน runtime (ไม่ commit)
+.env                     คีย์ API / Modal / DB (รากโปรเจกต์)
 ```
 
 ## ต้องมีก่อนรัน
@@ -81,16 +71,17 @@ fixtures/gold/                 เคส regression ตะโกน/เด็ก
 cd E:\thai-dubbing-api_1\thai-dubbing-api
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r backend\requirements.txt
 copy .env.example .env
 # แก้ .env ให้ MOCK_PIPELINE=1
+cd backend
 python run.py
 ```
 
-**หน้าต่างที่ 2 — หน้าเว็บ**
+**หน้าต่างที่ 2 — Frontend**
 
 ```powershell
-cd E:\thai-dubbing-api_1\thai-dubbing-api\web
+cd E:\thai-dubbing-api_1\thai-dubbing-api\frontend
 npm install
 copy .env.example .env.local
 npm run dev
@@ -104,8 +95,9 @@ npm run dev
 .venv\Scripts\activate
 # ติดตั้ง PyTorch ให้ตรงกับ CUDA ก่อน ดูคำสั่งที่ https://pytorch.org เช่น
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements-ml.txt
+pip install -r backend\requirements-ml.txt
 # แก้ .env: MOCK_PIPELINE=0 แล้วใส่ HF_TOKEN และ TYPHOON_API_KEY
+cd backend
 python run.py
 ```
 
@@ -113,7 +105,7 @@ python run.py
 
 **การ์ดจอเล็ก (4–8 GB)** ตั้งใน `.env`: `WHISPER_MODEL=medium` หรือ `small`, `WHISPER_COMPUTE_TYPE=int8_float16` และตั้งคุณภาพเสียงเป็น "เร็ว (16 steps)" ในหน้าตั้งค่า ลองกับคลิปสั้น 2–3 นาทีก่อน
 
-**ไม่มีการ์ดจอที่พอ** ใช้ `notebooks/colab_server.ipynb` บน Colab หรือเช่า GPU รายชั่วโมง แล้วตั้ง `BACKEND_URL` ใน `web/.env.local` ให้ชี้ไปที่ API นั้น
+**ไม่มีการ์ดจอที่พอ** ใช้ `backend/notebooks/colab_server.ipynb` บน Colab หรือเช่า GPU รายชั่วโมง แล้วตั้ง `BACKEND_URL` ใน `frontend/.env.local` ให้ชี้ไปที่ API นั้น
 
 ## ส่งขั้นที่ใช้การ์ดจอไปรันบน Modal (ไม่ต้องมีการ์ดจอ)
 
@@ -130,20 +122,21 @@ python run.py
 **ติดตั้งครั้งแรก** (PowerShell ในโฟลเดอร์หลัก)
 
 ```powershell
-.venv\Scriptsctivate
-pip install -r requirements.txt
+.venv\Scripts\activate
+pip install -r backend\requirements.txt
 pip install modal
 modal setup                                   # ล็อกอิน Modal (เปิดเบราว์เซอร์)
 modal secret create dubbing-keys HF_TOKEN=hf_xxx   # token เดียวกับที่กดยอมรับเงื่อนไข pyannote แล้ว
 modal volume create dubbing-models            # เก็บแคชโมเดลอย่างเดียว
+cd backend
 modal deploy modal_app.py                     # ครั้งแรกนานราว 10 นาที (สร้าง image ที่มี PyTorch)
 ```
 
-แล้วแก้ `.env`: `WORKER=modal` (ใส่ `TYPHOON_API_KEY` ไว้เหมือนเดิม `HF_TOKEN` บนเครื่องไม่จำเป็นแล้ว) แล้ว `python run.py` เครื่องนี้ไม่ต้องติดตั้ง PyTorch หรือ `requirements-ml.txt`
+แล้วแก้ `.env`: `WORKER=modal` (ใส่ `TYPHOON_API_KEY` ไว้เหมือนเดิม `HF_TOKEN` บนเครื่องไม่จำเป็นแล้ว) แล้ว `python run.py` จาก `backend/` เครื่องนี้ไม่ต้องติดตั้ง PyTorch หรือ `requirements-ml.txt`
 
 - งานแรกหลัง deploy ช้ากว่าปกติ เพราะ Modal โหลดโมเดลหลาย GB ลง Volume ครั้งเดียว งานต่อ ๆ ไปเปิด container ใหม่ราว 30–60 วินาที
 - container ปิดตัวเองเมื่อว่าง 1 นาที (`scaledown_window` ใน `modal_app.py`) ไม่เสียเครดิตตอนไม่มีงาน
-- แก้ค่าโมเดลหรือเกณฑ์ใน `.env` มีผลทันที ไม่ต้อง deploy ใหม่ แต่ถ้าแก้โค้ดใน `app/pipeline/` ต้อง `modal deploy modal_app.py` ใหม่
+- แก้ค่าโมเดลหรือเกณฑ์ใน `.env` มีผลทันที ไม่ต้อง deploy ใหม่ แต่ถ้าแก้โค้ดใน `backend/app/pipeline/` ต้อง `modal deploy modal_app.py` ใหม่
 - ดู log และค่าใช้จ่ายที่ https://modal.com/apps (แอป `dubbing-gpu`)
 - งานที่วิเคราะห์ตอน `WORKER=local` แล้วมาพากย์ตอน `WORKER=modal` ได้ แต่จะข้ามการคัดเสียงตัวอย่างตามความสะอาดและลายเสียง (ค่าพวกนี้ Modal วัดไว้ตอนวิเคราะห์)
 - ไฟล์เพลงประกอบ (`bgm`) ที่ได้จาก Modal เป็นเสียง mono เพราะส่งเสียงต้นฉบับขึ้นไปเป็น mono
@@ -176,7 +169,7 @@ API รันบนเครื่องตัวเองผ่าน Docker (�
 
 ข้อมูลงานอยู่ที่ `./data` เหมือนเดิม งานเก่าที่สร้างตอนรันบน Windows เปิดต่อได้
 
-**ฝั่ง Vercel (หน้าเว็บ)** Import repo นี้ ตั้ง *Root Directory* = `web` แล้วใส่ Environment Variables
+**ฝั่ง Vercel (หน้าเว็บ)** Import repo นี้ ตั้ง *Root Directory* = `frontend` แล้วใส่ Environment Variables
 
 - `BACKEND_URL` = ลิงก์ `https://xxxx.trycloudflare.com` จากขั้นที่ 3
 - `API_KEY` = ค่าเดียวกับใน `.env` ของ API
