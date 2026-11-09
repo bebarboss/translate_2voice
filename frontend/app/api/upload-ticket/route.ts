@@ -6,7 +6,9 @@ import { SESSION_COOKIE } from "@/lib/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// proxy ภายในใช้ BACKEND_URL (เช่น http://api:8000) — URL ที่ส่งให้เบราว์เซอร์ต้องเป็นโดเมนสาธารณะ
 const BACKEND = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+const PUBLIC_BACKEND = (process.env.PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/+$/, "");
 const API_KEY = process.env.API_KEY ?? "";
 // บน Vercel อัปโหลดตรงเสมอ บนเครื่องตัวเองผ่าน proxy ได้ (ตั้ง DIRECT_UPLOAD=1/0 เพื่อบังคับ)
 const DIRECT = (process.env.DIRECT_UPLOAD ?? (process.env.VERCEL ? "1" : "0")) === "1";
@@ -39,5 +41,5 @@ export async function GET(req: Request): Promise<Response> {
     const msg = uid ? `upload:${exp}:${uid}` : `upload:${exp}`;
     token = `${uid ? `${exp}.${uid}` : exp}.${createHmac("sha256", API_KEY).update(msg).digest("hex")}`;
   }
-  return Response.json({ url: `${BACKEND}/${path}`, token }, { headers: { "cache-control": "no-store" } });
+  return Response.json({ url: `${PUBLIC_BACKEND}/${path}`, token }, { headers: { "cache-control": "no-store" } });
 }

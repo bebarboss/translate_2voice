@@ -109,9 +109,10 @@ services:
       api:
         condition: service_healthy
     environment:
-      # runtime: เบราว์เซอร์อัปโหลดตรงไปที่ API สาธารณะ
-      # ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com
-      BACKEND_URL: ${PUBLIC_BACKEND_URL:?ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com}
+      # proxy ฝั่งเซิร์ฟเวอร์คุยกับ API ใน Docker โดยตรง (อย่าใส่โดเมนสาธารณะ — จะได้ HTML/JSON เพี้ยน)
+      BACKEND_URL: ${INTERNAL_BACKEND_URL:-http://api:8000}
+      # URL ที่เบราว์เซอร์อัปโหลดตรง (DIRECT_UPLOAD=1) — ต้องเป็น https สาธารณะ
+      PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL:?ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com}
       API_KEY: ${WEB_API_KEY:-}
       DIRECT_UPLOAD: ${DIRECT_UPLOAD:-1}
       HOSTNAME: 0.0.0.0

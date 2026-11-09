@@ -410,7 +410,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(errorMessage(res.status, body), res.status);
   }
   if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const hint = text.trim().slice(0, 120).replace(/\s+/g, " ");
+    throw new ApiError(
+      hint.startsWith("<") || /<!DOCTYPE|cloudflare|nginx/i.test(hint)
+        ? tx("เซิร์ฟเวอร์ตอบไม่ใช่ JSON (ตรวจ BACKEND_URL / proxy)")
+        : tx("อ่านคำตอบจากเซิร์ฟเวอร์ไม่ได้"),
+      res.status,
+    );
+  }
 }
 
 const json = (method: string, body: unknown): RequestInit => ({
