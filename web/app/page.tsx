@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { api, uploadJob, type CreateOptions, type Job, type Project, type TargetLang } from "@/lib/api";
-import { GENRES, LANGS, TARGET_LABEL, langName } from "@/lib/format";
+import { LANGS, TARGET_LABEL, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import { ArrowRight, LinkIcon, UploadIcon } from "@/components/Icons";
 
@@ -19,9 +19,6 @@ export default function UploadPage() {
   const [drag, setDrag] = useState(false);
   const [sourceLang, setSourceLang] = useState("");
   const [targetLang, setTargetLang] = useState<TargetLang>("th");
-  const [speakers, setSpeakers] = useState("");
-  const [genre, setGenre] = useState("");
-  const [glossary, setGlossary] = useState("");
   const [review, setReview] = useState(true);
   const [burnSubs, setBurnSubs] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -72,8 +69,7 @@ export default function UploadPage() {
     setError("");
     setBusy(true);
     const opts: CreateOptions = {
-      sourceLang, targetLang, review, burnSubs, genre: genre.trim(), glossary: glossary.trim(),
-      numSpeakers: speakers ? Number(speakers) : null, projectId: projectId || undefined,
+      sourceLang, targetLang, review, burnSubs, projectId: projectId || undefined,
     };
     try {
       let id: string;
@@ -184,11 +180,6 @@ export default function UploadPage() {
             ))}
           </div>
         </div>
-        <div className="card tight field">
-          <label htmlFor="spk">{tx("จำนวนตัวละคร (ถ้ารู้)")}</label>
-          <input id="spk" className="input" type="number" min={1} max={20} placeholder={tx("ไม่ระบุ")}
-            value={speakers} onChange={(e) => setSpeakers(e.target.value)} />
-        </div>
         <label className="card tight check">
           <span className="t"><span>{tx("ตรวจบทก่อนพากย์")}</span><small>{tx("หยุดรอให้แก้บทหลังแปลเสร็จ")}</small></span>
           <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
@@ -197,20 +188,7 @@ export default function UploadPage() {
           <span className="t"><span>{tx("ฝังซับในวิดีโอ")}</span><small>{tx("ได้ไฟล์ SRT แยกมาเสมอ")}</small></span>
           <input type="checkbox" checked={burnSubs} onChange={(e) => setBurnSubs(e.target.checked)} />
         </label>
-        <div className="card tight field">
-          <label htmlFor="genre">{tx("แนวเรื่อง (ถ้ารู้)")}</label>
-          <input id="genre" className="input" list="genres" maxLength={80} placeholder={tx("ให้ AI เดาจากชื่อคลิป")}
-            value={genre} onChange={(e) => setGenre(e.target.value)} />
-          <datalist id="genres">{GENRES.map((g) => <option key={g} value={tx(g)} />)}</datalist>
-        </div>
       </section>
-
-      <details className="card tight retranslate">
-        <summary>{tx("ชื่อเฉพาะ")} <span className="dim">{tx("ไม่ใส่ก็ได้ ช่วยให้ชื่อตัวละครและสถานที่สะกดตรงกับฉบับไทย")}</span></summary>
-        <label className="sr-only" htmlFor="glossary">{tx("ชื่อเฉพาะ บรรทัดละคำ")}</label>
-        <textarea id="glossary" className="textarea" rows={4} maxLength={2000}
-          placeholder={tx("บรรทัดละคำ เช่น\nドラえもん = โดราเอมอน\nのび太 = โนบิตะ")} value={glossary} onChange={(e) => setGlossary(e.target.value)} />
-      </details>
 
       {error && <div className="alert error" role="alert">{error}</div>}
 
