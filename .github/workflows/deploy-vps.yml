@@ -1,0 +1,56 @@
+# Auto-deploy ไป VPS เมื่อ push ขึ้น main
+#
+# GitHub → Settings → Secrets and variables → Actions ตั้ง:
+#   VPS_HOST     เช่น 119.10.143.47
+#   VPS_USER     เช่น khaimook
+#   VPS_SSH_KEY  private key ทั้งก้อน (-----BEGIN … KEY----- … -----END-----)
+#   VPS_PATH     โฟลเดอร์โปรเจกต์ เช่น /home/khaimook/translate_2voice
+#   VPS_PORT     (optional) ค่าเริ่มต้น 22
+
+name: Deploy VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      api_only:
+        description: "Rebuild API only (skip frontend)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_DIR: ${{ secrets.VPS_PATH }}
+          API_ONLY: ${{ github.event.inputs.api_only || 'false' }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          command_timeout: 40m
+          envs: APP_DIR,API_ONLY
+          script: |
+            set -euo pipefail
+            APP_DIR="${APP_DIR:-$HOME/translate_2voice}"
+            cd "$APP_DIR"
+            git fetch --prune origin
+            git checkout main
+            git pull --ff-only origin main
+            chmod +x deploy/remote-update.sh deploy/up.sh
+            if [ "$API_ONLY" = "true" ]; then
+              bash deploy/remote-update.sh --api-only
+            else
+              bash deploy/remote-update.sh
+            fi

@@ -146,9 +146,35 @@ git pull
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 # ถ้าใช้เว็บบน VPS
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d --build
+# หรือ
+bash deploy/remote-update.sh
 ```
 
 ข้อมูลงานอยู่ใน `./data` (volume bind) ไม่หายตอน rebuild
+
+### Auto-deploy จาก GitHub Actions
+
+ไฟล์ `.github/workflows/deploy-vps.yml` จะ SSH เข้า VPS แล้วรัน `deploy/remote-update.sh` ทุกครั้งที่ push `main`
+
+1. บน VPS ใส่ public key ของ deploy key ใน `~/.ssh/authorized_keys` ของ user ที่รัน Docker ได้
+2. ใน GitHub repo → **Settings → Secrets and variables → Actions** เพิ่ม:
+
+| Secret | ตัวอย่าง |
+| --- | --- |
+| `VPS_HOST` | `119.10.143.47` |
+| `VPS_USER` | `khaimook` |
+| `VPS_SSH_KEY` | private key ทั้งก้อน |
+| `VPS_PATH` | `/home/khaimook/translate_2voice` |
+
+3. Push ขึ้น `main` หรือกด **Actions → Deploy VPS → Run workflow**
+
+สร้างคีย์แยกสำหรับ deploy (แนะนำ ไม่ใช้คีย์เครื่องส่วนตัว):
+
+```bash
+ssh-keygen -t ed25519 -f deploy-vps -C "github-deploy" -N ""
+# ใส่ deploy-vps.pub ใน VPS authorized_keys
+# ใส่เนื้อหา deploy-vps ทั้งไฟล์เป็น secret VPS_SSH_KEY
+```
 
 ## Postgres บน VPS
 
