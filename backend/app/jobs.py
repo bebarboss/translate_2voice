@@ -62,10 +62,12 @@ class JobStore:
         if self._pg:
             from . import jobstore_pg
             try:
+                log.info("โหลดงานจาก Postgres…")
                 jobs = jobstore_pg.load_jobs()
                 from_files = False
+                log.info("โหลดงานจาก Postgres ได้ %s งาน", len(jobs))
             except Exception:
-                log.exception("โหลดงานจาก Supabase ไม่ได้ ลองจากไฟล์ในเครื่อง")
+                log.exception("โหลดงานจาก Postgres ไม่ได้ ลองจากไฟล์ในเครื่อง")
         if from_files:
             for job_file in self.root.glob("*/job.json"):
                 try:

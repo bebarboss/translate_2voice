@@ -127,6 +127,7 @@ def _open() -> psycopg.Connection:
         dsn(schema="studio"), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
     )
     raw.execute("SET search_path TO studio")
+    raw.execute("SET statement_timeout TO '15s'")
     raw.commit()
     return raw
 
