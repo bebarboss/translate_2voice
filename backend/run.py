@@ -1,12 +1,17 @@
 """เปิดเซิร์ฟเวอร์: python run.py  (เอกสาร API อยู่ที่ http://localhost:8000/docs)"""
 import os
+import sys
 
 import uvicorn
 
 if __name__ == "__main__":
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    print(f"pakdee-api starting on {host}:{port}", flush=True)
+    sys.stdout.flush()
     uvicorn.run(
         "app.main:app",
-        host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", "8000")),
+        host=host,
+        port=port,
         workers=1,  # ต้องเป็น 1 เพราะคิวงานและโมเดลอยู่ในโปรเซสเดียว
     )

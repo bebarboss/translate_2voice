@@ -31,15 +31,20 @@ from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, Libr
 from .voice_library import VoiceStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("dubbing.api")
 
 ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wma"} | ALLOWED_EXT
 STEM_NAME = re.compile(r"^(vocals|bgm|dub_voice|final_audio|speaker_\d{2})$")
 EDITABLE = (JobStatus.awaiting_review, JobStatus.done, JobStatus.failed, JobStatus.cancelled)
 
+log.info("init JobStore data_dir=%s postgres=%s", settings.data_dir, settings.db_backend)
 store = JobStore(settings.data_dir)
+log.info("init VoiceStore")
 voice_store = VoiceStore(settings.data_dir)
+log.info("init Worker")
 worker = Worker(store, voice_store)
+log.info("app module ready")
 
 
 @asynccontextmanager
