@@ -47,7 +47,8 @@ nano .env
 - `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET`
 - `HF_TOKEN`, `TYPHOON_API_KEY`
 - `API_KEY` (สุ่มยาว ๆ)
-- `MAX_UPLOAD_MB=500` (หรือต่ำกว่าถ้า reverse proxy จำกัด)
+
+ค่าคอนฟิกทั่วไป (ขีดอัปโหลด โมเดล คิว ฯลฯ) แก้ใน `backend/app/defaults.py` และ `backend/app/audio_constants.py` ไม่ใส่ใน `.env`
 
 ฐานข้อมูล production อยู่บน VPS — ตั้ง Postgres ใน `deploy/.env` (ขั้นถัดไป)
 
@@ -268,7 +269,7 @@ python scripts/r2_sync_jobs.py --purge   # หลังมั่นใจว่�
 | --- | --- |
 | Caddy ไม่ได้ใบรับรอง | DNS ยังไม่ชี้มาที่ VPS / พอร์ต 80 ถูกบล็อก |
 | หน้าเว็บเรียก API ไม่ได้ | `CORS_ORIGINS`, `BACKEND_URL`, `API_KEY` |
-| อัปโหลดใหญ่ล้ม | `MAX_UPLOAD_MB`, timeout ใน Caddyfile |
+| อัปโหลดใหญ่ล้ม | `MAX_UPLOAD_MB` ใน `defaults.py`, timeout ใน Caddyfile |
 | งานค้างที่ analyze/TTS | `modal app list`, token Modal, `docker compose logs api` |
 | ดิสก์เต็ม | เปิด R2 + `R2_PURGE_LOCAL=1` / ล้าง `data/jobs` งานเก่า / ขยายวอลุ่ม |
 | ดาวน์โหลดผลงาน 404 หลัง purge | ตรวจ `r2_manifest.json`, คีย์ R2, `docker compose logs api` |

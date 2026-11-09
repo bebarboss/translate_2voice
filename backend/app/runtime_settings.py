@@ -1,6 +1,6 @@
 """ค่าตั้งค่าที่ปรับจากหน้าเว็บได้ เก็บเป็น data/settings.json หรือตาราง app_settings ของ Supabase (DB_BACKEND=supabase)
 
-ค่าเริ่มต้นมาจาก .env (VOICE_GAIN, BGM_GAIN, MAX_SPEEDUP, F5_STEPS) แล้วค่อยทับด้วยค่าที่บันทึกไว้
+ค่าเริ่มต้นมาจาก audio_constants.py (VOICE_GAIN, BGM_GAIN, MAX_SPEEDUP, F5_STEPS) แล้วค่อยทับด้วยค่าที่บันทึกไว้
 โหมด Supabase ยังเขียน settings.json ไว้ด้วยเป็นสำรอง อ่านฐานข้อมูลไม่ได้ตอนเริ่มจะใช้ไฟล์แทน
 """
 import json
