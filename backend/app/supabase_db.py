@@ -48,19 +48,27 @@ def _col(name: str) -> str:
 
 
 def _connect() -> psycopg.Connection:
+    import socket
+
     from . import pgstore
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(10)
     try:
-        raw = psycopg.connect(
-            pgstore.dsn(schema="public"),
-            autocommit=True,
-            row_factory=dict_row,
-            connect_timeout=10,
-            prepare_threshold=None,
-        )
-        raw.execute("SET search_path TO public")
-        return raw
-    except Exception as e:  # noqa: BLE001
-        raise DBError(f"เชื่อม Postgres ไม่ได้: {e}") from e
+        try:
+            raw = psycopg.connect(
+                pgstore.dsn(schema="public"),
+                autocommit=True,
+                row_factory=dict_row,
+                connect_timeout=10,
+                prepare_threshold=None,
+            )
+            raw.execute("SET search_path TO public")
+            raw.execute("SET statement_timeout TO '15s'")
+            return raw
+        except Exception as e:  # noqa: BLE001
+            raise DBError(f"เชื่อม Postgres ไม่ได้: {e}") from e
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 def _db() -> psycopg.Connection:
