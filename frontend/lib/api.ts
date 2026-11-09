@@ -363,11 +363,12 @@ export interface Fonts {
 export interface CreateOptions {
   sourceLang: string;
   targetLang: TargetLang;
-  numSpeakers: number | null;
+  /** ว่าง/ไม่ส่ง = ให้ระบบประมาณจำนวนผู้พูดเอง */
+  numSpeakers?: number | null;
   review: boolean;
   burnSubs: boolean;
-  genre: string;
-  glossary: string;
+  genre?: string;
+  glossary?: string;
   library?: boolean;
   projectId?: string; // ส่งเข้าโปรเจกต์
 }
