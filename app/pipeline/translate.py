@@ -52,7 +52,10 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ถ้าแปลแล้วสั้นกว่า min_chars ให้แปลส่วนที่ต้นฉบับพูดให้ครบทุกคำ หรือเลือกคำพูดที่ยาวขึ้นแต่ความหมายเท่าเดิม ห้ามเติมคำลงท้าย ห้ามแต่งเนื้อหาใหม่
    ถ้ายาวเกิน max_chars ให้ตัดคำเสริมและคำซ้ำก่อน ห้ามตัดชื่อเฉพาะ ตัวเลข คำปฏิเสธ หรือคำถาม
 6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
-7. แต่ละ sentence คือคำพูดต่อเนื่องที่ถูกตัดเป็นท่อนตามเวลา (parts) ให้แปลทั้ง sentence ให้เป็นธรรมชาติ แล้วแบ่งคำแปลคืนเป็นท่อนตามลำดับเดิม จำนวนท่อนต้องเท่ากับ parts ของต้นฉบับพอดี และแต่ละท่อนต้องเป็นความหมายของท่อนต้นฉบับนั้นเท่านั้น ห้ามรวมท่อนหรือย้ายเนื้อหาไปท่อนอื่น เพราะเสียงพากย์แต่ละท่อนจะเล่นตรงเวลาที่ตัวละครพูดท่อนนั้น
+7. แต่ละ sentence ถูกตัดเป็นท่อนตามเวลา (parts) — แปลทีละ part ตาม text ของ part นั้นเท่านั้น
+   จำนวนท่อนคำตอบต้องเท่ากับ parts พอดี และ parts[i] ในคำตอบต้องตรงความหมายของ parts[i].text ต้นฉบับเท่านั้น
+   ห้ามย้ายตัวเลข ชื่อเฉพาะ คำสำคัญ หรือใจความจาก part อื่นมาใส่ (แม้ประโยคต้นฉบับจะขาดกลางคำ) เพราะเสียงพากย์แต่ละท่อนเล่นตรงเวลานั้น
+   ถ้าต้นฉบับท่อนนั้นยังพูดไม่จบ ให้แปลเฉพาะที่มี ไม่เติมจากท่อนถัดไป
 8. ต้นฉบับบางท่อนมีเครื่องหมาย / คือจุดที่นักแสดงหยุดหายใจหรือเว้นจังหวะจริง ให้ใส่ / ในคำแปลของท่อนนั้นจำนวนเท่ากัน ตรงตำแหน่งที่ความหมายตรงกับต้นฉบับ (เสียงพากย์จะหยุดตรงนั้น) ห้ามใส่ / ในท่อนที่ต้นฉบับไม่มี และห้ามวาง / กลางคำหรือกลางชื่อ ถ้าตำแหน่งที่ตรงกันตกกลางคำ ให้วางที่ขอบคำที่ใกล้ที่สุด
 9. register คือระดับภาษาของเรื่อง characters บอกว่าผู้พูดแต่ละคนเป็นใคร เพศ บทบาท แทนตัวเองและเรียกคนอื่นว่าอะไร ให้ใช้ตามนั้นทุกบรรทัด
    ท่อนที่มี likely_said แปลว่าบทถอดเสียงน่าจะผิด ถ้า text อ่านไม่เป็นความหรือชื่อผิด ให้แปลตามความหมายของ likely_said ถ้า text มีความหมายอยู่แล้วให้แปลตาม text
@@ -74,7 +77,8 @@ Rules:
    If shorter than "min_words", first translate everything the source says, then add natural fillers, repetition or interjections that fit the emotion; never invent new content.
    If longer than "max_words", tighten the wording and drop filler first; never drop names, numbers, negations or questions.
 5. Romanize character and place names consistently (e.g. pinyin for Chinese names) and use the same spelling every time. When "glossary" is given, use its translations exactly. "speaker" is the name of the character speaking, when known; "genre", when given, sets the register.
-6. Each sentence is continuous speech cut into timed parts. Translate the whole sentence naturally, then split your translation back into parts in the original order. Return exactly as many parts as the source has, and each part must carry only the meaning of its own source part: never merge parts or move content between them, because each dubbed part plays when the character speaks that part.
+6. Each sentence is cut into timed parts. Translate each part from that part's own "text" only.
+   Return exactly as many parts as the source has. parts[i] must match only parts[i].text — never move numbers, names, or meaning from another part into it (even if the source sentence is mid-clause). Incomplete source parts stay incomplete; do not finish them with the next part's content.
 7. Some source parts contain "/": the points where the actor actually pauses or breathes. Put the same number of "/" in that part's translation, at the points that match the source meaning (the dub pauses there). Never add "/" to a part whose source has none, and never put "/" inside a word or name; use the nearest word boundary.
 8. "previous_lines" and "next_lines" are the lines before and after "sentences", only so meaning, pronouns and tone connect. Never translate them again, never include them in your reply, and never pull their content into "sentences".
    When "content_type" is "teaser", neighbouring lines may come from other scenes; do not force them to connect.
@@ -305,6 +309,146 @@ def _chunks(items: list, size: int):
 
 FOREIGN_SCRIPT = re.compile(r"[぀-ヿ㐀-鿿가-힯豈-﫿]")
 
+# ชื่อ/คำสำคัญในต้นฉบับที่มักถูกแปลเป็นคำไทย — ใช้จับการย้ายข้ามท่อน
+_ANCHOR_ALIASES: dict[str, tuple[str, ...]] = {
+    "ai": ("ai", "เอไอ", "ปัญญาประดิษฐ์"),
+    "ml": ("ml", "เอ็มแอล", "แมชชีนเลิร์นนิง"),
+    "gpt": ("gpt", "จีพีที"),
+    "api": ("api", "เอพีไอ"),
+    "economist": ("economist", "อีโคโนมิสต์", "อิโคโนมิสต์", "เดอะอีโคโนมิสต์"),
+    "healthcare": ("healthcare", "สุขภาพ", "เฮลท์แคร์", "เฮลท์"),
+    "diabetes": ("diabetes", "เบาหวาน"),
+    "cancer": ("cancer", "มะเร็ง"),
+    "surgery": ("surgery", "ผ่าตัด"),
+    "unemployed": ("unemployed", "ตกงาน"),
+    "radiologist": ("radiologist", "radiologists", "รังสี"),
+    "radiologists": ("radiologist", "radiologists", "รังสี"),
+    "ucsf": ("ucsf", "ยูซีเอสเอฟ"),
+    "khosla": ("khosla", "คอสลา"),
+    "vinod": ("vinod", "วินอด"),
+}
+
+# คำละตินทั่วไปไม่ใช้เป็นสมอข้ามท่อน (พบบ่อยทุกท่อน / ไม่โผล่ในคำแปลไทย)
+_ANCHOR_STOP = frozenset("""
+a an the and or but so if as at by to of in on for from with into onto over
+after before about than then when where while which who whom whose that this
+those these there here it its we you they he she my your our their is are was
+were be been being have has had do does did will would can could should may
+might must need needs needed not no any some all more most such than very
+just also only into up out off on re ve ll don won isn aren wasn
+""".split())
+
+# ต้นฉบับท่อนถัดไปขึ้นต้นแบบต่อประโยค (ตัดกลางคลิป)
+_EN_CONTINUE = frozenset("""
+and or but so because of to that which who whom whose when where while if as
+than then with from for into onto about over after before years year days day
+months month percent doctors doctor people person things thing
+""".split())
+
+# คำแปลไทยที่ฟังจบประโยค — ห้ามโผล่ถ้าต้นฉบับท่อนยังพูดไม่จบแล้วท่อนถัดไปต่อกลางประโยค
+_TH_FINISHED = re.compile(
+    r"(?:แล้ว|เลย|แน่นอน|อยู่ดี|เหมือนกัน|ด้วย|นะ|ครับ|ค่ะ|จ้า|เท้ะ|น่ะ)\s*[.!?…]*\s*$"
+)
+
+
+def _source_anchors(text: str) -> set[str]:
+    """สมอความหมายในต้นฉบับ: ตัวเลข (ปกติแล้ว) + คำละติน ≥2 ตัว"""
+    out: set[str] = set()
+    for m in re.finditer(r"\d[\d,]*(?:\.\d+)?", text or ""):
+        norm = re.sub(r"[,\s]", "", m.group(0))
+        if norm and norm != "0":
+            out.add(norm)
+    for m in re.finditer(r"[A-Za-z]{2,}", text or ""):
+        out.add(m.group(0).lower())
+    return out
+
+
+def _strong_anchors(anchors: set[str]) -> set[str]:
+    """สมอที่พอใช้จับการย้ายข้ามท่อน: ตัวเลข / คำในพจนานุกรม alias / คำยาวที่ไม่ใช่ stop"""
+    out: set[str] = set()
+    for a in anchors:
+        if a in _ANCHOR_STOP:
+            continue
+        if re.fullmatch(r"\d+(?:\.\d+)?", a) or a in _ANCHOR_ALIASES or len(a) >= 5:
+            out.add(a)
+    return out
+
+
+def _target_mentions_anchor(target: str, anchor: str) -> bool:
+    """คำแปลพาดพิงสมอนี้หรือไม่ (ตัวเลข / ละติน / คำอ่านไทยที่รู้จัก)"""
+    t = target or ""
+    if re.fullmatch(r"\d+(?:\.\d+)?", anchor):
+        nums = {re.sub(r"[,\s]", "", m.group(0)) for m in re.finditer(r"\d[\d,]*(?:\.\d+)?", t)}
+        bare = anchor.lstrip("0") or "0"
+        return anchor in nums or bare in nums
+    aliases = _ANCHOR_ALIASES.get(anchor.lower(), (anchor,))
+    low = t.lower()
+    for a in aliases:
+        a = a.lower()
+        if re.fullmatch(r"[a-z0-9]+", a):
+            if re.search(rf"(?<![a-z0-9]){re.escape(a)}(?![a-z0-9])", low):
+                return True
+        elif a in low:  # คำอ่านไทย — เทียบเป็นส่วนย่อยได้
+            return True
+    return False
+
+
+def _en_incomplete(text: str) -> bool:
+    """ต้นฉบับยังไม่จบประโยค (ไม่มีจุดจบประโยคท้ายท่อน) — มักถูกตัดตามเวลากลางประโยค"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if re.search(r'[.!?…]["\')\]]*\s*$', t):
+        return False
+    if re.search(r"[。」』]\s*$", t):
+        return False
+    return True
+
+
+def _en_continues(text: str) -> bool:
+    """ท่อนถัดไปต่อกลางประโยค (ขึ้นต้นตัวเล็ก หรือคำเชื่อม/เศษท้าย)"""
+    t = (text or "").lstrip()
+    if not t:
+        return False
+    if t[0].islower():
+        return True
+    m = re.match(r"[A-Za-z']+", t)
+    return bool(m and m.group(0).lower() in _EN_CONTINUE)
+
+
+def part_incomplete_finish_indices(sources: list[str], targets: list[str]) -> list[int]:
+    """ท่อนที่ต้นฉบับยังไม่จบ แต่คำแปลจบประโยค — มักดึงใจความท่อนถัดไปมาปิด"""
+    if len(sources) != len(targets) or len(sources) < 2:
+        return []
+    bad: list[int] = []
+    for i in range(len(sources) - 1):
+        if not _en_incomplete(sources[i]) or not _en_continues(sources[i + 1]):
+            continue
+        if _TH_FINISHED.search((targets[i] or "").strip()):
+            bad.append(i)
+    return bad
+
+
+def part_bleed_indices(sources: list[str], targets: list[str]) -> list[int]:
+    """ดัชนีท่อนที่คำแปลดึงตัวเลข/ชื่อ/ใจความจากต้นฉบับท่อนอื่น หรือจบประโยคทั้งที่ต้นฉบับยังไม่จบ"""
+    if len(sources) != len(targets) or len(sources) < 2:
+        return []
+    anchors = [_source_anchors(s) for s in sources]
+    bad: list[int] = []
+    for i, tgt in enumerate(targets):
+        own = _strong_anchors(anchors[i])
+        leaked: set[str] = set()
+        for j, a in enumerate(anchors):
+            if j != i:
+                leaked |= _strong_anchors(a)
+        leaked -= own
+        if any(_target_mentions_anchor(tgt, a) for a in leaked):
+            bad.append(i)
+    for i in part_incomplete_finish_indices(sources, targets):
+        if i not in bad:
+            bad.append(i)
+    return sorted(bad)
+
 
 def _item_text(item) -> str:
     """ดึงข้อความจากคำตอบโมเดล ซึ่งบางครั้งห่อมาเป็น {"text": ..} หรือ ["..."] แทนข้อความเปล่า
@@ -414,25 +558,27 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
         **around,
         "sentences": [{"id": g[0].id, "speaker": _speaker_label(g[0].speaker, hints),
                        **({"continuity_issue": issues[g[0].id]} if g[0].id in issues else {}),
-                       "parts": [{"seconds": round(budget.get(u.id, u.duration), 1),
+                       "parts": [{"index": i + 1,
+                                  "seconds": round(budget.get(u.id, u.duration), 1),
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
                                   "text": (hints.get("marked") or {}).get(u.id, u.source),
                                   **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {}),
                                   **({"previous_translation": fixed[u.id]} if u.id in fixed else {})}
-                                 for u in g]}
+                                 for i, u in enumerate(g)]}
                       for g in groups],
     }
     if target == "en":
         return SYSTEM_PROMPT_EN, (
             "Translate the sentences in \"sentences\" into English (\"title\" is the video title, \"previous_lines\" and \"next_lines\" "
-            "are the lines around them, all for context only, do not translate or return them). Give exactly one translated part per source part.\n"
+            "are the lines around them, all for context only, do not translate or return them). "
+            "One translated string per source part, in order — each part only from that part's text; never move numbers/names across parts.\n"
             'Reply as {"sentences":[{"id":1,"parts":["part 1","part 2"]}]}\n\n'
             + json.dumps(payload, ensure_ascii=False))
     return SYSTEM_PROMPT_TH, (
         "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines และ next_lines คือบทก่อนหน้าและถัดไป ไว้ดูบริบท ห้ามแปลซ้ำหรือใส่ในคำตอบ) "
-        "ตอบท่อนแปลให้ครบหนึ่งต่อหนึ่งกับ parts ของต้นฉบับ\n"
+        "ตอบ parts ให้ครบหนึ่งต่อหนึ่งตามลำดับ — แต่ละท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามย้ายตัวเลข/ชื่อ/ใจความข้ามท่อน\n"
         'ตอบรูปแบบ {"sentences":[{"id":1,"parts":["ท่อนที่ 1","ท่อนที่ 2"]}]}\n\n'
         + json.dumps(payload, ensure_ascii=False))
 
@@ -462,15 +608,26 @@ def _translate_groups(groups: list[list[Utterance]], lang: str, target: str, con
             # และต้องไม่มีอักษรต้นฉบับ (จีน ฯลฯ) หลุดมา เพราะโมเดลพากย์อ่านไม่ได้
             ok = len(texts) == len(g) and any(texts)
             if ok and not any(FOREIGN_SCRIPT.search(t) for t in texts):
-                for u, text in zip(g, texts):
-                    u.target = tidy_marks(text)
+                sources = [(hints.get("marked") or {}).get(u.id, u.source) if hints else u.source for u in g]
+                bleed = part_bleed_indices(sources, texts)
+                if bleed:
+                    log.warning("sentence %s: part bleed at %s — %s", g[0].id,
+                                [g[i].id for i in bleed],
+                                [(sources[i][:40], texts[i][:40]) for i in bleed])
+                    # เก็บคำตอบไว้เป็นทางเลือกสุดท้าย แต่ลองแปลใหม่ก่อน
+                    foreign[g[0].id] = texts
+                    retry.append(g)
+                else:
+                    for u, text in zip(g, texts):
+                        u.target = tidy_marks(text)
             else:
                 if ok:
                     foreign[g[0].id] = texts
                 retry.append(g)
         if not retry:
             return
-        log.warning("sentences %s: wrong part count or untranslated text, retrying", [g[0].id for g in retry])
+        log.warning("sentences %s: wrong part count, bleed, or untranslated text, retrying",
+                    [g[0].id for g in retry])
         pending = retry
 
     done = lambda: [u for g in groups for u in g if u.target]  # noqa: E731
@@ -594,13 +751,243 @@ _ABBR = {"ฯลฯ": "และอื่นๆ", "กทม.": "กรุงเ
          "พ.ย.": "พฤศจิกายน", "ธ.ค.": "ธันวาคม"}
 _ABBR_RE = re.compile("|".join(re.escape(k) for k in sorted(_ABBR, key=len, reverse=True)))
 
+# ตัวย่อละตินที่ F5-TTS ไทยอ่านมั่ว (เช่น GPT → "จิด") → สะกดเป็นคำอ่าน
+# เรียงยาวก่อนสั้น (ChatGPT ก่อน GPT, OpenAI ก่อน AI)
+_LATIN_SAY: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?i)\bChat\s*GPT\b"), "แชทจีพีที"),
+    (re.compile(r"(?i)\bOpen\s*AI\b"), "โอเพนเอไอ"),
+    (re.compile(r"(?i)\bGPT\s*[-–—]?\s*(\d+)\b"), r"จีพีที\1"),
+    (re.compile(r"(?i)\bGPT\b"), "จีพีที"),
+    (re.compile(r"(?i)\bAPI\b"), "เอพีไอ"),
+    (re.compile(r"(?i)\bURL\b"), "ยูอาร์แอล"),
+    (re.compile(r"(?i)\bHTML\b"), "เอชทีเอ็มแอล"),
+    (re.compile(r"(?i)\bCPU\b"), "ซีพียู"),
+    (re.compile(r"(?i)\bGPU\b"), "จีพียู"),
+    (re.compile(r"(?i)\bPDF\b"), "พีดีเอฟ"),
+    (re.compile(r"(?i)\bOK\b"), "โอเค"),
+    (re.compile(r"(?i)\bAI\b"), "เอไอ"),
+]
+
+
+def speak_latin(text: str) -> str:
+    """ตัวย่อ/ชื่อละตินในบทไทย → คำอ่านที่โมเดลเสียงพูดถูก"""
+    for pat, repl in _LATIN_SAY:
+        text = pat.sub(repl, text)
+    return text
+
 
 def spoken(text: str) -> str:
     """บทไทย → แบบที่อ่านออกเสียงได้ตรง: เวลาเป็นคำพูด ตัวย่อเป็นคำเต็ม (โมเดลเสียงอ่านตามตัวอักษร "ชม." จึงกลายเป็น "ชม")"""
     text = speak_times(text)
     text = _UNIT_RE.sub(lambda x: x.group(1) + x.group(2) + _UNITS[x.group(3)], text)
     text = _ABBR_RE.sub(lambda x: _ABBR[x.group(0)], text)
+    text = speak_latin(text)
     return text.replace("ฯ", "")
+
+
+# ช่วงละตินที่เหลือหลังพจนานุกรม — ให้ AI แปลงเป็นคำอ่าน (ผสม)
+_LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:[-–—./][A-Za-z0-9]+)*")
+_LATIN_SKIP = frozenset({
+    # คำสั้น/คำเชื่อมที่หลุดมา ไม่ควรสะกดทีละตัว
+    "a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "is", "am", "are",
+    "i", "you", "we", "it", "my", "me", "no", "yes", "vs",
+})
+_latin_cache: Optional[dict[str, str]] = None
+_LATIN_CACHE_NAME = "latin_readings.json"
+
+SAY_LATIN_PROMPT = """คุณแปลงชื่อเฉพาะหรือตัวย่อภาษาอังกฤษเป็นคำอ่านภาษาไทยสำหรับนักพากย์อ่านออกเสียง
+กฎ:
+1. ได้เฉพาะคำอ่านอักษรไทย ตามที่คนไทยพูดจริง — ตัวย่อสะกดทีละตัวอักษร (GPT→จีพีที, API→เอพีไอ, MCP→เอ็มซีพี)
+2. ชื่อแบรนด์/ผลิตภัณฑ์ใช้แบบเรียกจริง (ChatGPT→แชทจีพีที, Claude→คลอด์, Gemini→เจมินี)
+3. ห้ามแปลความหมาย ห้ามคำอธิบาย ห้ามวงเล็บ ห้ามภาษาอังกฤษเหลือในคำอ่าน
+4. มีตัวเลขต่อท้าย ให้อ่านเลขเป็นไทยสั้น ๆ หรือติดเลขอารบิกหลังคำอ่าน (GPT-6→จีพีทีหก หรือ จีพีที6)
+5. ตอบ JSON อย่างเดียว {"readings":[{"term":"GPT","reading":"จีพีที"},...]} โดย term ต้องตรงกับที่ส่งไปทุกตัว"""
+
+
+def find_latin_tokens(text: str) -> list[str]:
+    """รายการช่วงละตินที่ยังเหลือในบท (ลำดับปรากฏ ไม่ซ้ำ)"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in _LATIN_TOKEN.finditer(text or ""):
+        tok = m.group(0)
+        if _skip_latin_token(tok):
+            continue
+        key = tok.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tok)
+    return out
+
+
+def _skip_latin_token(tok: str) -> bool:
+    if len(tok) <= 1:
+        return True
+    low = tok.lower()
+    if low in _LATIN_SKIP:
+        return True
+    # URL / อีเมลคร่าว ๆ
+    if "@" in tok or "://" in tok:
+        return True
+    if "." in tok and any(tok.lower().endswith(s) for s in (".com", ".net", ".org", ".io", ".ai", ".co")):
+        return True
+    return False
+
+
+def _latin_cache_path() -> Path:
+    return Path(settings.data_dir) / _LATIN_CACHE_NAME
+
+
+def _load_latin_cache() -> dict[str, str]:
+    global _latin_cache
+    if _latin_cache is not None:
+        return _latin_cache
+    path = _latin_cache_path()
+    data: dict[str, str] = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                data = {str(k).lower(): str(v) for k, v in raw.items() if k and v}
+        except (OSError, ValueError) as exc:
+            log.warning("อ่าน %s ไม่ได้: %s", path.name, exc)
+    _latin_cache = data
+    return _latin_cache
+
+
+def _save_latin_cache() -> None:
+    if _latin_cache is None:
+        return
+    path = _latin_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(_latin_cache, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        log.warning("เขียน %s ไม่ได้: %s", path.name, exc)
+
+
+def apply_latin_readings(text: str, mapping: dict[str, str]) -> str:
+    """แทนช่วงละตินด้วยคำอ่าน — ยาวก่อนสั้น เพื่อไม่ให้ GPT กิน GPT-6"""
+    if not mapping:
+        return text
+    for tok in sorted(mapping, key=len, reverse=True):
+        reading = mapping[tok]
+        if not reading or reading == tok:
+            continue
+        text = re.sub(re.escape(tok), reading, text, flags=re.IGNORECASE)
+    return text
+
+
+def _ai_latin_readings(terms: list[str]) -> dict[str, str]:
+    """ถามโมเดลเป็นชุด — คืน term ต้นฉบับ → คำอ่าน (เฉพาะที่เชื่อถือได้)"""
+    if not terms:
+        return {}
+    payload = {"terms": terms}
+    try:
+        raw = _chat(SAY_LATIN_PROMPT, json.dumps(payload, ensure_ascii=False),
+                    temperature=0.1, max_tokens=min(2048, 80 + 40 * len(terms)))
+        data = _parse_json(raw) or {}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("AI speak-latin failed: %s", exc)
+        return {}
+    rows = data.get("readings") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    want = {t.lower(): t for t in terms}
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        term = str(row.get("term") or "").strip()
+        reading = str(row.get("reading") or "").strip()
+        if not term or not reading:
+            continue
+        # ยอมเลขอารบิกปน แต่ห้ามเหลือตัวอักษร A–Z ในคำอ่าน
+        if re.search(r"[A-Za-z]", reading):
+            continue
+        orig = want.get(term.lower())
+        if orig:
+            out[orig] = reading
+    return out
+
+
+def resolve_latin_readings(terms: list[str], *, use_ai: bool = True) -> dict[str, str]:
+    """พจนานุกรมแคช + AI สำหรับคำใหม่ — คีย์เป็นรูปที่พบในบท"""
+    if not terms:
+        return {}
+    cache = _load_latin_cache()
+    mapping: dict[str, str] = {}
+    missing: list[str] = []
+    for tok in terms:
+        hit = cache.get(tok.lower())
+        if hit:
+            mapping[tok] = hit
+        else:
+            missing.append(tok)
+    if missing and use_ai and settings.ai_speak_latin and settings.typhoon_api_key and not settings.mock_pipeline:
+        for batch in _chunks(missing, 40):
+            got = _ai_latin_readings(list(batch))
+            for tok, reading in got.items():
+                mapping[tok] = reading
+                cache[tok.lower()] = reading
+            if got:
+                _save_latin_cache()
+            left = [t for t in batch if t not in got]
+            if left:
+                log.info("speak-latin: no reading for %s", left)
+    return mapping
+
+
+def pronounce_thai(text: str, *, use_ai: bool = True) -> str:
+    """คำอ่านสำหรับพากย์ไทย: พจนานุกรมก่อน แล้ว AI เฉพาะช่วงละตินที่เหลือ"""
+    text = spoken(text or "")
+    tokens = find_latin_tokens(text)
+    if not tokens:
+        return text
+    return apply_latin_readings(text, resolve_latin_readings(tokens, use_ai=use_ai))
+
+
+def pronounce_targets(utts: list[Utterance], *, use_ai: bool = True) -> int:
+    """ปรับ u.target ทั้งชุดให้เป็นคำอ่าน คืนจำนวนบรรทัดที่เปลี่ยน"""
+    if not utts:
+        return 0
+    needed: list[str] = []
+    seen: set[str] = set()
+    for u in utts:
+        for tok in find_latin_tokens(spoken(u.target or "")):
+            k = tok.lower()
+            if k not in seen:
+                seen.add(k)
+                needed.append(tok)
+    resolve_latin_readings(needed, use_ai=use_ai)
+    n = 0
+    for u in utts:
+        new = pronounce_thai(u.target or "", use_ai=False)  # ใช้แคชที่เติมแล้ว ไม่ยิง API ซ้ำ
+        if new != (u.target or ""):
+            u.target = new
+            n += 1
+    return n
+
+
+def same_lang(lang: str, target: str) -> bool:
+    """ภาษาต้นทาง = ปลายทาง (เทียบ 2 ตัวอักษรแรก เช่น th / th-TH)"""
+    a, b = (lang or "").strip().lower()[:2], (target or "").strip().lower()[:2]
+    return bool(a) and a == b
+
+
+def ensure_same_lang_targets(utts: list[Utterance], lang: str, target: str = "th") -> int:
+    """ภาษาเดียวกัน: เติม target จาก source ทันที (ไม่รอ API) คืนจำนวนบรรทัดที่เติม"""
+    if not same_lang(lang, target):
+        return 0
+    n = 0
+    for u in utts:
+        src = (u.source or "").strip()
+        if src and not (u.target or "").strip():
+            u.target = src
+            n += 1
+    if n:
+        log.info("same-lang: copied source → target on %d empty lines", n)
+    return n
 
 
 # ---------------- ฟังก์ชันหลัก ----------------
@@ -610,11 +997,16 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                          hints: Optional[dict] = None) -> None:
     """hints: genre (แนวเรื่อง), glossary (ชื่อเฉพาะ บรรทัดละคำ เช่น ドラえもん = โดราเอมอน), names (ผู้พูด → ชื่อตัวละคร)"""
     hints = _with_order(utts, hints)
-    if lang == target:
+    if same_lang(lang, target):
+        ensure_same_lang_targets(utts, lang, target)
+        # บังคับให้ทุกท่อนที่มีต้นฉบับมีบทพากย์ (กัน target เป็นช่องว่าง)
         for u in utts:
-            u.target = u.target or u.source
-        if settings.typhoon_api_key:
+            if (u.source or "").strip() and not (u.target or "").strip():
+                u.target = u.source
+        if settings.typhoon_api_key and not settings.mock_pipeline:
             proofread(utts, target, on_progress, check_cancel, title)
+            # proofread ห้ามเหลือบทว่าง
+            ensure_same_lang_targets(utts, lang, target)
         return
 
     # โมเดลแปลบนเครื่องต้องใช้การ์ดจอ โหมด modal จึงแปลด้วย Typhoon API เสมอ
@@ -910,11 +1302,15 @@ def naturalize_dialogue(utts: list[Utterance], target: str = "th",
             old = (u.target or "").strip()
             if not text or text == old:
                 continue
-            # ไม่ให้ยาวพุ่งเกินเวลาพูดมาก และไม่หดจนเสียใจความ
-            if estimate_seconds(text, target) > max(u.duration, 0.5) * 1.25:
+            # คงจังหวะปาก: ไม่ยาวเกินเวลา×fit_tolerance และไม่หดจนเสียใจความ
+            if estimate_seconds(text, target) > max(u.duration, 0.5) * settings.fit_tolerance:
                 continue
             if len(text) < max(2, int(len(old) * 0.45)):
                 continue
+            if estimate_seconds(text, target) < u.duration * settings.fit_min_ratio and u.duration >= 1.0:
+                # สั้นกว่าเกณฑ์ขยาย — อย่าทำให้แย่กว่าบทเดิม
+                if estimate_seconds(text, target) < estimate_seconds(old, target):
+                    continue
             u.target = text
             changed += 1
     if changed:
@@ -925,13 +1321,19 @@ def naturalize_dialogue(utts: list[Utterance], target: str = "th",
 def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", title: str = "",
                        hints: Optional[dict] = None, job_dir: Optional[Path] = None,
                        check_cancel: Optional[Callable[[], None]] = None) -> int:
-    """เติมบทพากย์ที่ว่างก่อนพากย์: กู้จาก ai_targets.json ก่อน แล้วให้ AI แปลบรรทัดที่เหลือ
+    """เติมบทพากย์ที่ว่างก่อนพากย์: same-lang คัดลอกทันที → กู้ ai_targets → AI แปล
     คืนจำนวนบรรทัดที่เติมได้ (ลดท่อนเงียบตอนตัด vocals ต้นฉบับออก)"""
-    if settings.mock_pipeline or not settings.ai_fill_empty:
-        return 0
+    # ภาษาเดียวกันไม่ต้องพึ่ง API / ธง AI_FILL_EMPTY
+    filled = ensure_same_lang_targets(utts, lang, target)
+    if settings.mock_pipeline:
+        return filled
     empty = [u for u in utts if not (u.target or "").strip() and (u.source or "").strip()]
     if not empty:
-        return 0
+        return filled
+    if not settings.ai_fill_empty:
+        if filled:
+            log.info("filled %d empty targets (same-lang only; AI_FILL_EMPTY off)", filled)
+        return filled
     ai: dict[int, str] = {}
     if job_dir is not None:
         try:
@@ -939,7 +1341,6 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
             ai = {int(k): str(v) for k, v in raw.items() if v}
         except (OSError, ValueError, TypeError):
             ai = {}
-    filled = 0
     still: list[Utterance] = []
     for u in empty:
         prev = (ai.get(u.id) or "").strip()
@@ -950,7 +1351,7 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
             still.append(u)
     if not still:
         if filled:
-            log.info("filled %d empty targets from ai_targets", filled)
+            log.info("filled %d empty targets from same-lang/ai_targets", filled)
         return filled
     if not settings.typhoon_api_key:
         log.warning("empty targets remain %s (no API key to fill)", [u.id for u in still])
@@ -960,7 +1361,7 @@ def fill_empty_targets(utts: list[Utterance], lang: str, target: str = "th", tit
     for u in still:
         if check_cancel:
             check_cancel()
-        if lang == target:
+        if same_lang(lang, target):
             u.target = u.source
         else:
             context = [x for x in order if x.target.strip() and x.start < u.start][-6:]
@@ -1222,7 +1623,8 @@ def review_translation(utts: list[Utterance], lang: str, target: str = "th", max
     """ตรวจบทหลังแปล บรรทัดที่ควรให้คนดูติดป้ายไว้ใน check_note
     - continuous: หาบรรทัดที่ความหมายไม่ต่อกัน แปลใหม่ไม่เกิน REVIEW_ROUNDS รอบ ยังไม่ผ่านจึงติดป้าย
     - อื่น ๆ (teaser หรือไม่รู้ประเภท): ตรวจชื่อและศัพท์อย่างเดียว ติดป้ายโดยไม่แก้บท เพราะฉากไม่ต้องต่อกัน"""
-    if lang == target:
+    if same_lang(lang, target):
+        ensure_same_lang_targets(utts, lang, target)
         return
     hints = _with_order(utts, hints)
     order = [u for g in hints["sentences"] for u in g]

@@ -1,0 +1,6 @@
+{
+  "min_recall": 1.0,
+  "segments": [
+    {"start": 26.96, "end": 27.68, "text": "テスト"}
+  ]
+}

@@ -137,10 +137,13 @@ def repair_transcript(utterances: list[Utterance], words: Optional[list[Word]],
         1 for a, b in zip(words, clamped)
         if abs(a.end - b.end) > 0.05 or abs(a.start - b.start) > 0.05
     )
-    if turns:
+    old_n = len({u.speaker for u in utterances})
+    turn_n = len({t.speaker for t in turns}) if turns else 0
+    # ถ้าท่อนเดิมแยกคนได้มากกว่า turns (หลัง cluster_lines) → ยึดป้ายจากท่อนเดิมตามเวลา
+    if turns and turn_n >= old_n:
         rebuilt = assign_speakers(clamped, turns, max_len=settings.max_line_sec, lang=lang or "")
     else:
-        # ไม่มี turns: ใช้ speaker จากท่อนเดิมตามเวลาทับ
+        # ไม่มี turns หรือ turns ยังรวมคน — ใช้ speaker จากท่อนเดิมที่ทับเวลา
         rebuilt = _reassign_from_old(utterances, clamped, lang or "")
     if lang == "th" or (lang or "").startswith("th"):
         rebuilt = merge_broken_thai(rebuilt)

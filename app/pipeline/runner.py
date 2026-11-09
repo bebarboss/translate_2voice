@@ -48,6 +48,11 @@ def _stage(store: JobStore, job_id: str):
 
 # ---------------------------------------------------------------- analyze
 def run_analyze(store: JobStore, job_id: str) -> None:
+    try:
+        from ..knobs import ensure_applied
+        ensure_applied()
+    except Exception:  # noqa: BLE001
+        pass
     job = store.get(job_id)
     d = store.dir(job_id)
     stage = _stage(store, job_id)
@@ -154,6 +159,23 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     if job.library:  # งานเก็บเสียงเข้าคลัง ใช้แค่ผลแยกผู้พูด ไม่ต้องแปล
         stage("analyzed", 0.72)
         return
+    # วัด coverage ก่อนแปล — ต่ำมากให้เตือน (auto-heal รันบน GPU ไปแล้วหนึ่งรอบ)
+    try:
+        from ..job_metrics import COVERAGE_HEAL_MIN, speech_coverage_file
+        cov = speech_coverage_file(d, utterances)
+        if cov.get("coverage") is not None and float(cov["coverage"]) < COVERAGE_HEAL_MIN:
+            log.warning("job %s: speech_coverage=%.3f < %.2f after ASR heal — translation may miss lines",
+                        job_id, float(cov["coverage"]), COVERAGE_HEAL_MIN)
+        # เขียน metrics ชั่วคราวไว้ให้ synthesize ใช้เกต
+        partial = {
+            "job_id": job_id, "n_lines": len(utterances),
+            "speech_coverage": cov, "needs_asr_heal": (
+                cov.get("coverage") is not None and float(cov["coverage"]) < COVERAGE_HEAL_MIN
+            ),
+        }
+        (d / "metrics.json").write_text(json.dumps(partial, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        log.exception("job %s: pre-translate coverage check failed", job_id)
     _translate_and_fit(store, job_id, utterances, lang, 0.55, 0.72)
 
 
@@ -170,6 +192,9 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     title = Path(job.filename or "").stem
     from . import translate as translate_mod  # ชื่อ translate ในฟังก์ชันนี้คือฟังก์ชันแปล
     from .. import projects
+    # ภาษาเดียวกัน: เติม target จาก source ก่อนทุกอย่าง (ไม่รอ API / ไม่ให้เข้า review แบบว่าง)
+    translate_mod.ensure_same_lang_targets(utterances, lang, job.target_lang)
+    store.save_transcript(job_id, utterances)
     job, project = _apply_project(store, job_id, utterances)
     hints = projects.project_hints(project, {**hints, "names": job.speaker_names})
     if settings.story_analysis and not settings.mock_pipeline and settings.typhoon_api_key:
@@ -201,14 +226,16 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
-    # ปรับสำนวนให้เป็นบทพูดธรรมชาติก่อนตรวจต่อเนื่อง
+    # ปรับสำนวนให้เป็นบทพูดธรรมชาติก่อนตรวจต่อเนื่อง — แล้ว fit ใหม่เพราะอาจยาว/สั้นเกินเวลา
+    max_sp = runtime_settings.get().max_speedup
     if settings.ai_naturalize and settings.typhoon_api_key and not settings.mock_pipeline:
         stage("naturalize", lo + span * 0.85)
         try:
             n_nat = translate_mod.naturalize_dialogue(utterances, job.target_lang, cancel)
             if n_nat:
+                fit_lengths(utterances, job.target_lang, max_sp)
                 store.save_transcript(job_id, utterances)
-                log.info("job %s: naturalized %d lines", job_id, n_nat)
+                log.info("job %s: naturalized %d lines (refit)", job_id, n_nat)
         except Cancelled:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -216,19 +243,45 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     if settings.translate_review and not settings.mock_pipeline and settings.typhoon_api_key:
         stage("review_translation", lo + span * 0.9)
         try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว (รอบแปลใหม่ที่แย่กว่าจะถูกทิ้งใน _retranslate)
-            translate_mod.review_translation(utterances, lang, job.target_lang, runtime_settings.get().max_speedup,
+            translate_mod.review_translation(utterances, lang, job.target_lang, max_sp,
                                              title, hints, cancel)
         except Cancelled:
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("translation review failed for job %s: %s", job_id, exc)
         store.save_transcript(job_id, utterances)
-    # บทว่างหลังแปล → AI เติมก่อนเข้าหน้าตรวจ / ก่อนพากย์
+    # บทว่างหลังแปล → same-lang / ai_targets / AI เติมก่อนเข้าหน้าตรวจ / ก่อนพากย์
     n_fill = translate_mod.fill_empty_targets(
-        utterances, lang, job.target_lang, title, hints, check_cancel=cancel)
+        utterances, lang, job.target_lang, title, hints,
+        job_dir=store.dir(job_id), check_cancel=cancel)
     if n_fill:
+        fit_lengths(utterances, job.target_lang, max_sp)
         store.save_transcript(job_id, utterances)
-        log.info("job %s: AI filled %d empty targets after translate", job_id, n_fill)
+        log.info("job %s: filled %d empty targets after translate (refit)", job_id, n_fill)
+    # พจนานุกรมคำอ่าน + AI เฉพาะชื่อ/ตัวย่อละตินที่เหลือ (ก่อนหน้าตรวจบท / พากย์)
+    if job.target_lang == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
+        stage("speak_latin", lo + span * 0.95)
+        try:
+            n_say = translate_mod.pronounce_targets(utterances)
+            if n_say:
+                store.save_transcript(job_id, utterances)
+                log.info("job %s: pronounce_latin on %d lines", job_id, n_say)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("speak-latin failed for job %s: %s", job_id, exc)
+    still_empty = [u.id for u in utterances if (u.source or "").strip() and not (u.target or "").strip()]
+    if still_empty:
+        # ห้ามส่งเข้า review ด้วยบทว่างทั้งก้อน — same-lang ต้องเต็มแล้ว; ภาษาอื่นให้ข้อความชัด
+        if translate_mod.same_lang(lang, job.target_lang):
+            translate_mod.ensure_same_lang_targets(utterances, lang, job.target_lang)
+            store.save_transcript(job_id, utterances)
+            still_empty = [u.id for u in utterances if (u.source or "").strip() and not (u.target or "").strip()]
+        if still_empty:
+            raise RuntimeError(
+                f"ยังมีบทพากย์ว่าง {len(still_empty)} ท่อนหลังแปล (เช่น {still_empty[:8]}) "
+                "ห้ามเข้าหน้าตรวจ — ลองแปลใหม่หรือตรวจ API คีย์"
+            )
     from .. import memory
     memory.save_ai_targets(store.dir(job_id), utterances)  # เทียบภายหลังว่าผู้ใช้แก้บรรทัดไหน
     from .. import quality
@@ -436,6 +489,11 @@ class _Plan:
 
 
 def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
+    try:
+        from ..knobs import ensure_applied
+        ensure_applied()
+    except Exception:  # noqa: BLE001
+        pass
     job = store.get(job_id)
     d = store.dir(job_id)
     stage = _stage(store, job_id)
@@ -446,6 +504,16 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     utterances = sorted(store.load_transcript(job_id), key=lambda u: u.start)
     if not utterances:
         raise RuntimeError("ไม่มีบทให้พากย์")
+
+    # ตัด ED/SFX/สระยืด และท่อนสั้นขยะก่อนพากย์ (งานเก่าที่วิเคราะห์ก่อนตัวกรองนี้)
+    before_n = len(utterances)
+    utterances = hallucination.clean(utterances)
+    if len(utterances) != before_n:
+        store.save_transcript(job_id, utterances)
+        log.info("job %s: dropped/merged %d hallucinated/SFX lines before synthesize",
+                 job_id, before_n - len(utterances))
+    if not utterances:
+        raise RuntimeError("ไม่มีบทให้พากย์หลังตัดท่อนขยะ")
 
     # ซ่อมท่อนพังจาก words (งานเก่าที่วิเคราะห์ก่อนมีขั้นนี้ / เวลาวรรณยุกต์ยืดผิด)
     from . import repair as repair_mod
@@ -459,16 +527,40 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                 json.dumps([w.__dict__ for w in words_fixed], ensure_ascii=False), encoding="utf-8")
         store.save_transcript(job_id, utterances)
         log.info("job %s: repaired %s before synthesize", job_id, n_repair)
-    # บทว่าง (แปลไม่ครบ / ถูกล้างตอนตรวจ) → กู้จาก ai_targets หรือให้ AI แปลเติม ก่อนจัดกลุ่มพากย์
+    # เกตก่อนพากย์: บทว่าง / coverage ต่ำเกิน
+    from . import translate as translate_mod
+    from ..job_metrics import speech_coverage_file
+    title = Path(job.filename or "").stem
+    translate_mod.ensure_same_lang_targets(utterances, source_lang, target)
     empty_n = sum(1 for u in utterances if not (u.target or "").strip() and (u.source or "").strip())
     if empty_n:
-        from . import translate as translate_mod
-        title = Path(job.filename or "").stem
         n_fill = translate_mod.fill_empty_targets(
             utterances, source_lang, target, title, job_dir=d, check_cancel=cancel)
         if n_fill:
             store.save_transcript(job_id, utterances)
-            log.info("job %s: AI filled %d empty targets before synthesize", job_id, n_fill)
+    if target == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
+        try:
+            n_say = translate_mod.pronounce_targets(utterances)
+            if n_say:
+                store.save_transcript(job_id, utterances)
+                log.info("job %s: pronounce_latin %d lines before synthesize", job_id, n_say)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("speak-latin before synthesize failed: %s", exc)
+            log.info("job %s: filled %d empty targets before synthesize", job_id, n_fill)
+    still_empty = [u.id for u in utterances if (u.source or "").strip() and not (u.target or "").strip()]
+    if still_empty:
+        raise RuntimeError(
+            f"ห้ามพากย์: ยังมีบทว่าง {len(still_empty)} ท่อน (เช่น {still_empty[:8]}) "
+            "ให้แปล/เติมบทก่อน หรือเปิด AI_FILL_EMPTY"
+        )
+    cov = speech_coverage_file(d, utterances)
+    cov_v = cov.get("coverage")
+    min_cov = float(settings.min_coverage_synthesize)
+    if cov_v is not None and float(cov_v) < min_cov:
+        raise RuntimeError(
+            f"ห้ามพากย์: speech_coverage={float(cov_v):.2f} ต่ำกว่าเกณฑ์ {min_cov:.2f} "
+            "ให้วิเคราะห์ใหม่ (auto-heal ASR) ก่อนพากย์"
+        )
     # รอบก่อนเสียงไม่ตรงบท → บังคับพากย์ใหม่ (ไม่ใช้แคช) แล้วล้างป้ายเพื่อตรวจใหม่
     for u in utterances:
         if u.heard or (u.heard_score is not None and u.heard_score < settings.dub_check_min):
@@ -554,6 +646,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
     # ซิงค์ปากบังคับจังหวะหยุดตามต้นฉบับ แม้ PAUSE_MATCH=0
     use_pauses = (settings.pause_match or lip_sync) and not settings.mock_pipeline
+    # แพ็กชิ้น: ต่อพูดติดกัน ไม่ฝังเงียบตามเวลา EN (ยกเว้น lip_sync ที่ต้องยึดปาก)
+    pack_pauses = bool(settings.pause_pack) and use_pauses and not lip_sync
 
     def marked_chunks(p: _Plan) -> dict:
         """ประโยคที่มีจุด / ใส่ช่วงที่แบ่งไว้ในคีย์ด้วย: วิธีแบ่งตาม / เปลี่ยน (แก้บท หรือปรับ pauses.plan) ต้องพากย์ใหม่
@@ -571,7 +665,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                         pauses=[use_pauses, settings.min_pause_sec, 3],
+                         pauses=[use_pauses, settings.min_pause_sec, 4, pack_pauses,
+                                 settings.pause_pack_max_sec, settings.pause_pack_ratio],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
                          # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
                          **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))
@@ -626,16 +721,25 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
     def render(batch: list[_Plan], lo: float, hi: float) -> None:
         """พากย์ทั้งชุดผ่าน gpu.synthesize_lines แล้วต่อช่วงย่อยของแต่ละประโยคเป็นเสียงเดียว"""
+        from .translate import estimate_seconds
+
         lines = []
         for p in batch:
             if not use_pauses:
                 p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, pauses.strip_marks(p.text()))]
-            else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
+            else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ (ตัดบท); วิธีวางเสียงดู pack_pauses
                 p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
-            lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
-                       "target_lang": target, "slot": max(c.end - c.start, 0.3), "max_speedup": p.max_speedup,
-                       "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True}
-                      for k, c in enumerate(p.chunks)]
+            for k, c in enumerate(p.chunks):
+                if pack_pauses:
+                    # ให้โมเดลพูดจังหวะธรรมชาติตามความยาวบท ไม่ยัดเข้าช่วงเวลา EN ของชิ้นย่อย
+                    chunk_slot = max(0.35, estimate_seconds(c.text, target))
+                else:
+                    chunk_slot = max(c.end - c.start, 0.3)
+                lines.append({
+                    "id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
+                    "target_lang": target, "slot": chunk_slot, "max_speedup": p.max_speedup,
+                    "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True,
+                })
         progress = (lambda f: stage("tts", lo + (hi - lo) * f)) if gpu.remote() else None
         checks: dict = {}
         voices_ = gpu.synthesize_lines(vocals, lines, rs.f5_steps, settings.f5_speed, library_paths, refs_dir,
@@ -648,20 +752,34 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             bad = worst is not None and worst[0] < settings.dub_check_min
             for u in p.g:
                 u.heard, u.heard_score = (worst[1], worst[0]) if bad else ("", worst[0] if worst else None)
-            out, cursor = np.zeros(0, dtype=np.float32), 0
+            pieces: list[np.ndarray] = []
             for k, c in enumerate(p.chunks):
                 v = voices_[f"{first.id}:{k}"]
                 if match_prosody:
                     seg = orig[int(c.start * orig_sr): int(c.end * orig_sr)]
                     v = prosody.match(v, sr, seg, orig_sr, settings.prosody_max_shift, settings.prosody_max_range)
-                v = audio.trim_silence(v, sr)
-                # วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
-                at = max(int((c.start - first.start) * sr), cursor + (int(0.08 * sr) if cursor else 0))
-                out = np.concatenate([out, np.zeros(max(0, at - len(out)), dtype=np.float32), v])
-                cursor = len(out)
-            if len(p.chunks) > 1:
-                log.info("line %d: %d chunks %s", first.id, len(p.chunks),
-                         [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
+                pieces.append(audio.trim_silence(v, sr))
+            if pack_pauses and len(pieces) > 1:
+                gaps = pauses.pack_gaps(
+                    p.chunks,
+                    min_gap=settings.pause_pack_min_sec,
+                    max_gap=settings.pause_pack_max_sec,
+                    ratio=settings.pause_pack_ratio,
+                )
+                out = pauses.assemble_packed(pieces, gaps, sr)
+                log.info("line %d: packed %d chunks gaps=%s", first.id, len(p.chunks),
+                         [round(g, 2) for g in gaps])
+            else:
+                # ซิงค์ปาก / ชิ้นเดียว: วางตามเวลาต้นฉบับ
+                out, cursor = np.zeros(0, dtype=np.float32), 0
+                for k, c in enumerate(p.chunks):
+                    v = pieces[k]
+                    at = max(int((c.start - first.start) * sr), cursor + (int(0.08 * sr) if cursor else 0))
+                    out = np.concatenate([out, np.zeros(max(0, at - len(out)), dtype=np.float32), v])
+                    cursor = len(out)
+                if len(p.chunks) > 1:
+                    log.info("line %d: %d chunks %s", first.id, len(p.chunks),
+                             [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
             p.voice = out
 
     def _save_plan(p: _Plan) -> None:
@@ -680,20 +798,52 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         if not gpu.remote():
             stage("tts", 0.72 + 0.2 * batch[0].i / len(groups))
         render(batch, 0.72, 0.88)
-        # พูดเร็วสุดที่ยอมได้แล้วยังยาวเกินฉาก → ให้ Typhoon ย่อบทแล้วพากย์ใหม่หนึ่งรอบ (ส่งเฉพาะประโยคนั้น)
+        # พูดเร็วสุดที่ยอมได้แล้วยังยาวเกินฉาก → ย่อบทแล้วพากย์ใหม่ (รอบสองย่อแรงขึ้น)
+        # เสียงสั้นกว่าฉากมาก → ขยายบทแล้วพากย์ใหม่หนึ่งครั้ง ให้พอดีปาก
+        from .translate import lengthen, shorten
         again = []
         for p in batch:
-            if can_shorten and len(p.voice) / sr > p.slot * 1.05:
-                from .translate import shorten
+            dur = len(p.voice) / sr
+            if can_shorten and dur > p.slot * 1.02:
                 cancel()
                 before = p.text()
-                shorten(p.g, target, target_ratio=0.9)
+                shorten(p.g, target, target_ratio=0.88)
+                if p.text() != before:
+                    again.append(p)
+            elif can_shorten and p.slot >= 1.2 and dur < p.slot * 0.65:
+                cancel()
+                before = p.text()
+                lengthen(p.g, target, tolerance=min(p.max_speedup, settings.fit_tolerance))
                 if p.text() != before:
                     again.append(p)
         if again:
             if gpu.remote():
-                log.info("re-dub %d shortened lines", len(again))
+                log.info("re-dub %d timing-fixed lines", len(again))
             render(again, 0.88, 0.92)
+        # รอบสอง: ยังล้นชัด → ย่อแรงขึ้นอีกครั้ง
+        again2 = []
+        for p in again:
+            if can_shorten and len(p.voice) / sr > p.slot * 1.05:
+                cancel()
+                before = p.text()
+                shorten(p.g, target, target_ratio=0.75)
+                if p.text() != before:
+                    again2.append(p)
+        if again2:
+            log.info("re-dub %d still-long lines (aggressive shorten)", len(again2))
+            render(again2, 0.90, 0.93)
+        # รอบสาม: ยังล้นหนักหลังแพ็ก/ย่อ → ย่อแรงสุดแล้วพากย์อีกครั้ง (กัน lip_overflow)
+        again3 = []
+        for p in batch:
+            if can_shorten and len(p.voice) / sr > p.slot * 1.12:
+                cancel()
+                before = p.text()
+                shorten(p.g, target, target_ratio=0.65)
+                if p.text() != before:
+                    again3.append(p)
+        if again3:
+            log.info("re-dub %d overflow lines (final shorten)", len(again3))
+            render(again3, 0.92, 0.94)
         for p in batch:
             # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
             _save_plan(p)
@@ -802,14 +952,26 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
 
 def _remember(store: JobStore, job_id: str, utterances: list[Utterance]) -> None:
-    """พากย์เสร็จ: วัดว่าผู้ใช้แก้อะไรจากที่ AI ทำ (quality.py) และเก็บบทของงานในโปรเจกต์ลงความจำคำแปล
+    """พากย์เสร็จ: วัด metrics จากต้นฉบับ vs ผลลัพธ์, เก็บบท AI เทียบคนแก้, ความจำคำแปล
     (ล้มไม่ทำให้งานล้ม)"""
     job = store.get(job_id)
     if job is None:
         return
+    d = store.dir(job_id)
+    # คะแนนหลัก: ต้นฉบับ vs ผลถอด/พากย์ (ไม่พึ่งคนแก้)
+    try:
+        from .. import job_metrics, knobs
+        metrics = job_metrics.write_metrics(d, dub_check_min=float(knobs.get("dub_check_min", settings.dub_check_min)))
+        log.info("job %s metrics: overall=%s coverage=%s", job_id, metrics.get("overall"),
+                 (metrics.get("speech_coverage") or {}).get("coverage"))
+        # รวมสถิติล่าสุด → ขยับ knobs ในขอบเขตปลอดภัย
+        recent = job_metrics.scan_jobs(store.root, limit=20)
+        knobs.nudge_from_metrics(recent)
+    except Exception:  # noqa: BLE001
+        log.exception("job metrics save failed for job %s", job_id)
     try:
         from .. import quality
-        q = quality.record(job, utterances, store.dir(job_id))
+        q = quality.record(job, utterances, d)
         if q:
             log.info("job %s quality: %s", job_id, {k: q[k] for k in ("lines_ai", "text_edited", "speaker_changed", "retimed")})
     except Exception:  # noqa: BLE001
@@ -818,7 +980,7 @@ def _remember(store: JobStore, job_id: str, utterances: list[Utterance]) -> None
         return
     try:
         from .. import memory
-        n = memory.record_job(job, utterances, store.dir(job_id))
+        n = memory.record_job(job, utterances, d)
         log.info("job %s: %d lines saved to translation memory", job_id, n)
     except Exception:  # noqa: BLE001
         log.exception("translation memory save failed for job %s", job_id)

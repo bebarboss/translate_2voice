@@ -34,11 +34,11 @@ def _int(name: str, default: int) -> int:
 # แพ็กเกจเริ่มต้น (ทับด้วย BILLING_PLANS เป็น JSON ได้) — ราคาเป็นสตางค์
 _DEFAULT_BILLING_PLANS: list[dict[str, Any]] = [
     {
-        "id": "trial", "name": "ทดลอง", "price": 0, "minutes": 5, "days": 30,
+        "id": "trial", "name": "ทดลอง", "price": 0, "minutes": 2, "days": 30,
         "max_clip_minutes": 2, "voices": "standard", "timeline": False, "watermark": True,
         "free_once": True,
         "features": [
-            "ฟรี 5 เครดิต ครั้งเดียวต่อบัญชี",
+            "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี",
             "คลิปยาวสุด 2 นาที",
             "เสียง Standard (ที่แอดมินเพิ่ม)",
             "ดาวน์โหลดมีลายน้ำ",
@@ -153,6 +153,13 @@ class Settings:
     modal_app: str = _env("MODAL_APP", "dubbing-gpu")  # ชื่อแอปที่ modal deploy ไว้ (ตรงกับ modal_app.py)
     modal_max_jobs: int = _int("MODAL_MAX_JOBS", 4)  # จำนวนงานที่ส่ง Modal พร้อมกันได้
     modal_tts_batch: int = _int("MODAL_TTS_BATCH", 40)  # ประโยคต่อชุดที่ส่งพากย์ (หลายชุดรันพร้อมกันคนละ GPU)
+    # คลิปยาว: ตัดวิเคราะห์เป็นชิ้นขนานบน Modal (วินาที) — 0 = ปิด
+    analyze_chunk_sec: float = _float("ANALYZE_CHUNK_SEC", 480)  # ขนาดชิ้น (~8 นาที)
+    analyze_chunk_overlap_sec: float = _float("ANALYZE_CHUNK_OVERLAP_SEC", 10)
+    analyze_chunk_min_sec: float = _float("ANALYZE_CHUNK_MIN_SEC", 720)  # เปิดเมื่อคลิป ≥ นี้ (~12 นาที)
+    # โหมดเร็วตอนวิเคราะห์แบบชิ้น: ใช้ Whisper เล็กกว่า (ว่าง = ไม่สลับ)
+    analyze_fast: bool = _bool("ANALYZE_FAST", True)
+    analyze_fast_whisper: str = _env("ANALYZE_FAST_WHISPER", "medium")
     # คิวงานหลายผู้ใช้ (jobs.Worker)
     light_workers: int = _int("LIGHT_WORKERS", 2)  # งานเบา (ฝังซับ แปลใหม่) รันพร้อมกันได้กี่งาน แยกจากงานหนัก
     user_max_jobs: int = _int("USER_MAX_JOBS", 2)  # ผู้ใช้หนึ่งคนรันงานหนักพร้อมกันได้กี่งาน (0 = ไม่จำกัด)
@@ -176,6 +183,17 @@ class Settings:
     # ถอดเสียง (faster-whisper)
     whisper_model: str = _env("WHISPER_MODEL", "large-v3")
     whisper_compute_type: str = _env("WHISPER_COMPUTE_TYPE", "float16")
+    # VAD (Silero): ค่าเริ่มต้น 0.5 มักตัดเสียงเด็ก/ตะโกน/อุทานทิ้ง — ผ่อน threshold + เก็บช่วงสั้น
+    whisper_vad_threshold: float = _float("WHISPER_VAD_THRESHOLD", 0.35)
+    whisper_vad_min_speech_ms: int = _int("WHISPER_VAD_MIN_SPEECH_MS", 100)
+    whisper_vad_min_silence_ms: int = _int("WHISPER_VAD_MIN_SILENCE_MS", 400)
+    whisper_vad_speech_pad_ms: int = _int("WHISPER_VAD_SPEECH_PAD_MS", 600)
+    # ช่วงที่มีคนพูดแต่ไม่มีคำ → ถอดซ้ำโดยปิด VAD (กู้ตะโกนสั้นได้ถ้า ≥ ค่านี้)
+    whisper_fill_gap_sec: float = _float("WHISPER_FILL_GAP_SEC", 0.4)
+    # วัด coverage จาก vocals แล้วซ่อม ASR อัตโนมัติหนึ่งรอบถ้าต่ำ
+    auto_heal_asr: bool = _bool("AUTO_HEAL_ASR", True)
+    # ปรับ VAD/fill_gap/dub_check จากสถิติหลาย job (data/metrics/knobs.json)
+    auto_knobs: bool = _bool("AUTO_KNOBS", True)
 
     # แปลภาษา (Typhoon)
     typhoon_api_key: str = _env("TYPHOON_API_KEY")
@@ -219,7 +237,7 @@ class Settings:
     fit_tolerance: float = _float("FIT_TOLERANCE", 1.1)
     # บทที่คาดว่าพูดได้ไม่ถึงสัดส่วนนี้ของเวลาที่ตัวละครพูดจริง ให้ Typhoon ขยายบทให้เต็มเวลาขึ้น
     # (เสียงพากย์จบก่อนปากหยุดขยับ ดูไม่ตรงภาพ) 0 = ไม่ขยาย
-    fit_min_ratio: float = _float("FIT_MIN_RATIO", 0.6)
+    fit_min_ratio: float = _float("FIT_MIN_RATIO", 0.7)  # บทสั้นเกิน → ขยายให้ใกล้เวลาปาก (เดิม 0.6)
     # นับช่วงเงียบหลังประโยคเป็นเวลาพูดได้อีกไม่เกินกี่วินาที ตอนคิดความยาวบท (0 = ใช้แค่ช่วงที่นักแสดงพูด
     # เพราะตอนพากย์ยังบีบเสียงให้พอดีช่วงที่นักแสดงพูด ถ้าเผื่อตรงนี้เสียงจะเร็วขึ้นแทน)
     fit_slack: float = _float("FIT_SLACK", 0.0)
@@ -231,6 +249,11 @@ class Settings:
     translate_review: bool = _bool("TRANSLATE_REVIEW", True)
     pause_match: bool = _bool("PAUSE_MATCH", True)  # เว้นจังหวะหยุดกลางประโยคตามต้นฉบับ (pauses.py)
     min_pause_sec: float = _float("MIN_PAUSE_SEC", 0.3)  # ช่วงเงียบสั้นกว่านี้ไม่นับเป็นจังหวะหยุด
+    # พากย์ข้ามภาษา: ต่อชิ้นพูดแบบแพ็ก (ไม่ฝังเงียบยาวตามเวลาต้นฉบับ) — ปิดอัตโนมัติตอน lip_sync
+    pause_pack: bool = _bool("PAUSE_PACK", True)
+    pause_pack_min_sec: float = _float("PAUSE_PACK_MIN_SEC", 0.08)
+    pause_pack_max_sec: float = _float("PAUSE_PACK_MAX_SEC", 0.28)
+    pause_pack_ratio: float = _float("PAUSE_PACK_RATIO", 0.35)  # สัดส่วนของช่วงหยุดต้นฉบับที่ยอมใส่จริง
     # ต้นฉบับภาษาเดียวกับปลายทาง: โคลนเสียงต้นฉบับ (ไม่ใช้คลัง) + รวมท่อนน้อย + ยึดจังหวะ pause
     lip_sync_same_lang: bool = _bool("LIP_SYNC_SAME_LANG", True)
     # ก่อนแปล: จับท่อนเวลา/บทพัง รัดเวลาจากคำ ถอดช่วงนั้นใหม่ถ้าทำได้
@@ -243,6 +266,8 @@ class Settings:
     ai_fill_empty: bool = _bool("AI_FILL_EMPTY", True)
     # หลังแปล/ย่อ → ปรับสำนวนให้ออกเสียงเป็นบทละครธรรมชาติ (ลดแก้มือ)
     ai_naturalize: bool = _bool("AI_NATURALIZE", True)
+    # หลังพจนานุกรมคำอ่าน → ให้ AI แปลงชื่อ/ตัวย่อละตินที่เหลือเป็นคำอ่านไทย (แคชที่ data/latin_readings.json)
+    ai_speak_latin: bool = _bool("AI_SPEAK_LATIN", True)
     # ความดังของเสียงร้อง กรี๊ด อุทานจากต้นฉบับในช่วงที่ไม่มีบท (0 = ตัดทิ้ง)
     nonspeech_gain: float = _float("NONSPEECH_GAIN", 1.0)
     breath_keep: bool = _bool("BREATH_KEEP", True)  # ใส่เสียงหายใจของนักแสดงในช่วงหยุดกลางประโยค
@@ -257,7 +282,9 @@ class Settings:
     # ช่วงที่สองคนพูดพร้อมกัน แยกเสียงแล้วถอดคำพูดของคนที่ถูกกลบเป็นประโยคแยก (overlap.py)
     overlap_recover: bool = _bool("OVERLAP_RECOVER", True)
     # ถอดรอบสองจากเสียงต้นฉบับ (มีเพลง) เฉพาะช่วงที่ถอดไม่มั่นใจ ไม่มีคำ หรือเพลงดังทับ (transcribe.recheck_noisy)
-    retranscribe_noisy: bool = _bool("RETRANSCRIBE_NOISY", False)
+    retranscribe_noisy: bool = _bool("RETRANSCRIBE_NOISY", True)
+    # ห้ามพากย์ถ้า speech_coverage ต่ำกว่านี้ (ต้องวิเคราะห์ใหม่ / auto-heal ก่อน)
+    min_coverage_synthesize: float = _float("MIN_COVERAGE_SYNTHESIZE", 0.70)
     # สองคนพูดต่อกันแต่ระบบแยกผู้พูดรวมเป็นท่อนเดียว (เสียงคล้ายกัน เช่น การ์ตูน): ให้ Typhoon/Gemini อ่านบทแล้วเสนอจุดเปลี่ยนคน
     # ตัดจริงเฉพาะจุดที่ลายเสียงสองฝั่งคล้ายกันต่ำกว่า TURN_SPLIT_SIM แล้วจัดกลุ่มผู้พูดใหม่ (turns.py)
     turn_split: bool = _bool("TURN_SPLIT", True)

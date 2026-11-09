@@ -30,6 +30,22 @@ def _load():
     return _model
 
 
+def _vad_params() -> dict:
+    """ผ่อน VAD ให้เก็บเสียงเด็ก / ตะโกน / อุทานสั้น ที่ threshold 0.5 มักตัดทิ้ง
+    ค่า threshold อาจถูก auto-knobs ขยับจากสถิติหลาย job"""
+    try:
+        from ..knobs import get as knob
+        threshold = knob("whisper_vad_threshold", settings.whisper_vad_threshold)
+    except Exception:  # noqa: BLE001
+        threshold = settings.whisper_vad_threshold
+    return {
+        "threshold": threshold,
+        "min_speech_duration_ms": settings.whisper_vad_min_speech_ms,
+        "min_silence_duration_ms": settings.whisper_vad_min_silence_ms,
+        "speech_pad_ms": settings.whisper_vad_speech_pad_ms,
+    }
+
+
 def unload() -> None:
     global _model
     _model = None
@@ -55,9 +71,15 @@ def _letters(text: str) -> str:
 
 def match_score(expected: str, got: str) -> float:
     """บทที่ส่งไปพากย์กับที่ถอดเสียงพากย์ได้ ตรงกันแค่ไหน (0–1) บทสั้นมาก (ไม่ถึง 4 ตัว) ถือว่าผ่าน
-    เพราะ Whisper ถอดคำเดียวพลาดบ่อย ("ครับ" → "คับ") ตัวเลขในบทกับคำอ่านที่ได้ยินนับเป็นไม่ตรงบางส่วน"""
+    เพราะ Whisper ถอดคำเดียวพลาดบ่อย ("ครับ" → "คับ") ตัวเลขในบทกับคำอ่านที่ได้ยินนับเป็นไม่ตรงบางส่วน
+    ถ้าถอดได้ประโยคทักทายตายตัวที่ไม่ใช่บท → 0 (F5 พังแล้วพูดมั่ว)"""
     import difflib
 
+    from .hallucination import dead_heard_score
+
+    dead = dead_heard_score(expected, got)
+    if dead is not None:
+        return dead
     a, b = _letters(expected), _letters(got)
     if len(a) < 4:
         return 1.0
@@ -86,6 +108,7 @@ def transcribe(wav16k: Path, language: Optional[str] = None,
         str(wav16k),
         language=language,
         vad_filter=True,
+        vad_parameters=_vad_params(),
         word_timestamps=True,
         beam_size=5,
         condition_on_previous_text=False,  # กันอาการพูดวนซ้ำ
@@ -98,6 +121,7 @@ def transcribe(wav16k: Path, language: Optional[str] = None,
             words += [Word(w.start, w.end, w.word, i) for w in seg.words]
         elif seg.text.strip():
             words.append(Word(seg.start, seg.end, seg.text, i))
+    log.info("whisper vad=%s → %d words", _vad_params(), len(words))
     return words, info.language
 
 
@@ -141,22 +165,27 @@ def _windows(spans, join: float, max_window: float) -> list[list[float]]:
 
 
 def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Optional[str],
-              min_gap: float = 1.0, max_window: float = 25.0,
+              min_gap: Optional[float] = None, max_window: float = 25.0,
               confidence: Optional[dict[int, float]] = None) -> list[Word]:
     """ถอดซ้ำเฉพาะช่วงที่ pyannote ได้ยินคนพูดแต่ Whisper ไม่ได้คำเลย
 
     ถอดทั้งคลิปทีเดียว Whisper มักข้ามทั้งก้อนเมื่อมีเพลงดังทับเสียงพูด (VAD ตัดทิ้ง หรือโมเดลตัดสินว่าไม่มีเสียงพูด)
-    เช่น ตัวอย่างหนังที่ดนตรีขึ้นช่วงกลาง ทั้งที่ยังมีบทพูดอยู่ ถอดช่วงนั้นแยกโดยไม่ใช้ VAD มักได้ข้อความกลับมา
+    เช่น เสียงเด็ก/ตะโกนที่ VAD ตัด, หรือหนังที่ดนตรีขึ้นกลางเรื่อง — ถอดช่วงนั้นแยกโดยไม่ใช้ VAD มักได้ข้อความกลับมา
     """
-    import numpy as np
     import soundfile as sf
 
+    if min_gap is None:
+        try:
+            from ..knobs import get as knob
+            min_gap = knob("whisper_fill_gap_sec", settings.whisper_fill_gap_sec)
+        except Exception:  # noqa: BLE001
+            min_gap = settings.whisper_fill_gap_sec
     holes = _holes(words, _speech_spans(turns), min_gap)
     if not holes:
         return words
-    windows = _windows(holes, 2.0, max_window)
+    windows = _windows(holes, 1.0, max_window)
 
-    audio, sr = sf.read(wav16k, dtype="float32")
+    audio, sr = sf.read(str(wav16k), dtype="float32")
     audio = audio.mean(axis=1) if audio.ndim > 1 else audio
     seg_id = max((w.segment for w in words), default=-1) + 1
     added: list[Word] = []
@@ -167,20 +196,22 @@ def fill_gaps(wav16k: Path, words: list[Word], turns: list[Turn], language: Opti
         segments, _ = _load().transcribe(audio[int(lo * sr): int(hi * sr)], language=language, vad_filter=False,
                                          word_timestamps=True, beam_size=5, condition_on_previous_text=False)
         for seg in segments:
-            # เพลงหรือเสียงประกอบล้วน Whisper มักเดาข้อความมั่วออกมา → ทิ้งท่อนที่โมเดลเองไม่มั่นใจ
-            if seg.no_speech_prob > 0.6 or seg.avg_logprob < -1.0 or seg.compression_ratio > 2.4:
+            # ตะโกน/เสียงเด็กมักได้ no_speech_prob สูงกว่าพูดปกติ — ผ่อนเกณฑ์กว่ารอบหลัก
+            if seg.no_speech_prob > 0.85 or seg.avg_logprob < -1.2 or seg.compression_ratio > 2.6:
                 continue
             new = [Word(lo + w.start, lo + w.end, w.word, seg_id) for w in seg.words or []
-                   if a - 0.3 <= lo + w.start <= b + 0.3]
+                   if a - 0.3 <= lo + (w.start or 0) <= b + 0.3]
+            if not new and seg.text.strip():
+                # ไม่มี word timestamps แต่มีข้อความ → เก็บทั้งท่อน (อุทานสั้น)
+                new = [Word(max(a, lo + seg.start), min(b, lo + seg.end), seg.text.strip(), seg_id)]
             if new:
                 added += new
                 if confidence is not None:
                     confidence[seg_id] = seg.avg_logprob
                 seg_id += 1
     if added:
-        import logging
-        logging.getLogger(__name__).info("filled %d transcription gaps: %r", len(windows),
-                                         "".join(w.text for w in added)[:300])
+        log.info("filled %d transcription gaps (%d words): %r", len(windows), len(added),
+                 "".join(w.text for w in added)[:300])
     return sorted(words + added, key=lambda w: w.start)
 
 
@@ -288,10 +319,13 @@ def recheck_noisy(mixed16k: Path, vocals16k: Path, bgm16k: Optional[Path], words
                                          word_timestamps=True, beam_size=5, condition_on_previous_text=False)
         new: list[tuple[Word, float]] = []
         for seg in segments:
-            if seg.no_speech_prob > 0.6 or seg.compression_ratio > 2.4:
+            # ผ่อนเกณฑ์: ตะโกน/เสียงสูงมักได้ no_speech_prob สูงทั้งที่มีคำพูด
+            if seg.no_speech_prob > 0.85 or seg.compression_ratio > 2.6:
                 continue
             kept = [Word(lo + w.start, lo + w.end, w.word, seg_id) for w in seg.words or []]
             kept = [w for w in kept if a <= mid(w) <= b and in_speech(mid(w))]
+            if not kept and seg.text.strip() and in_speech((a + b) / 2):
+                kept = [Word(max(a, lo + seg.start), min(b, lo + seg.end), seg.text.strip(), seg_id)]
             if kept:
                 new += [(w, seg.avg_logprob) for w in kept]
                 confidence[seg_id] = seg.avg_logprob

@@ -212,3 +212,78 @@ def test_same_language_skips_review(flags, monkeypatch):
     calls = fake_chat(monkeypatch, lambda s, u: {})
     translate.review_translation(lines(2), "th", "th", hints={"content_type": "continuous"})
     assert not calls
+
+
+# ---- เกตเนื้อหาเลื่อนข้ามท่อน (part bleed)
+def test_source_anchors_numbers_and_latin():
+    assert translate._source_anchors("AI has 1,200 users.") == {"ai", "has", "users", "1200"}
+    assert "0" not in translate._source_anchors("score 0 points")
+
+
+def test_part_bleed_detects_moved_number_and_ai():
+    sources = ["The AI model scored 95.", "Then they left."]
+    # ท่อน 2 ดึง AI + 95 จากท่อน 1
+    bad = ["โมเดลได้คะแนนสูง", "เอไอได้ 95 คะแนน แล้วพวกเขาก็ไป"]
+    assert translate.part_bleed_indices(sources, bad) == [1]
+    good = ["โมเดลเอไอได้ 95 คะแนน", "แล้วพวกเขาก็ไป"]
+    assert translate.part_bleed_indices(sources, good) == []
+
+
+def test_part_bleed_ignores_ai_inside_thai_word():
+    # "ai" ใน "thai" ต้องไม่นับเป็นสมอเอไอ
+    sources = ["AI wins.", "Go."]
+    targets = ["เอไอชนะ", "ไปเลย"]
+    assert translate.part_bleed_indices(sources, targets) == []
+
+
+def test_part_bleed_incomplete_finish_and_healthcare():
+    """ตัดกลางประโยคแล้วแปลจบ / ดึง healthcare จากท่อนถัดไป — เคสจริงจากงานพากย์"""
+    sources = [
+        "And he said, we should stop training radiologists now because it's obvious that within five",
+        "years we won't need any. And I can tell you at UCSF today, we can't hire radiologists",
+    ]
+    bad = [
+        "เขาบอกว่าควรหยุดฝึกแพทย์ภาพถ่ายรังสี เพราะอีกห้าปีข้างหน้าเราคงไม่ต้องมีใครแล้ว",
+        "และฉันบอกได้เลยว่าที่ ยูซีเอสเอฟ จ้างแพทย์ภาพถ่ายรังสีไม่ทันพอ",
+    ]
+    assert 0 in translate.part_bleed_indices(sources, bad)
+    good = [
+        "เขาบอกว่าควรหยุดฝึกแพทย์ภาพถ่ายรังสี เพราะชัดเจนว่าภายในห้า",
+        "ปีข้างหน้าเราคงไม่ต้องมีใครแล้ว และที่ ยูซีเอสเอฟ จ้างแพทย์ภาพถ่ายรังสีไม่ทันพอ",
+    ]
+    assert translate.part_bleed_indices(sources, good) == []
+
+    sources2 = [
+        "Within 20 years, I could see a world where you're getting a decent amount",
+        "of your healthcare from AI, but I still think you're going to want a doctor",
+    ]
+    assert 0 in translate.part_bleed_indices(
+        sources2,
+        ["ภายในยี่สิบปี ฉันมองเห็นโลกที่คุณได้รับบริการด้านสุขภาพจากเอไอในระดับหนึ่ง",
+         "ฉันว่าคุณจะยังอยากได้หมออยู่ดี"],
+    )
+
+
+def test_translate_retries_on_part_bleed(flags, monkeypatch):
+    """โมเดลย้ายตัวเลขข้ามท่อน → เกตรีเจกต์ แล้วรับรอบที่ถูก"""
+    replies = iter([
+        {"sentences": [{"id": 0, "parts": ["บทนำ", "เอไอได้ 95 แล้วจบ"]}]},
+        {"sentences": [{"id": 0, "parts": ["เอไอได้ 95", "แล้วจบ"]}]},
+    ])
+    calls = fake_chat(monkeypatch, lambda s, u: next(replies))
+    utts = [
+        Utterance(id=0, speaker="a", start=0.0, end=2.0, source="AI scored 95.", target=""),
+        Utterance(id=1, speaker="a", start=2.1, end=4.0, source="Then done.", target=""),
+    ]
+    translate._translate_groups([utts], "en", "th", [], "")
+    assert [u.target for u in utts] == ["เอไอได้ 95", "แล้วจบ"]
+    assert len(calls) == 2
+
+
+def test_groups_prompt_includes_part_index(flags):
+    utts = lines(2, target="")
+    hints = translate._with_order(utts, {})
+    _, user = translate._groups_prompt([utts], "zh", "th", [], "", hints)
+    parts = payload_of(user)["sentences"][0]["parts"]
+    assert [p["index"] for p in parts] == [1, 2]
+    assert "ห้ามย้าย" in user
