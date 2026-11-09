@@ -123,9 +123,21 @@ def _sql(sql: str) -> str:
 
 
 def _open() -> psycopg.Connection:
-    raw = psycopg.connect(
-        dsn(schema="studio"), autocommit=False, row_factory=dict_row, connect_timeout=10, prepare_threshold=None,
-    )
+    import socket
+
+    # กัน DNS/`db` ค้างยาวเกิน connect_timeout ของ libpq บน Docker บางเครื่อง
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(10)
+    try:
+        raw = psycopg.connect(
+            dsn(schema="studio"),
+            autocommit=False,
+            row_factory=dict_row,
+            connect_timeout=10,
+            prepare_threshold=None,
+        )
+    finally:
+        socket.setdefaulttimeout(old_timeout)
     raw.execute("SET search_path TO studio")
     raw.execute("SET statement_timeout TO '15s'")
     raw.commit()
