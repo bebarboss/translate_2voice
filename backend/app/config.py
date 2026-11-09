@@ -107,8 +107,11 @@ class Settings:
     mock_pipeline: bool = _bool("MOCK_PIPELINE")
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")
-    db_backend: str = _env("DB_BACKEND", "supabase").lower()
-    supabase_db_url: str = _env("SUPABASE_DB_URL")
+    # postgres = Postgres บน VPS/local | files = JSON ในเครื่อง
+    # ค่า supabase ยังรับได้ชั่วคราว (ชื่อเก่า)
+    db_backend: str = _env("DB_BACKEND", "postgres").lower()
+    # DATABASE_URL ชื่อหลัก; SUPABASE_DB_URL = ชื่อเก่าที่ยังอ่านได้
+    supabase_db_url: str = _env("DATABASE_URL") or _env("SUPABASE_DB_URL")
     auth_enabled: bool = _bool("AUTH_ENABLED", True)
     billing_enabled: bool = _bool("BILLING_ENABLED", True)
     google_client_id: str = _env("GOOGLE_CLIENT_ID")
@@ -257,6 +260,14 @@ class Settings:
 
 
 settings = Settings()
+
+
+def using_postgres() -> bool:
+    """True เมื่อเก็บบัญชี/งานบน Postgres (ไม่ใช่โหมด files)"""
+    backend = settings.db_backend
+    if backend == "supabase":  # ชื่อเก่า
+        backend = "postgres"
+    return backend == "postgres" and bool((settings.supabase_db_url or "").strip())
 
 
 def billing_plan_dicts() -> list[dict[str, Any]]:

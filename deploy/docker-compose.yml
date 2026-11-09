@@ -52,8 +52,8 @@ services:
       # จำกัด CORS ให้โดเมนจริง (ทับ .env ถ้าตั้งใน deploy/.env)
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       # ทับ URL จาก ../.env ให้ชี้ Postgres ใน compose (รหัสผ่านต้องตรง POSTGRES_*)
-      SUPABASE_DB_URL: ${SUPABASE_DB_URL:-postgresql://${POSTGRES_USER:-pakdee}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pakdee}?sslmode=disable}
-      DB_BACKEND: ${DB_BACKEND:-supabase}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-pakdee}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pakdee}?sslmode=disable}
+      DB_BACKEND: ${DB_BACKEND:-postgres}
     volumes:
       - ../data:/app/data
       - ${BACKUP_PATH:-../backups}:/app/backups

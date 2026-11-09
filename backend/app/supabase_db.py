@@ -1,6 +1,6 @@
-"""เข้าถึงตาราง public บน Postgres โดยตรง (เดิมผ่าน Supabase PostgREST)
+"""เข้าถึงตาราง public บน Postgres โดยตรง
 
-เปิดด้วย DB_BACKEND=supabase + SUPABASE_DB_URL
+เปิดด้วย DB_BACKEND=postgres + DATABASE_URL (หรือ SUPABASE_DB_URL ชื่อเก่า)
 รองรับ filter แบบ PostgREST ที่แอปใช้จริง: eq / neq / gte / not.in / order / limit / select
 รวม nested `voice_moods(*)` สำหรับคลังเสียง
 """
@@ -17,7 +17,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
-from .config import settings
+from .config import using_postgres
 
 log = logging.getLogger("dubbing.db")
 
@@ -32,7 +32,7 @@ class DBError(RuntimeError):
 
 
 def enabled() -> bool:
-    return settings.db_backend == "supabase" and bool((settings.supabase_db_url or "").strip())
+    return using_postgres()
 
 
 def _table(name: str) -> str:

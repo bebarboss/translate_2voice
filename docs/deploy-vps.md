@@ -72,8 +72,8 @@ WORKER=modal
 POSTGRES_USER=pakdee
 POSTGRES_PASSWORD=<สุ่มยาว-URL-safe>
 POSTGRES_DB=pakdee
-DB_BACKEND=supabase
-SUPABASE_DB_URL=postgresql://pakdee:<รหัสผ่านเดียวกัน>@db:5432/pakdee?sslmode=disable
+DB_BACKEND=postgres
+DATABASE_URL=postgresql://pakdee:<รหัสผ่านเดียวกัน>@db:5432/pakdee?sslmode=disable
 ```
 
 รหัสผ่านใน URL กับ `POSTGRES_PASSWORD` ต้องตรงกัน และควรเป็นตัวอักษร/ตัวเลข (หลีกเลี่ยง `@ : / # ?`)
@@ -204,7 +204,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec db \
   psql -U pakdee -d pakdee -c "select count(*) from studio.users; select count(*) from studio.jobs; select count(*) from voices;"
 ```
 
-4. ใน `.env` / `deploy/.env` ชี้ `SUPABASE_DB_URL` ไปที่ `db:5432` แล้วรีสตาร์ท API
+4. ใน `.env` / `deploy/.env` ชี้ `DATABASE_URL` ไปที่ `db:5432` แล้วรีสตาร์ท API
 
 สำรอง Postgres:
 
@@ -273,7 +273,7 @@ python scripts/r2_sync_jobs.py --purge   # หลังมั่นใจว่�
 | งานค้างที่ analyze/TTS | `modal app list`, token Modal, `docker compose logs api` |
 | ดิสก์เต็ม | เปิด R2 + `R2_PURGE_LOCAL=1` / ล้าง `data/jobs` งานเก่า / ขยายวอลุ่ม |
 | ดาวน์โหลดผลงาน 404 หลัง purge | ตรวจ `r2_manifest.json`, คีย์ R2, `docker compose logs api` |
-| API ต่อ DB ไม่ได้ | `SUPABASE_DB_URL` โฮสต์ต้องเป็น `db`, รหัสผ่านตรง `POSTGRES_PASSWORD`, `docker compose logs db` |
+| API ต่อ DB ไม่ได้ | `DATABASE_URL` โฮสต์ต้องเป็น `db`, รหัสผ่านตรง `POSTGRES_PASSWORD`, `docker compose logs db` |
 | ตารางหายหลัง recreate | volume `pg_data` ถูกลบ — restore จาก dump |
 
 ดูภาพรวมระบบเพิ่มที่ [project-overview.md](project-overview.md)

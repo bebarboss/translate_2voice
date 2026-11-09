@@ -224,8 +224,8 @@ def _load_transcript(job_dir: Path) -> list[Utterance]:
         except (OSError, ValueError) as exc:
             log.warning("transcript.json เสียใน %s: %s", job_dir.name, exc)
     try:
-        from .config import settings
-        if settings.db_backend == "supabase":
+        from .config import using_postgres
+        if using_postgres():
             from . import jobstore_pg
             rows = jobstore_pg.load_transcript(job_dir.name)
             if rows:

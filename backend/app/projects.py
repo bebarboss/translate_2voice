@@ -2,7 +2,7 @@
 คลิปที่ส่งเข้าโปรเจกต์ จับคู่ผู้พูดกับตัวละครด้วยลายเสียง แล้วตั้งชื่อและเสียงพากย์ให้เอง (เฉพาะที่มั่นใจ)
 ผู้ใช้กด "บันทึกเข้าโปรเจกต์" จากงานไหน ตัวละครในโปรเจกต์ถึงจะเปลี่ยน (ไม่บันทึกเองอัตโนมัติ กันตอนที่แยกเสียงผิดไปกระทบทั้งเรื่อง)
 
-เมื่อ DB_BACKEND=supabase เก็บบน Postgres (schema studio) ไม่เช่นนั้นเป็นไฟล์ JSON ใน data/projects/<id>.json
+เมื่อ DB_BACKEND=postgres เก็บบน Postgres (schema studio) ไม่เช่นนั้นเป็นไฟล์ JSON ใน data/projects/<id>.json
 """
 import json
 import logging
@@ -13,7 +13,7 @@ from typing import Optional
 
 import numpy as np
 
-from .config import settings
+from .config import settings, using_postgres
 from .jobs import _atomic_write
 from .schemas import Project, ProjectCharacter, now
 
@@ -30,7 +30,7 @@ class ProjectStore:
     def __init__(self, data_dir: Path):
         self.root = data_dir / "projects"
         self.root.mkdir(parents=True, exist_ok=True)
-        self._pg = settings.db_backend == "supabase"
+        self._pg = using_postgres()
         self._lock = threading.RLock()
         self._items: dict[str, Project] = {}
         loaded: list[Project] = []
