@@ -52,8 +52,10 @@ class VoiceStore:
     def _load(self) -> list[LibraryVoice]:
         if _cloud_enabled():
             try:
+                log.info("โหลดคลังเสียงจาก Postgres…")
                 rows = [from_row(r) for r in db.select("voices", select=f"{VOICE_COLS},voice_moods(*)")]
                 _mark_cloud(True)
+                log.info("โหลดคลังเสียงจาก Postgres ได้ %s เสียง", len(rows))
                 return rows
             except db.DBError as e:
                 _mark_cloud(False, e)

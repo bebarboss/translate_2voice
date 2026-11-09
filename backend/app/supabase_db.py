@@ -23,7 +23,8 @@ log = logging.getLogger("dubbing.db")
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NESTED = re.compile(r",?\s*(\w+)\(\*\)\s*,?")
-_lock = threading.Lock()
+# RLock — select/upsert ถือล็อกแล้วเรียก _db() ที่ต้องล็อกซ้ำ (Lock ธรรมดา = deadlock ตอนบูต VoiceStore)
+_lock = threading.RLock()
 _conn: Optional[psycopg.Connection] = None
 
 
