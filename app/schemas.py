@@ -166,6 +166,16 @@ class LineDuplicate(BaseModel):
     start: Optional[float] = Field(None, ge=0, description="เวลาเริ่มของประโยคใหม่ ไม่ระบุ = เวลาเดิม (พูดซ้อนกัน)")
 
 
+class LineAdd(BaseModel):
+    """เพิ่มท่อนว่างบนไทม์ไลน์ (เช่นช่วงที่ถอดเสียงหลุด) แล้วพิมพ์บทพากย์เองก่อนพากย์ใหม่"""
+    speaker: str = Field(..., min_length=1, description="ตัวละครของท่อนใหม่")
+    start: float = Field(..., ge=0, description="เวลาเริ่ม (วินาที)")
+    end: Optional[float] = Field(None, ge=0, description="เวลาจบ ไม่ระบุ = start + duration")
+    duration: Optional[float] = Field(None, gt=0.2, le=120, description="ความยาววินาที เมื่อไม่ส่ง end (ค่าเริ่ม 2)")
+    source: str = Field("", max_length=4000, description="ต้นฉบับ (ว่างได้)")
+    target: str = Field("", max_length=4000, description="บทพากย์ (พิมพ์ทีหลังก็ได้)")
+
+
 class Retranslate(BaseModel):
     genre: Optional[str] = Field(None, max_length=80)
     glossary: Optional[str] = Field(None, max_length=2000)

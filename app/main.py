@@ -25,7 +25,7 @@ from . import accounts, actors, backup, consent, daily_metrics, memory, notify, 
 from .account_api import require_admin, require_user, router as account_router
 from .config import settings
 from .jobs import ACTIVE, JobStore, Worker
-from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
+from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineAdd, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
                       UtteranceSplit, VoiceMood, VoiceMoodUpdate, VoiceStatus, VoiceSuggestion)
 from .voice_library import VoiceStore
@@ -664,6 +664,46 @@ def duplicate_line(job_id: str, line_id: int, body: LineDuplicate):
                                  "start": start, "end": end, "take": 0})
     utterances = sorted(utterances + [new], key=lambda u: u.start)
     _save_lines(job, utterances, True, before=before, stage="duplicate")
+    return utterances
+
+
+@app.post("/jobs/{job_id}/transcript/lines", response_model=list[Utterance],
+          dependencies=[Depends(require_key)])
+def add_line(job_id: str, body: LineAdd):
+    """เพิ่มท่อนว่างบนไทม์ไลน์ที่เวลาที่ระบุ (เช่นเสียงถอดหลุด) แล้วพิมพ์บทพากย์ก่อนกดพากย์ใหม่
+    ความยาวเริ่มต้น 2 วินาที ถ้าชนท่อนถัดไปของตัวละครเดียวกันจะย่อให้พอดีช่องว่าง"""
+    from .transcript_edit import MIN_PART, add_blank
+
+    job, utterances = _editable_lines(job_id)
+    if body.speaker not in job.speakers:
+        raise HTTPException(404, f"ไม่รู้จักผู้พูด {body.speaker}")
+    start = round(body.start, 3)
+    if body.end is not None:
+        end = round(body.end, 3)
+    else:
+        end = round(start + float(body.duration or 2.0), 3)
+    if job.duration and job.duration > 0:
+        end = min(end, round(job.duration, 3))
+    # ย่อให้ไม่ชนท่อนถัดไปของตัวละครเดียวกัน (ยังห้ามเริ่มกลางท่อนเดิม)
+    for u in sorted((x for x in utterances if x.speaker == body.speaker), key=lambda x: x.start):
+        if u.end <= start + 0.05:
+            continue
+        if u.start <= start < u.end:
+            raise HTTPException(409, "ตัวละครนี้มีประโยคช่วงเวลานี้อยู่แล้ว คนเดียวพูดทับตัวเองไม่ได้ "
+                                     "เลื่อนหัวอ่านไปช่วงที่ว่าง หรือเลือกตัวละครอื่น")
+        if start < u.start < end:
+            end = round(u.start, 3)
+            break
+    if end - start < MIN_PART:
+        raise HTTPException(400, f"ช่วงว่างสั้นเกินไป ต้องยาวอย่างน้อย {MIN_PART} วินาที")
+    before = [x.model_copy(deep=True) for x in utterances]
+    try:
+        new = add_blank(utterances, speaker=body.speaker, start=start, end=end,
+                        source=body.source, target=body.target, clip_duration=job.duration)
+    except ValueError as exc:
+        raise HTTPException(409 if "ทับ" in str(exc) else 400, str(exc)) from exc
+    utterances = sorted(utterances + [new], key=lambda u: u.start)
+    _save_lines(job, utterances, True, before=before, stage="add")
     return utterances
 
 

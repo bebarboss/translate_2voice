@@ -258,6 +258,18 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         fit_lengths(utterances, job.target_lang, max_sp)
         store.save_transcript(job_id, utterances)
         log.info("job %s: filled %d empty targets after translate (refit)", job_id, n_fill)
+    # พจนานุกรมคำอ่าน + AI เฉพาะชื่อ/ตัวย่อละตินที่เหลือ (ก่อนหน้าตรวจบท / พากย์)
+    if job.target_lang == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
+        stage("speak_latin", lo + span * 0.95)
+        try:
+            n_say = translate_mod.pronounce_targets(utterances)
+            if n_say:
+                store.save_transcript(job_id, utterances)
+                log.info("job %s: pronounce_latin on %d lines", job_id, n_say)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("speak-latin failed for job %s: %s", job_id, exc)
     still_empty = [u.id for u in utterances if (u.source or "").strip() and not (u.target or "").strip()]
     if still_empty:
         # ห้ามส่งเข้า review ด้วยบทว่างทั้งก้อน — same-lang ต้องเต็มแล้ว; ภาษาอื่นให้ข้อความชัด
@@ -526,6 +538,14 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             utterances, source_lang, target, title, job_dir=d, check_cancel=cancel)
         if n_fill:
             store.save_transcript(job_id, utterances)
+    if target == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
+        try:
+            n_say = translate_mod.pronounce_targets(utterances)
+            if n_say:
+                store.save_transcript(job_id, utterances)
+                log.info("job %s: pronounce_latin %d lines before synthesize", job_id, n_say)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("speak-latin before synthesize failed: %s", exc)
             log.info("job %s: filled %d empty targets before synthesize", job_id, n_fill)
     still_empty = [u.id for u in utterances if (u.source or "").strip() and not (u.target or "").strip()]
     if still_empty:
@@ -626,6 +646,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
     # ซิงค์ปากบังคับจังหวะหยุดตามต้นฉบับ แม้ PAUSE_MATCH=0
     use_pauses = (settings.pause_match or lip_sync) and not settings.mock_pipeline
+    # แพ็กชิ้น: ต่อพูดติดกัน ไม่ฝังเงียบตามเวลา EN (ยกเว้น lip_sync ที่ต้องยึดปาก)
+    pack_pauses = bool(settings.pause_pack) and use_pauses and not lip_sync
 
     def marked_chunks(p: _Plan) -> dict:
         """ประโยคที่มีจุด / ใส่ช่วงที่แบ่งไว้ในคีย์ด้วย: วิธีแบ่งตาม / เปลี่ยน (แก้บท หรือปรับ pauses.plan) ต้องพากย์ใหม่
@@ -643,7 +665,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                          max_speedup=p.max_speedup, max_slowdown=p.max_slowdown,
                          fit="duration", model=settings.f5_model, mock=settings.mock_pipeline,
                          prosody=[match_prosody, settings.prosody_max_shift, settings.prosody_max_range],
-                         pauses=[use_pauses, settings.min_pause_sec, 3],
+                         pauses=[use_pauses, settings.min_pause_sec, 4, pack_pauses,
+                                 settings.pause_pack_max_sec, settings.pause_pack_ratio],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
                          # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
                          **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))
@@ -698,16 +721,25 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
 
     def render(batch: list[_Plan], lo: float, hi: float) -> None:
         """พากย์ทั้งชุดผ่าน gpu.synthesize_lines แล้วต่อช่วงย่อยของแต่ละประโยคเป็นเสียงเดียว"""
+        from .translate import estimate_seconds
+
         lines = []
         for p in batch:
             if not use_pauses:
                 p.chunks = [pauses.Chunk(p.g[0].start, p.g[-1].end, pauses.strip_marks(p.text()))]
-            else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ
+            else:  # พากย์ทีละช่วงตามจังหวะหยุดของต้นฉบับ (ตัดบท); วิธีวางเสียงดู pack_pauses
                 p.chunks = pauses.plan(p.g, orig, orig_sr, settings.min_pause_sec, words=words)
-            lines += [{"id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
-                       "target_lang": target, "slot": max(c.end - c.start, 0.3), "max_speedup": p.max_speedup,
-                       "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True}
-                      for k, c in enumerate(p.chunks)]
+            for k, c in enumerate(p.chunks):
+                if pack_pauses:
+                    # ให้โมเดลพูดจังหวะธรรมชาติตามความยาวบท ไม่ยัดเข้าช่วงเวลา EN ของชิ้นย่อย
+                    chunk_slot = max(0.35, estimate_seconds(c.text, target))
+                else:
+                    chunk_slot = max(c.end - c.start, 0.3)
+                lines.append({
+                    "id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
+                    "target_lang": target, "slot": chunk_slot, "max_speedup": p.max_speedup,
+                    "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True,
+                })
         progress = (lambda f: stage("tts", lo + (hi - lo) * f)) if gpu.remote() else None
         checks: dict = {}
         voices_ = gpu.synthesize_lines(vocals, lines, rs.f5_steps, settings.f5_speed, library_paths, refs_dir,
@@ -720,20 +752,34 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             bad = worst is not None and worst[0] < settings.dub_check_min
             for u in p.g:
                 u.heard, u.heard_score = (worst[1], worst[0]) if bad else ("", worst[0] if worst else None)
-            out, cursor = np.zeros(0, dtype=np.float32), 0
+            pieces: list[np.ndarray] = []
             for k, c in enumerate(p.chunks):
                 v = voices_[f"{first.id}:{k}"]
                 if match_prosody:
                     seg = orig[int(c.start * orig_sr): int(c.end * orig_sr)]
                     v = prosody.match(v, sr, seg, orig_sr, settings.prosody_max_shift, settings.prosody_max_range)
-                v = audio.trim_silence(v, sr)
-                # วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
-                at = max(int((c.start - first.start) * sr), cursor + (int(0.08 * sr) if cursor else 0))
-                out = np.concatenate([out, np.zeros(max(0, at - len(out)), dtype=np.float32), v])
-                cursor = len(out)
-            if len(p.chunks) > 1:
-                log.info("line %d: %d chunks %s", first.id, len(p.chunks),
-                         [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
+                pieces.append(audio.trim_silence(v, sr))
+            if pack_pauses and len(pieces) > 1:
+                gaps = pauses.pack_gaps(
+                    p.chunks,
+                    min_gap=settings.pause_pack_min_sec,
+                    max_gap=settings.pause_pack_max_sec,
+                    ratio=settings.pause_pack_ratio,
+                )
+                out = pauses.assemble_packed(pieces, gaps, sr)
+                log.info("line %d: packed %d chunks gaps=%s", first.id, len(p.chunks),
+                         [round(g, 2) for g in gaps])
+            else:
+                # ซิงค์ปาก / ชิ้นเดียว: วางตามเวลาต้นฉบับ
+                out, cursor = np.zeros(0, dtype=np.float32), 0
+                for k, c in enumerate(p.chunks):
+                    v = pieces[k]
+                    at = max(int((c.start - first.start) * sr), cursor + (int(0.08 * sr) if cursor else 0))
+                    out = np.concatenate([out, np.zeros(max(0, at - len(out)), dtype=np.float32), v])
+                    cursor = len(out)
+                if len(p.chunks) > 1:
+                    log.info("line %d: %d chunks %s", first.id, len(p.chunks),
+                             [(round(c.start, 1), round(c.end, 1)) for c in p.chunks])
             p.voice = out
 
     def _save_plan(p: _Plan) -> None:
@@ -786,6 +832,18 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         if again2:
             log.info("re-dub %d still-long lines (aggressive shorten)", len(again2))
             render(again2, 0.90, 0.93)
+        # รอบสาม: ยังล้นหนักหลังแพ็ก/ย่อ → ย่อแรงสุดแล้วพากย์อีกครั้ง (กัน lip_overflow)
+        again3 = []
+        for p in batch:
+            if can_shorten and len(p.voice) / sr > p.slot * 1.12:
+                cancel()
+                before = p.text()
+                shorten(p.g, target, target_ratio=0.65)
+                if p.text() != before:
+                    again3.append(p)
+        if again3:
+            log.info("re-dub %d overflow lines (final shorten)", len(again3))
+            render(again3, 0.92, 0.94)
         for p in batch:
             # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
             _save_plan(p)

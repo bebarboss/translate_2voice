@@ -70,3 +70,27 @@ def test_tidy_marks_moves_mark_before_connector():
     assert tidy_marks("ฉันจัดให้ได้ ถ้า / เราตั้งชื่อว่า บีสต์") == "ฉันจัดให้ได้ / ถ้าเราตั้งชื่อว่า บีสต์"
     assert tidy_marks("เดี๋ยว / ระวังตัว") == "เดี๋ยว / ระวังตัว"
     assert tidy_marks("24/7 ตลอด") == "24/7 ตลอด"
+
+
+def test_pack_gaps_caps_long_source_pause():
+    chunks = [
+        pauses.Chunk(0.0, 1.0, "ก"),
+        pauses.Chunk(3.0, 4.0, "ข"),  # หยุดต้นฉบับ 2 วินาที
+        pauses.Chunk(4.2, 5.0, "ค"),  # หยุดสั้น 0.2
+    ]
+    gaps = pauses.pack_gaps(chunks, min_gap=0.08, max_gap=0.28, ratio=0.35)
+    assert len(gaps) == 2
+    assert gaps[0] == 0.28  # 2*0.35=0.7 → ตัดที่ max
+    assert abs(gaps[1] - max(0.08, 0.2 * 0.35)) < 1e-6
+
+
+def test_assemble_packed_no_absolute_holes():
+    sr = 100
+    a = np.ones(50, dtype=np.float32)   # 0.5s
+    b = np.full(30, 2.0, dtype=np.float32)  # 0.3s
+    # ถ้าฝังตามเวลา EN (ช่องว่าง 2s) จะยาวมาก — แพ็กใส่แค่ 0.1s
+    out = pauses.assemble_packed([a, b], [0.1], sr)
+    assert len(out) == 50 + 10 + 30
+    assert float(out[0]) == 1.0
+    assert float(out[-1]) == 2.0
+    assert float(np.max(np.abs(out[50:60]))) == 0.0

@@ -2,7 +2,11 @@
 
 พากย์ทั้งประโยครวดเดียว F5-TTS จะพูดต่อกันไม่หยุด ทั้งที่นักแสดงเว้นจังหวะ (หยุดหายใจ หยุดคิด กลั้นอารมณ์ เน้นคำ)
 จึงหาช่วงเงียบกลางประโยคในเสียงต้นฉบับ ตัดบทไทยตรงตำแหน่งเดียวกัน (ที่ขอบท่อน จุดแบ่งวลี หรือขอบคำที่ใกล้ที่สุด)
-แล้วพากย์ทีละช่วง วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
+แล้วพากย์ทีละช่วง
+
+โหมดซิงค์ปาก (lip_sync): วางแต่ละช่วงตรงเวลาที่นักแสดงพูด
+โหมดแพ็ก (ค่าเริ่มต้นตอนพากย์ข้ามภาษา): ต่อช่วงพูดติดกัน เว้นหายใจสั้น ๆ ไม่ฝังช่วงเงียบยาวตามจังหวะต้นฉบับ
+(จังหวะ EN ≠ จังหวะความหมายไทย — ฝังเงียบตามเวลาต้นฉบับจะฟังเหมือนเว้นคำมั่ว)
 """
 import re
 import unicodedata
@@ -16,6 +20,40 @@ class Chunk(NamedTuple):
     start: float
     end: float
     text: str
+
+
+def pack_gaps(
+    chunks: list[Chunk],
+    *,
+    min_gap: float = 0.08,
+    max_gap: float = 0.28,
+    ratio: float = 0.35,
+) -> list[float]:
+    """ช่องว่างระหว่างชิ้นตอนแพ็ก: สัดส่วนของช่วงหยุดต้นฉบับ แต่จำกัดไม่ให้ยาวเกิน max_gap"""
+    out: list[float] = []
+    for a, b in zip(chunks, chunks[1:]):
+        src = max(0.0, float(b.start) - float(a.end))
+        out.append(min(max_gap, max(min_gap, src * ratio)))
+    return out
+
+
+def assemble_packed(
+    pieces: list[np.ndarray],
+    gaps_sec: list[float],
+    sr: int,
+) -> np.ndarray:
+    """ต่อชิ้นเสียงด้วยช่องว่างที่กำหนด (วินาที) — ไม่เลื่อนตามเวลา absolute ของต้นฉบับ"""
+    if not pieces:
+        return np.zeros(0, dtype=np.float32)
+    if len(gaps_sec) != max(0, len(pieces) - 1):
+        raise ValueError("gaps_sec length must be len(pieces)-1")
+    out = [np.asarray(pieces[0], dtype=np.float32).reshape(-1)]
+    for gap, piece in zip(gaps_sec, pieces[1:]):
+        n = max(0, int(float(gap) * sr))
+        if n:
+            out.append(np.zeros(n, dtype=np.float32))
+        out.append(np.asarray(piece, dtype=np.float32).reshape(-1))
+    return np.concatenate(out) if out else np.zeros(0, dtype=np.float32)
 
 
 def find_pauses(seg: np.ndarray, sr: int, min_pause: float) -> list[tuple[float, float]]:

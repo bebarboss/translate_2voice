@@ -153,6 +153,13 @@ class Settings:
     modal_app: str = _env("MODAL_APP", "dubbing-gpu")  # ชื่อแอปที่ modal deploy ไว้ (ตรงกับ modal_app.py)
     modal_max_jobs: int = _int("MODAL_MAX_JOBS", 4)  # จำนวนงานที่ส่ง Modal พร้อมกันได้
     modal_tts_batch: int = _int("MODAL_TTS_BATCH", 40)  # ประโยคต่อชุดที่ส่งพากย์ (หลายชุดรันพร้อมกันคนละ GPU)
+    # คลิปยาว: ตัดวิเคราะห์เป็นชิ้นขนานบน Modal (วินาที) — 0 = ปิด
+    analyze_chunk_sec: float = _float("ANALYZE_CHUNK_SEC", 480)  # ขนาดชิ้น (~8 นาที)
+    analyze_chunk_overlap_sec: float = _float("ANALYZE_CHUNK_OVERLAP_SEC", 10)
+    analyze_chunk_min_sec: float = _float("ANALYZE_CHUNK_MIN_SEC", 720)  # เปิดเมื่อคลิป ≥ นี้ (~12 นาที)
+    # โหมดเร็วตอนวิเคราะห์แบบชิ้น: ใช้ Whisper เล็กกว่า (ว่าง = ไม่สลับ)
+    analyze_fast: bool = _bool("ANALYZE_FAST", True)
+    analyze_fast_whisper: str = _env("ANALYZE_FAST_WHISPER", "medium")
     # คิวงานหลายผู้ใช้ (jobs.Worker)
     light_workers: int = _int("LIGHT_WORKERS", 2)  # งานเบา (ฝังซับ แปลใหม่) รันพร้อมกันได้กี่งาน แยกจากงานหนัก
     user_max_jobs: int = _int("USER_MAX_JOBS", 2)  # ผู้ใช้หนึ่งคนรันงานหนักพร้อมกันได้กี่งาน (0 = ไม่จำกัด)
@@ -242,6 +249,11 @@ class Settings:
     translate_review: bool = _bool("TRANSLATE_REVIEW", True)
     pause_match: bool = _bool("PAUSE_MATCH", True)  # เว้นจังหวะหยุดกลางประโยคตามต้นฉบับ (pauses.py)
     min_pause_sec: float = _float("MIN_PAUSE_SEC", 0.3)  # ช่วงเงียบสั้นกว่านี้ไม่นับเป็นจังหวะหยุด
+    # พากย์ข้ามภาษา: ต่อชิ้นพูดแบบแพ็ก (ไม่ฝังเงียบยาวตามเวลาต้นฉบับ) — ปิดอัตโนมัติตอน lip_sync
+    pause_pack: bool = _bool("PAUSE_PACK", True)
+    pause_pack_min_sec: float = _float("PAUSE_PACK_MIN_SEC", 0.08)
+    pause_pack_max_sec: float = _float("PAUSE_PACK_MAX_SEC", 0.28)
+    pause_pack_ratio: float = _float("PAUSE_PACK_RATIO", 0.35)  # สัดส่วนของช่วงหยุดต้นฉบับที่ยอมใส่จริง
     # ต้นฉบับภาษาเดียวกับปลายทาง: โคลนเสียงต้นฉบับ (ไม่ใช้คลัง) + รวมท่อนน้อย + ยึดจังหวะ pause
     lip_sync_same_lang: bool = _bool("LIP_SYNC_SAME_LANG", True)
     # ก่อนแปล: จับท่อนเวลา/บทพัง รัดเวลาจากคำ ถอดช่วงนั้นใหม่ถ้าทำได้
@@ -254,6 +266,8 @@ class Settings:
     ai_fill_empty: bool = _bool("AI_FILL_EMPTY", True)
     # หลังแปล/ย่อ → ปรับสำนวนให้ออกเสียงเป็นบทละครธรรมชาติ (ลดแก้มือ)
     ai_naturalize: bool = _bool("AI_NATURALIZE", True)
+    # หลังพจนานุกรมคำอ่าน → ให้ AI แปลงชื่อ/ตัวย่อละตินที่เหลือเป็นคำอ่านไทย (แคชที่ data/latin_readings.json)
+    ai_speak_latin: bool = _bool("AI_SPEAK_LATIN", True)
     # ความดังของเสียงร้อง กรี๊ด อุทานจากต้นฉบับในช่วงที่ไม่มีบท (0 = ตัดทิ้ง)
     nonspeech_gain: float = _float("NONSPEECH_GAIN", 1.0)
     breath_keep: bool = _bool("BREATH_KEEP", True)  # ใส่เสียงหายใจของนักแสดงในช่วงหยุดกลางประโยค

@@ -159,6 +159,17 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const removeLine = (u: Utterance) => restructure(() => api.deleteLine(job.id, u.id), tx("ลบประโยคแล้ว"));
 
+  /** เพิ่มท่อนว่างที่เวลา start ให้ตัวละคร speaker (ความยาววินาที ไม่ระบุ = 2) คืนประโยคใหม่ หรือ null */
+  const addBlank = async (speaker: string, start: number, duration = 2): Promise<Utterance | null> => {
+    let created: Utterance | null = null;
+    await restructure(async () => {
+      const before = new Set((lines ?? []).map((x) => x.id));
+      const res = await api.addLine(job.id, { speaker, start: Math.round(start * 100) / 100, duration });
+      created = res.find((x) => !before.has(x.id)) ?? null;
+    }, tx("เพิ่มกล่องเวลาแล้ว พิมพ์บทพากย์แล้วกดพากย์ใหม่"));
+    return created;
+  };
+
   const changeSpeaker = async (u: Utterance, value: string) => {
     if (value !== NEW_SPEAKER) { setDraft(u.id, { speaker: value }); return; }
     setBusy("edit");
@@ -188,7 +199,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
-    saveLines, split, splitAt, merge, duplicate, removeLine, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
+    saveLines, split, splitAt, merge, duplicate, addBlank, removeLine, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
     overlaps,
   };
 }

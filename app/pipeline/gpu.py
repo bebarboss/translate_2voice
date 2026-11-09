@@ -352,10 +352,16 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
     checks: ใส่ผลตรวจเสียงพากย์ id → [คะแนน, ที่ได้ยิน] (เฉพาะช่วงที่ line["check_text"])"""
     from .tts import SAMPLE_RATE
 
+    speak_text = line["text"]
+    if (line.get("target_lang") or "th") == "th":
+        from .translate import pronounce_thai
+        # พจนานุกรม + แคช AI (บน Modal ถ้าไม่มีคีย์จะใช้แค่พจนานุกรม/แคชที่ฝังในบทแล้ว)
+        speak_text = pronounce_thai(speak_text, use_ai=bool(settings.typhoon_api_key) and settings.ai_speak_latin)
+
     # F5-TTS สุ่มได้เสียงเงียบเป็นครั้งคราว → สร้างใหม่ (สูงสุด 3 รอบ)
     def once():
         for _ in range(3):
-            v = synthesize(ref_path, line["ref_text"], line["text"], speed, steps, line["target_lang"],
+            v = synthesize(ref_path, line["ref_text"], speak_text, speed, steps, line["target_lang"],
                            slot=line["slot"], max_speedup=line["max_speedup"], max_slowdown=line["max_slowdown"])
             if len(v) and np.isfinite(v).all() and np.abs(v).max() > 0.02:
                 break
@@ -383,14 +389,14 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
     if line.get("check_text") and settings.dub_check and not settings.mock_pipeline:
         from .transcribe import heard, match_score
         text = heard(voice, SAMPLE_RATE, line["target_lang"])
-        tries = [(match_score(line["text"], text), text, voice)]
+        tries = [(match_score(speak_text, text), text, voice)]
         for _ in range(settings.dub_check_retries):
             if tries[-1][0] >= settings.dub_check_min:
                 break
             log.info("line %s: dub sounds off (%.2f, heard %r), retrying", line["id"], tries[-1][0], tries[-1][1])
             v = once()
             text = heard(v, SAMPLE_RATE, line["target_lang"])
-            tries.append((match_score(line["text"], text), text, v))
+            tries.append((match_score(speak_text, text), text, v))
         score, text, voice = max(tries, key=lambda x: x[0])
         if checks is not None:
             checks[line["id"]] = [round(score, 3), text]
@@ -486,7 +492,8 @@ def serve_synthesize(vocals_flac: bytes, lines: list[dict], steps: int, speed: f
 
 # ================================================================ ฝั่งเครื่องนี้ (เรียก Modal)
 def _run(name: str, calls: list[tuple[tuple, dict]], on_progress=None,
-         check_cancel: Optional[Callable[[], None]] = None) -> list:
+         check_cancel: Optional[Callable[[], None]] = None,
+         config_override: Optional[dict] = None) -> list:
     """เรียกฟังก์ชันบน Modal หลายชุดพร้อมกัน (spawn) แล้วรอผล ระหว่างรออ่านความคืบหน้าและเช็กการยกเลิก
     ยกเลิกหรือล้มเหลวกลางทาง → ยกเลิกชุดที่ยังรันอยู่บน Modal ด้วย จะได้ไม่เสียเครดิตเปล่า"""
     # MODAL_TOKEN_ID= ที่เว้นว่างใน .env จะทับคีย์จาก modal setup → ลบทิ้ง
@@ -509,6 +516,8 @@ def _run(name: str, calls: list[tuple[tuple, dict]], on_progress=None,
                 config[key] = knob(key, config[key])
     except Exception:  # noqa: BLE001
         config = {k: getattr(settings, k) for k in REMOTE_FIELDS}
+    if config_override:
+        config.update({k: v for k, v in config_override.items() if k in REMOTE_FIELDS})
     keys = [uuid.uuid4().hex for _ in calls]
     handles, results, finished = [], [None] * len(calls), [False] * len(calls)
     try:
@@ -561,11 +570,226 @@ def _follow(stage: Stage):
     return on_progress
 
 
+def _follow_chunks(stage: Stage, n: int):
+    """เฉลี่ยความคืบหน้าหลายชิ้น → ขั้นรวม (0.1–0.85)"""
+    lasts = [None] * n
+
+    def on_progress(states, finished):
+        total = 0.0
+        name = "separate_vocals"
+        for i, (state, done) in enumerate(zip(states, finished)):
+            if done:
+                total += 1.0
+                continue
+            if state:
+                lasts[i] = state
+                name = state[0]
+                total += float(state[1] or 0)
+            elif lasts[i]:
+                name = lasts[i][0]
+                total += float(lasts[i][1] or 0)
+        frac = total / max(n, 1)
+        stage(name, round(0.1 + 0.75 * frac, 3))
+    return on_progress
+
+
+def _analyze_fast_config() -> Optional[dict]:
+    """โหมดเร็วสำหรับคลิปยาว: สลับ Whisper เป็นรุ่นเล็กกว่า"""
+    if not settings.analyze_fast:
+        return None
+    model = (settings.analyze_fast_whisper or "").strip()
+    if not model or model == settings.whisper_model:
+        return None
+    log.info("analyze fast mode: whisper_model %s → %s", settings.whisper_model, model)
+    return {"whisper_model": model}
+
+
+def _flac_slice(src: Path, start: float, end: float, sr: int = SOURCE_SR) -> bytes:
+    """ตัดช่วงเสียงเป็น FLAC mono สำหรับส่ง Modal"""
+    dur = max(0.05, end - start)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "audio.flac"
+        audio.run([
+            "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
+            "-i", src, "-ac", "1", "-ar", sr, "-c:a", "flac", out,
+        ])
+        return out.read_bytes()
+
+
+def _write_features(work: Path, features: dict) -> None:
+    lines = features.get("lines") or {}
+    payload = {
+        "lines": {str(k): v for k, v in lines.items()},
+        "speech": features.get("speech") or [],
+    }
+    (work / ANALYSIS_FILE).write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _plan_analyze_windows(mixed: Path, preseparated: bool):
+    from . import chunks as chunking
+
+    if preseparated or settings.analyze_chunk_sec <= 0 or settings.analyze_chunk_min_sec <= 0:
+        return []
+    try:
+        duration = audio.probe_duration(mixed)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("probe_duration failed (%s); skip chunk analyze", exc)
+        return []
+    return chunking.plan_windows(
+        duration,
+        chunk_sec=settings.analyze_chunk_sec,
+        overlap_sec=settings.analyze_chunk_overlap_sec,
+        min_total_sec=settings.analyze_chunk_min_sec,
+    )
+
+
+def _analyze_chunked_remote(
+    mixed: Path, work: Path, windows, source_lang: Optional[str], num_speakers: Optional[int],
+    stage: Stage, check_cancel: Optional[Callable[[], None]],
+) -> dict:
+    from . import chunks as chunking
+
+    stage("separate_vocals", 0.1)
+    overlap = settings.analyze_chunk_overlap_sec
+    calls = []
+    for win in windows:
+        data = _flac_slice(mixed, win.start, win.end)
+        log.info(
+            "analyze chunk %d/%d: %.1f–%.1f s (upload %.1f MB)",
+            win.index + 1, len(windows), win.start, win.end, len(data) / 1e6,
+        )
+        calls.append(((data, source_lang, num_speakers), {}))
+
+    # จำกัดจำนวน spawn พร้อมกันตาม MODAL_MAX_JOBS
+    max_jobs = max(1, settings.modal_max_jobs)
+    results: list = [None] * len(calls)
+    fast = _analyze_fast_config()
+    for batch_start in range(0, len(calls), max_jobs):
+        batch = calls[batch_start: batch_start + max_jobs]
+        batch_idx = list(range(batch_start, batch_start + len(batch)))
+
+        def _progress(states, finished, _idx=batch_idx):
+            # วาง state ของแบตช์ลงช่องรวมทั้งคลิป
+            full_states = [None] * len(calls)
+            full_fin = [bool(results[i]) for i in range(len(calls))]
+            for j, i in enumerate(_idx):
+                full_states[i] = states[j]
+                full_fin[i] = finished[j] or full_fin[i]
+            _follow_chunks(stage, len(calls))(full_states, full_fin)
+
+        batch_res = _run(
+            "analyze_audio", batch, _progress, check_cancel, config_override=fast,
+        )
+        for i, res in zip(batch_idx, batch_res):
+            results[i] = res
+
+    merged = chunking.merge_chunk_results(windows, results)
+
+    def _as_2d(x: np.ndarray) -> np.ndarray:
+        return x[:, None] if x.ndim == 1 else x
+
+    vocals_parts, bgm_parts = [], []
+    for win, res in zip(windows, results):
+        v, vsr = _decode(res["vocals_flac"])
+        b, bsr = _decode(res["bgm_flac"])
+        vocals_parts.append((win, _as_2d(v), vsr))
+        bgm_parts.append((win, _as_2d(b), bsr))
+    v_wav, v_sr = chunking.stitch_wavs(vocals_parts, overlap)
+    b_wav, b_sr = chunking.stitch_wavs(bgm_parts, overlap)
+    out = {"vocals": work / "vocals.wav", "bgm": work / "bgm.wav"}
+    sf.write(out["vocals"], v_wav, v_sr)
+    sf.write(out["bgm"], b_wav, b_sr)
+    _write_features(work, merged["features"])
+    stage("transcribe", 0.9)
+    return {
+        **out,
+        "turns": merged["turns"],
+        "words": merged["words"],
+        "lang": merged["lang"],
+        "utterances": merged["utterances"],
+        "speakers": merged["speakers"],
+        "recheck": merged.get("recheck"),
+    }
+
+
+def _analyze_chunked_local(
+    mixed: Path, work: Path, windows, source_lang: Optional[str], num_speakers: Optional[int],
+    stage: Stage,
+) -> dict:
+    """เครื่องนี้: วิเคราะห์ทีละชิ้น (กัน OOM) แล้วรวม — ใช้โหมดเร็วถ้าเปิด"""
+    from . import chunks as chunking
+
+    overlap = settings.analyze_chunk_overlap_sec
+    fast = _analyze_fast_config()
+    old_whisper = settings.whisper_model
+    if fast and "whisper_model" in fast:
+        object.__setattr__(settings, "whisper_model", fast["whisper_model"])
+    parts = []
+    vocals_parts, bgm_parts = [], []
+    try:
+        for i, win in enumerate(windows):
+            stage("separate_vocals", round(0.1 + 0.7 * i / len(windows), 3))
+            chunk_dir = work / f"_chunk_{win.index:02d}"
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            sliced = chunk_dir / "mixed.wav"
+            audio.run([
+                "ffmpeg", "-y", "-ss", f"{win.start:.3f}", "-t", f"{win.duration:.3f}",
+                "-i", mixed, "-ac", "2", "-ar", str(SOURCE_SR), "-c:a", "pcm_s16le", sliced,
+            ])
+            res = analyze_core(sliced, chunk_dir, source_lang, num_speakers, stage)
+            features = features_core(res["utterances"], res["vocals"], res["lang"])
+            parts.append({
+                "turns": [t.__dict__ for t in res["turns"]],
+                "words": [w.__dict__ for w in res["words"]],
+                "utterances": [u.model_dump() for u in res["utterances"]],
+                "speakers": res["speakers"],
+                "detected_lang": res["lang"],
+                "features": features,
+                "recheck": res.get("recheck"),
+            })
+            v, vsr = _mono(res["vocals"])
+            b, bsr = _mono(res["bgm"])
+            vocals_parts.append((win, v[:, None], vsr))
+            bgm_parts.append((win, b[:, None], bsr))
+    finally:
+        if fast and "whisper_model" in fast:
+            object.__setattr__(settings, "whisper_model", old_whisper)
+
+    merged = chunking.merge_chunk_results(windows, parts)
+    v_wav, v_sr = chunking.stitch_wavs(vocals_parts, overlap)
+    b_wav, b_sr = chunking.stitch_wavs(bgm_parts, overlap)
+    out = {"vocals": work / "vocals.wav", "bgm": work / "bgm.wav"}
+    sf.write(out["vocals"], v_wav, v_sr)
+    sf.write(out["bgm"], b_wav, b_sr)
+    _write_features(work, merged["features"])
+    return {
+        **out,
+        "turns": merged["turns"],
+        "words": merged["words"],
+        "lang": merged["lang"],
+        "utterances": merged["utterances"],
+        "speakers": merged["speakers"],
+        "recheck": merged.get("recheck"),
+    }
+
+
 def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: Optional[int],
             stage: Stage, check_cancel: Optional[Callable[[], None]] = None,
             preseparated: bool = False) -> dict:
     """คืน vocals, bgm (ไฟล์ใน work), turns, words, lang, utterances, speakers
-    preseparated=True: แทร็กคนละคนแล้ว (ไทม์ไลน์) ข้ามแยกพูด/เพลงและแยกผู้พูด"""
+    preseparated=True: แทร็กคนละคนแล้ว (ไทม์ไลน์) ข้ามแยกพูด/เพลงและแยกผู้พูด
+    คลิปยาวเกินเกณฑ์ → ตัดชิ้น + วิเคราะห์ขนาน (Modal) / ทีละชิ้น (local)"""
+    windows = _plan_analyze_windows(mixed, preseparated)
+    if windows:
+        log.info("analyze chunked: %d windows (%.0f–%.0f s each, overlap %.0f s)",
+                 len(windows), settings.analyze_chunk_sec, settings.analyze_chunk_sec,
+                 settings.analyze_chunk_overlap_sec)
+        if remote():
+            return _analyze_chunked_remote(
+                mixed, work, windows, source_lang, num_speakers, stage, check_cancel,
+            )
+        return _analyze_chunked_local(mixed, work, windows, source_lang, num_speakers, stage)
+
     if not remote():
         return analyze_core(mixed, work, source_lang, num_speakers, stage, preseparated=preseparated)
 

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { fileUrl, type Job, type Utterance } from "@/lib/api";
 import { fmtTime, speakerColor } from "@/lib/format";
 import type { Transcript } from "@/lib/useTranscript";
-import { CopyIcon, PasteIcon, ScissorsIcon, XIcon } from "./Icons";
+import { CopyIcon, PasteIcon, PlusIcon, ScissorsIcon, XIcon } from "./Icons";
 
 import { tx } from "@/lib/i18n";
 /** เลเยอร์เสียงของแต่ละตัวละครบนเส้นเวลา คลิกบล็อกเพื่อเลือกประโยค ลากบล็อกเพื่อเลื่อนเวลาหรือย้ายไปตัวละครอื่น
@@ -222,6 +222,16 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const created = await tr.duplicate(src, lane, start);
     if (created) onPick(created);
   };
+  /** เพิ่มกล่องว่างที่หัวอ่าน — เลเยอร์ที่เมาส์ชี้ หรือเลเยอร์ของประโยคที่เลือก หรือตัวละครแรก */
+  const addBlank = async () => {
+    if (!speakers.length || busy) return;
+    const hover = pointer.current && laneAt(pointer.current.x, pointer.current.y);
+    const picked = highlight != null ? sorted.find((u) => u.id === highlight) : null;
+    const lane = hover || (picked ? tr.draftOf(picked).speaker : speakers[0]);
+    const start = Math.round(t * 100) / 100;
+    const created = await tr.addBlank(lane, start);
+    if (created) onPick(created);
+  };
   const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   keys.current = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
@@ -314,6 +324,11 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
               <PasteIcon />  {tx("วาง")}
             </button>
           </div>
+          <button type="button" className="btn small" disabled={!!busy || !speakers.length}
+            onClick={addBlank}
+            title={tx("เพิ่มกล่องว่างที่หัวอ่าน (ชี้เลเยอร์ตัวละครก่อนได้) แล้วพิมพ์บทพากย์ — ใช้ตอนเสียงถอดหลุด")}>
+            <PlusIcon />  {tx("เพิ่มกล่อง")}
+          </button>
         </div>
       </div>
       <div ref={lanesRef} className={`lanes${tool === "cut" ? " cutting" : ""}${zoom > 1 ? " zoomed" : ""}`}>
@@ -427,7 +442,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
       )}
-      <span className="dim">{tx("ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ · ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ")}</span>
+      <span className="dim">{tx("ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ · ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · เสียงถอดหลุด: เลื่อนหัวอ่านไปช่วงนั้น ชี้เลเยอร์ตัวละคร แล้วกด “เพิ่มกล่อง” พิมพ์บทพากย์ · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ")}</span>
     </div>
   );
 }

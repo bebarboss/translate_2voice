@@ -66,6 +66,26 @@ def merge(a: Utterance, b: Utterance) -> Utterance:
                                 "target": join(a.target, b.target), "source": join(a.source, b.source)})
 
 
+def add_blank(utterances: list[Utterance], *, speaker: str, start: float, end: float,
+              source: str = "", target: str = "", clip_duration: Optional[float] = None) -> Utterance:
+    """สร้างท่อนว่างในช่วง start–end ให้ตัวละคร speaker (คนเดียวกันห้ามทับเวลาตัวเอง)"""
+    start = round(max(0.0, start), 3)
+    end = round(end, 3)
+    if clip_duration is not None and clip_duration > 0:
+        end = min(end, round(float(clip_duration), 3))
+    if end - start < MIN_PART:
+        raise ValueError(f"ท่อนใหม่ต้องยาวอย่างน้อย {MIN_PART} วินาที")
+    for u in utterances:
+        if u.speaker != speaker:
+            continue
+        if min(end, u.end) - max(start, u.start) > 0.1:
+            raise ValueError("ตัวละครนี้มีประโยคช่วงเวลานี้อยู่แล้ว คนเดียวพูดทับตัวเองไม่ได้ "
+                             "เลือกตัวละครอื่น หรือเลื่อนหัวอ่านไปช่วงที่ว่าง")
+    new_id = (max((u.id for u in utterances), default=0) + 1)
+    return Utterance(id=new_id, speaker=speaker, start=start, end=end,
+                     source=(source or "").strip(), target=(target or "").strip())
+
+
 def export_stems(d: Path, utterances: list[Utterance], speakers: list[str]) -> None:
     """สร้างเสียงแยกรายตัวละครใหม่ตามป้ายผู้พูดในบท (หลังผู้ใช้ย้ายประโยคหรือเพิ่มลบตัวละคร)"""
     from .pipeline.diarize import export_speaker_stems, load_turns, save_turns

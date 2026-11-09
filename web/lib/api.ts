@@ -527,6 +527,9 @@ export const api = {
     request<Utterance[]>(`/jobs/${id}/transcript/${lineId}/split`, json("POST", at)),
   duplicateLine: (id: string, lineId: number, body: { speaker?: string; start?: number }) =>
     request<Utterance[]>(`/jobs/${id}/transcript/${lineId}/duplicate`, json("POST", body)),
+  /** เพิ่มท่อนว่างบนไทม์ไลน์ (เช่นเสียงถอดหลุด) แล้วพิมพ์บทพากย์ก่อนพากย์ใหม่ */
+  addLine: (id: string, body: { speaker: string; start: number; end?: number; duration?: number; source?: string; target?: string }) =>
+    request<Utterance[]>(`/jobs/${id}/transcript/lines`, json("POST", body)),
   deleteLine: (id: string, lineId: number) =>
     request<Utterance[]>(`/jobs/${id}/transcript/${lineId}`, { method: "DELETE" }),
   mergeLine: (id: string, lineId: number) =>
