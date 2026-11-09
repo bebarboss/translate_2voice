@@ -1,0 +1,21 @@
+# Caddy ออกใบรับรอง Let's Encrypt — โดเมน API ต้องชี้ A/AAAA มาที่ VPS นี้แล้ว
+# ตัวแปรจาก environment ของ service caddy
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy api:8000 {
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

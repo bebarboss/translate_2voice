@@ -14,7 +14,7 @@
 เบราว์เซอร์
   │
   ▼
-หน้าเว็บ Next.js (web/) บน Vercel
+หน้าเว็บ Next.js (frontend/) บน Vercel
   │  proxy /api/* แนบ API_KEY และ token ผู้ใช้ให้ (คีย์ไม่ออกไปที่เบราว์เซอร์)
   │  อัปโหลดไฟล์ใหญ่: ขอตั๋วจาก /api/upload-ticket แล้วส่งตรงไปที่ tunnel
   ▼
@@ -26,22 +26,23 @@ API FastAPI (app/) ใน Docker บนเครื่องตัวเอง (
   │  ไฟล์งานทั้งหมดอยู่ใน data/
   ├──► Modal (modal_app.py): ขั้นที่ใช้การ์ดจอ GPU L4 / A10G
   ├──► Typhoon 2.5 API (หรือผู้ให้บริการแบบ OpenAI-compatible เช่น Gemini): แปล ย่อบท วิเคราะห์เรื่อง
-  └──► Supabase (REST ด้วย service_role key): คลังเสียง ค่าตั้ง ความจำคำแปล สถิติคุณภาพ
+  └──► Postgres (VPS หรือ `SUPABASE_DB_URL`): บัญชี งาน คลังเสียง ค่าตั้ง ความจำคำแปล สถิติ
 ```
 
 | ส่วน | เทคโนโลยี | ที่อยู่ในโค้ด |
 |---|---|---|
-| API | Python 3.11, FastAPI | [app/](../app) |
-| ขั้นที่ใช้การ์ดจอ | Modal, PyTorch 2.14 (CUDA 12.6) | [modal_app.py](../modal_app.py), [app/pipeline/gpu.py](../app/pipeline/gpu.py) |
-| หน้าเว็บ | Next.js 16, React 19, TypeScript | [web/](../web) |
-| ฐานข้อมูล | Supabase (Postgres) + SQLite ที่ยังย้ายไม่เสร็จ | [supabase/migrations/](../supabase/migrations), [app/supabase_db.py](../app/supabase_db.py) |
+| Backend API | Python 3.11, FastAPI | [backend/app/](../backend/app) |
+| ขั้นที่ใช้การ์ดจอ | Modal, PyTorch 2.14 (CUDA 12.6) | [backend/modal_app.py](../backend/modal_app.py), [backend/app/pipeline/gpu.py](../backend/app/pipeline/gpu.py) |
+| Frontend | Next.js 16, React 19, TypeScript | [frontend/](../frontend) |
+| ฐานข้อมูล | Postgres (+ pgvector) บน VPS | [deploy/db/init/](../deploy/db/init), [backend/app/pgstore.py](../backend/app/pgstore.py) |
 | รันบนเครื่อง | Docker Compose: `api`, `tunnel`, `ngrok` (ทางเลือก) | [docker-compose.yml](../docker-compose.yml) |
+| Deploy VPS | api + db + caddy | [deploy/docker-compose.yml](../deploy/docker-compose.yml), [docs/deploy-vps.md](deploy-vps.md) |
 
 ---
 
 ## 2. ขั้นตอนพากย์ (pipeline)
 
-ร้อยรวมใน [app/pipeline/runner.py](../app/pipeline/runner.py) ขั้นที่ใช้การ์ดจอเรียกผ่าน `gpu.py` ซึ่งรันบนเครื่องหรือบน Modal ตาม `WORKER`
+ร้อยรวมใน [backend/app/pipeline/runner.py](../backend/app/pipeline/runner.py) ขั้นที่ใช้การ์ดจอเรียกผ่าน `gpu.py` ซึ่งรันบนเครื่องหรือบน Modal ตาม `WORKER`
 
 ### 2.1 วิเคราะห์ (`run_analyze`)
 | ขั้น (`stage`) | ทำอะไร | โมดูล |
@@ -71,7 +72,7 @@ API FastAPI (app/) ใน Docker บนเครื่องตัวเอง (
 
 `run_render` ฝังซับใหม่อย่างเดียวหลังเปลี่ยนรูปแบบซับ ไม่พากย์ใหม่
 
-### 2.3 นำเข้าไทม์ไลน์ ([app/timeline/](../app/timeline))
+### 2.3 นำเข้าไทม์ไลน์ ([backend/app/timeline/](../backend/app/timeline))
 รับ Final Cut Pro XML, FCPXML, EDL, OTIO (หรือ zip ที่รวมไฟล์สื่อ) จาก Premiere / Resolve
 ถอดเสียงทีละแทร็ก แปล พากย์ แล้วส่งออก zip ที่มีไทม์ไลน์ + แทร็กพากย์ไทยแยกคน + WAV ยาวเท่าไทม์ไลน์ + SRT
 timecode รองรับ NTSC แบบเศษส่วนจริงและ drop-frame
@@ -89,17 +90,17 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 - **ผลงาน** (`ResultView`): ดาวน์โหลด MP4, SRT, zip, เลเยอร์เสียงแยก แจ้งจำนวนประโยคที่ "ควรฟัง"
 - ยกเลิกงาน ลองใหม่จากขั้นที่ล้ม แก้บทหลังพากย์แล้วพากย์ใหม่เฉพาะที่เปลี่ยน
 
-### โปรเจกต์ ([app/projects.py](../app/projects.py))
+### โปรเจกต์ ([backend/app/projects.py](../backend/app/projects.py))
 - รวมหลายตอนของเรื่องเดียวกัน จำแนวเรื่อง คำเฉพาะ ตัวละคร (ชื่อ บทบาท สรรพนาม เสียง ลายเสียง)
 - ตอนใหม่จับคู่ผู้พูดกับตัวละครด้วยลายเสียงเอง (เฉพาะที่มั่นใจ)
 - ความจำคำแปล: คู่ต้นฉบับ → บทที่ผู้ใช้แก้ ส่งเป็นตัวอย่างตอนแปลตอนต่อไป
 
-### คลังเสียง ([app/voice_library.py](../app/voice_library.py), [app/pipeline/library.py](../app/pipeline/library.py))
+### คลังเสียง ([backend/app/voice_library.py](../backend/app/voice_library.py), [backend/app/pipeline/library.py](../backend/app/pipeline/library.py))
 - อัปโหลดเสียงไทย ระบบแยกเพลง ถอดข้อความ คัดท่อน 3–10 วินาทีที่สะอาดที่สุดของคนพูดหลัก
 - เสียงเดียวมีได้หลายอารมณ์ (`moods/<mood>/`)
 - แยกเสียงจากคลิปหลายคนพูดเข้าคลัง (`LibraryJobView`)
 
-### นักพากย์ ([app/actors.py](../app/actors.py))
+### นักพากย์ ([backend/app/actors.py](../backend/app/actors.py))
 - สมัคร → ผู้ดูแลอนุมัติ → ยอมรับหนังสือยินยอม PDPA และสิทธิ์ใช้เสียง → อัดเสียงหลายอารมณ์ → ผู้ดูแลตรวจฟัง
 - บันทึกวินาทีที่เสียงถูกใช้ทุกงาน คิดค่าตอบแทนรายเดือน (`ACTOR_RATE_SATANG_PER_MIN`) หักภาษี ณ ที่จ่าย ส่งออก CSV
 
@@ -115,32 +116,23 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 - **คุณภาพ**: สัดส่วนบรรทัดที่ผู้ใช้แก้ (คำแปล ผู้พูด เวลา เพิ่ม ลบ) รายสัปดาห์และรายคู่ภาษา บรรทัดที่แก้ดาวน์โหลดเป็น CSV ใช้เป็นชุดทดสอบ
 - สำรองข้อมูล (ไฟล์ JSON และ accounts.db ทุก `BACKUP_HOURS` ชั่วโมง)
 
-### หน้าเว็บทั้งหมด ([web/app/](../web/app))
+### หน้าเว็บทั้งหมด ([frontend/app/](../frontend/app))
 `/` หน้าแรก · `/jobs` และ `/jobs/[id]` · `/projects` และ `/projects/[id]` · `/voices` · `/timeline` · `/settings` · `/account`
 · `/actor`, `/actor-consent`, `/actors` · `/admin` · `/login`, `/welcome`, `/onboarding` · `/promotions` · `/terms`, `/privacy`
-รองรับภาษาไทยและอังกฤษ ([web/lib/i18n.ts](../web/lib/i18n.ts), [web/lib/i18n-en.ts](../web/lib/i18n-en.ts))
+รองรับภาษาไทยและอังกฤษ ([frontend/lib/i18n.ts](../frontend/lib/i18n.ts), [frontend/lib/i18n-en.ts](../frontend/lib/i18n-en.ts))
 
 ---
 
 ## 4. ข้อมูลเก็บที่ไหน
 
-นโยบาย: **ข้อมูลทั้งหมดต้องอยู่ใน Supabase** ไฟล์เสียงและวิดีโอยังอยู่ใน `data/` บนเครื่อง
+นโยบาย: **เมตาดาต้าอยู่ใน Postgres บน VPS** ไฟล์เสียง/วิดีโออยู่ใน `data/` (+ R2 ตามต้องการ)
 
-| ข้อมูล | ตอนนี้อยู่ที่ | สถานะ |
+| ข้อมูล | ที่เก็บ | หมายเหตุ |
 |---|---|---|
-| คลังเสียง (`voices`, `voice_moods`) | Supabase + ไฟล์สำรอง | ใช้งานแล้ว |
-| ค่าตั้งจากหน้าเว็บ (`app_settings`) | Supabase + `data/settings.json` สำรอง | ใช้งานแล้ว |
-| ความจำคำแปล (`translation_memory`) | Supabase | ใช้งานแล้ว (ยังมีทางสำรอง SQLite ที่ต้องลบ) |
-| สถิติคุณภาพ (`job_quality`, `quality_lines`) | Supabase | **ยังไม่ได้รัน migration `20261104010000_quality.sql`** |
-| ผู้ใช้ session เครดิต ความยินยอม นักพากย์ | `data/accounts.db` (SQLite) | รอย้าย |
-| งาน บท โปรเจกต์ | ไฟล์ JSON ใน `data/jobs/`, `data/projects/` | รอย้าย |
-| ไฟล์เสียง วิดีโอ เลเยอร์ | `data/` | อยู่บนเครื่องต่อ (ย้ายไป Supabase Storage ต้องตัดสินใจก่อน) |
-
-ตาราง `profiles`, `ledger`, `jobs` ฯลฯ ใน `20261101000000_init.sql` ออกแบบตาม Supabase Auth (id เป็น uuid)
-แต่แอปใช้ Google login ที่ id เป็นตัวอักษร จึงยังไม่ได้ใช้ ต้องสร้างตารางแบบ id ตัวอักษรตอนย้าย
-
-**การย้ายติดอยู่ที่รหัสผ่านฐานข้อมูล:** ต่อ Postgres ทั้งแบบ pooler และแบบตรงไม่ผ่าน ต้องรีเซ็ตรหัสผ่านใน Supabase แล้วตั้ง `SUPABASE_DB_URL` แบบ pooler ใหม่
-ลำดับที่วางไว้: บัญชี เครดิต ความยินยอม นักพากย์ ก่อน แล้วค่อยงานและโปรเจกต์ ตรวจจำนวนแถวทุกตาราง
+| ผู้ใช้ session เครดิต นักพากย์ | `studio.*` ผ่าน `pgstore` | Google login (id ตัวอักษร) |
+| งาน บท โปรเจกต์ | `studio.jobs` / `transcripts` / `projects` | มีเดียยังอยู่ `data/jobs/` |
+| คลังเสียง ค่าตั้ง TM คุณภาพ metrics | ตาราง `public` ผ่าน `supabase_db` | เขียนไฟล์สำรองใน `data/` ด้วย |
+| ไฟล์เสียง วิดีโอ | `data/` + R2 (archive) | ดู `docs/deploy-vps.md` |
 
 ---
 
@@ -172,13 +164,13 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 
 ---
 
-## 6. ค่าตั้งค่าที่สำคัญ ([app/config.py](../app/config.py))
+## 6. ค่าตั้งค่าที่สำคัญ ([backend/app/config.py](../backend/app/config.py))
 
 | กลุ่ม | ตัวแปร |
 |---|---|
 | ระบบ | `DATA_DIR`, `API_KEY`, `MAX_UPLOAD_MB`, `MOCK_PIPELINE`, `DEVICE`, `LOW_VRAM` |
 | ที่รันการ์ดจอ | `WORKER` (local/modal), `MODAL_APP`, `MODAL_MAX_JOBS`, `MODAL_TTS_BATCH`, `LIGHT_WORKERS`, `USER_MAX_JOBS`, `USER_MAX_QUEUED` |
-| ฐานข้อมูล | `DB_BACKEND` (files/supabase), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL` |
+| ฐานข้อมูล | `DB_BACKEND` (files/supabase), `SUPABASE_DB_URL` |
 | บัญชี | `AUTH_ENABLED`, `BILLING_ENABLED`, `GOOGLE_CLIENT_ID`, `ADMIN_EMAILS`, `PAYMENT_PROVIDER` |
 | นักพากย์ | `ACTOR_RATE_SATANG_PER_MIN`, `ACTOR_WHT_PERCENT`, `ACTOR_WHT_MIN_SATANG`, `ACTOR_INCOME_TYPE` |
 | PDPA | `PDPA_CONTROLLER_NAME`, `PDPA_CONTROLLER_CONTACT` |
@@ -190,7 +182,7 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 | เสียงพากย์ | `REF_MIN_SEC`, `REF_MAX_SEC`, `REF_MIN_QUALITY`, `PAUSE_MATCH`, `MIN_PAUSE_SEC`, `BREATH_KEEP`, `EMOTION_MATCH`, `LOUDNESS_MATCH`, `PROSODY_MATCH`, `ROOM_REVERB`, `DUB_CHECK`, `DUB_CHECK_MIN`, `DUB_CHECK_RETRIES` |
 | ผสมเสียง | `VOICE_GAIN`, `BGM_GAIN` (ปรับจากหน้าตั้งค่าได้) |
 
-ค่าลับ (คีย์ API, service_role key, รหัสผ่านฐานข้อมูล) อยู่ใน `.env` และ `web/.env*.local` เท่านั้น ห้าม commit
+ค่าลับ (คีย์ API, รหัสผ่าน Postgres, R2) อยู่ใน `.env` / `deploy/.env` และ `frontend/.env*.local` เท่านั้น ห้าม commit
 
 ---
 
@@ -199,12 +191,12 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 | เรื่อง | วิธี |
 |---|---|
 | สาขา | ทำงานบน `modal-gpu-worker` แล้ว fast-forward เข้า `main` push ทั้งสองสาขา |
-| หน้าเว็บ | push `main` แล้ว Vercel deploy เอง (Root Directory = `web`, ตั้ง `BACKEND_URL`, `API_KEY`) |
+| หน้าเว็บ | push `main` แล้ว Vercel deploy เอง (Root Directory = `frontend`, ตั้ง `BACKEND_URL`, `API_KEY`) |
 | API | `docker compose up -d --build --no-deps api` รีสตาร์ตเฉพาะ `api` |
 | tunnel | **ห้ามรีสตาร์ต** container `tunnel` ลิงก์ trycloudflare จะเปลี่ยน ต้องแก้ `BACKEND_URL` บน Vercel |
 | Modal | `modal deploy modal_app.py` เมื่อแก้โค้ดใน `app/pipeline/` |
 | ทดสอบ API | `pytest tests` (pauses, quality, timeline) |
-| ตรวจหน้าเว็บ | `npx tsc --noEmit` ใน `web/` และตรวจว่าข้อความไทยมีคำแปลอังกฤษใน `i18n-en.ts` ครบ |
+| ตรวจหน้าเว็บ | `npx tsc --noEmit` ใน `frontend/` และตรวจว่าข้อความไทยมีคำแปลอังกฤษใน `i18n-en.ts` ครบ |
 | โหมดทดสอบ | `MOCK_PIPELINE=1` รันครบทุกขั้นโดยไม่โหลดโมเดล |
 
 เครื่องพัฒนา: ไดรฟ์ C เต็ม Docker และแคชโมเดลอยู่ไดรฟ์ E ไฟล์ชั่วคราวของ Node ใช้ `E:\tmp-next`
@@ -213,13 +205,10 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 
 ## 8. งานค้างและแผนต่อไป
 
-**ต้องทำก่อนใช้ฟีเจอร์ที่ push ไปแล้ว**
-- [ ] รัน `supabase/migrations/20261104010000_quality.sql` ใน Supabase SQL Editor
+**Deploy / ข้อมูล**
+- [ ] ขึ้น VPS ตาม `docs/deploy-vps.md` (Postgres ใน compose + dump จากคลาวด์เดิมถ้ามี)
+- [ ] เปิด R2 สำหรับสื่องานเมื่อต้องการลดดิสก์
 - [ ] deploy Modal ให้การตรวจเสียงที่พากย์ทำงาน แล้วทดสอบกับสำเนางานจริงเพื่อปรับ `DUB_CHECK_MIN`
-
-**ย้ายข้อมูลเข้า Supabase**
-- [ ] รีเซ็ตรหัสผ่านฐานข้อมูล ตั้ง `SUPABASE_DB_URL` แบบ pooler
-- [ ] ย้าย accounts.db (ผู้ใช้ เครดิต ความยินยอม นักพากย์) แล้วงานและโปรเจกต์ ลบทางสำรอง SQLite
 
 **ปรับความแม่น**
 - [ ] ตรวจบทอัตโนมัติหลังแปล
