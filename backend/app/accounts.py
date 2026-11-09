@@ -1,5 +1,5 @@
 """บัญชีผู้ใช้ เครดิต และแพ็กเกจ
-DB_BACKEND=supabase เก็บใน schema studio บน Postgres (pgstore.py, ต้องมี SUPABASE_DB_URL)
+DB_BACKEND=postgres เก็บใน schema studio บน Postgres (pgstore.py, ต้องมี DATABASE_URL)
 ไม่งั้นเก็บใน data/accounts.db (SQLite)
 
 AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำขอต้องล็อกอิน เห็นเฉพาะงานของตัวเอง) สมัครและเข้าสู่ระบบด้วยบัญชี Google
@@ -31,7 +31,7 @@ from typing import Optional
 
 import requests
 
-from .config import settings
+from .config import settings, using_postgres
 from .slip_ocr import SlipOcrError, image_mime, read_slip, verdict
 
 SESSION_DAYS = 30
@@ -251,7 +251,7 @@ CREATE INDEX IF NOT EXISTS cards_user ON cards(user_id);
 
 
 def _db():
-    if settings.db_backend == "supabase":
+    if using_postgres():
         from . import pgstore
         return pgstore.connect()
     global _conn
@@ -340,7 +340,7 @@ class _tx:
 
 def _read(sql: str, *args) -> list[sqlite3.Row]:
     # อ่านขนานได้ผ่าน pool — ไม่รอ accounts._lock (กันหน้าเว็บยิงพร้อมกันแล้วคิว 10–20 วิ)
-    if settings.db_backend == "supabase":
+    if using_postgres():
         from . import pgstore
         with pgstore.borrow() as db:
             return db.execute(sql, args).fetchall()

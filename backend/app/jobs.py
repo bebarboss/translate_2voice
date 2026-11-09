@@ -1,6 +1,6 @@
 """เก็บสถานะงาน และคิวงาน (การ์ดจอใบเดียวรันทีละงาน โหมด modal รันพร้อมกันได้หลายงาน)
 
-เมื่อ DB_BACKEND=supabase เมตาดาต้างานและบทอยู่บน Postgres (schema studio)
+เมื่อ DB_BACKEND=postgres เมตาดาต้างานและบทอยู่บน Postgres (schema studio)
 โฟลเดอร์ data/jobs/<id>/ ยังเก็บไฟล์มีเดีย (อินพุต tts ผลลัพธ์) เหมือนเดิม
 """
 import json
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Optional
 
-from .config import settings
+from .config import settings, using_postgres
 from .schemas import Job, JobStatus, Utterance, now
 
 log = logging.getLogger("dubbing.jobs")
@@ -49,7 +49,7 @@ class JobStore:
     def __init__(self, data_dir: Path):
         self.root = data_dir / "jobs"
         self.root.mkdir(parents=True, exist_ok=True)
-        self._pg = settings.db_backend == "supabase"
+        self._pg = using_postgres()
         self._lock = threading.RLock()
         self._jobs: dict[str, Job] = {}
         self._cancel: set[str] = set()

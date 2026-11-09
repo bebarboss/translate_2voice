@@ -54,42 +54,30 @@ class Result:
         return self._rows[0] if self._rows else None
 
 
-# Transaction pooler — region อยู่ในโฮสต์ของ SUPABASE_DB_URL (เช่น aws-0-ap-southeast-1.pooler...)
-# ห้าม hardcode eu-west-1: ย้ายโปรเจกต์ไป Singapore แล้วแค่เปลี่ยน URL ใน .env
-_POOLER_PORT = 6543
-
-
 def dsn(*, schema: str = "studio") -> str:
-    """สร้าง DSN จาก SUPABASE_DB_URL
+    """สร้าง DSN จาก DATABASE_URL (หรือ SUPABASE_DB_URL ชื่อเก่า)
 
-    - Supabase pooler (`*.pooler.supabase.com`): พอร์ต 6543 + sslmode=require
-    - Postgres บน VPS/local (`db`, `localhost`, …): พอร์ตใน URL (ค่าเริ่ม 5432) + sslmode ตาม URL
-      (ไม่มีใน URL → disable)
+    Postgres บน VPS/local (`db`, `localhost`, …): พอร์ตใน URL (ค่าเริ่ม 5432)
+    sslmode ตาม URL — ไม่มีใน URL → disable
     """
     url = (settings.supabase_db_url or "").strip()
     if not url:
-        raise RuntimeError("ตั้ง SUPABASE_DB_URL ก่อนใช้ Postgres (เช่น postgresql://pakdee:...@db:5432/pakdee?sslmode=disable)")
+        raise RuntimeError(
+            "ตั้ง DATABASE_URL ก่อนใช้ Postgres "
+            "(เช่น postgresql://pakdee:...@db:5432/pakdee?sslmode=disable)"
+        )
     parts = urlparse(url)
     host = parts.hostname or ""
     port = parts.port
     user = parts.username or "postgres"
     password = quote(unquote(parts.password or ""), safe="")
-    if host.startswith("db.") and host.endswith(".supabase.co"):
-        # db.<ref>.supabase.co มักเป็น IPv6 และไม่บอก region ของ pooler
+    if "supabase.co" in host or host.endswith(".pooler.supabase.com"):
         raise RuntimeError(
-            "ตั้ง SUPABASE_DB_URL เป็น Connection pooler จาก Dashboard → Connect "
-            "(เช่น postgresql://postgres.<ref>:...@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres) "
-            "หรือชี้ไป Postgres บน VPS (เช่น postgresql://pakdee:...@db:5432/pakdee?sslmode=disable) "
-            "ไม่ใช้โฮสต์ db.<ref>.supabase.co โดยตรง"
+            "ยกเลิกใช้ Supabase แล้ว — ตั้ง DATABASE_URL ชี้ Postgres บน VPS "
+            "(เช่น postgresql://pakdee:...@db:5432/pakdee?sslmode=disable)"
         )
-    is_pooler = host.endswith(".pooler.supabase.com")
-    if is_pooler:
-        port = _POOLER_PORT
-        default_ssl = "require"
-        default_port = _POOLER_PORT
-    else:
-        default_ssl = "disable"
-        default_port = 5432
+    default_ssl = "disable"
+    default_port = 5432
     user = quote(user, safe=".")
     netloc = f"{user}:{password}@{host}:{port or default_port}"
     url = urlunparse(parts._replace(netloc=netloc))

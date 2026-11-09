@@ -23,7 +23,7 @@ import time
 from typing import Optional
 
 from .accounts import AccountError, _read, _tx
-from .config import settings
+from .config import settings, using_postgres
 
 log = logging.getLogger("dubbing.actors")
 
@@ -597,7 +597,7 @@ def report(month: Optional[str], uid: Optional[str] = None) -> list[dict]:
            "ORDER BY u.month DESC, seconds DESC")
     paid_sql = "SELECT actor_id, month, SUM(amount) AS paid FROM actor_payouts GROUP BY actor_id, month"
     # อ่านสองคำสั่งในธุรกรรมเดียว (SET LOCAL ครั้งเดียว) แทนยืม connection คนละครั้ง
-    if settings.db_backend == "supabase":
+    if using_postgres():
         from . import pgstore
         with pgstore.borrow() as db:
             db.execute("BEGIN")
