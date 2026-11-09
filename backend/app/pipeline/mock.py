@@ -3,7 +3,6 @@
 ใช้ทดสอบ API, หน้าเว็บ หรือ flow การตรวจบท บนเครื่องที่ไม่มีการ์ดจอ
 แต่ละขั้นหน่วงเวลาเล็กน้อย (MOCK_DELAY วินาที) ให้เห็นความคืบหน้าและลองกดยกเลิกได้
 """
-import os
 import shutil
 import time
 from pathlib import Path
@@ -12,12 +11,13 @@ from typing import Callable, Optional
 import numpy as np
 import soundfile as sf
 
+from ..config import settings
 from ..schemas import Utterance
 from .common import Turn, Word
 from .translate import estimate_seconds
 
 SAMPLE_RATE = 24000
-DELAY = float(os.getenv("MOCK_DELAY", "0.6"))
+DELAY = float(settings.mock_delay)
 
 
 def _wait() -> None:
