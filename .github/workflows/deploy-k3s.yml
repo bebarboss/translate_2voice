@@ -11,6 +11,11 @@
 #
 # The cluster pull secret and pakdee-secrets are created on the VPS, not here.
 # GITHUB_TOKEN (automatic) is what pushes images. See deploy/k8s/README.md.
+#
+# Pause automatic deploys without stopping pull-request tests:
+#   gh variable set K3S_DEPLOY --repo bebarboss/translate_2voice --body false
+# Resume with --body true (or delete the variable). A manual workflow_dispatch
+# still deploys. See deploy/k8s/ROLLBACK.md.
 
 name: CI and deploy k3s
 
@@ -145,7 +150,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && github.event.inputs.install_kite != 'true'
+    if: github.event_name != 'pull_request' && github.event.inputs.install_kite != 'true' && (github.event_name == 'workflow_dispatch' || vars.K3S_DEPLOY != 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

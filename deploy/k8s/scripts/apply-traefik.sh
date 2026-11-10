@@ -4,6 +4,10 @@
 #   ACME_EMAIL=you@example.com bash deploy/k8s/scripts/apply-traefik.sh
 #   bash deploy/k8s/scripts/apply-traefik.sh you@example.com
 # If no address is given, ACME_EMAIL is read from deploy/.env when that file exists.
+#
+# Safe before cutover. While Traefik is disabled (k3s-hold-ports.yaml), this
+# stores the HelmChartConfig and exits. It does not bind 80/443.
+# enable-ingress.sh is what starts Traefik after Caddy has stopped.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -29,6 +33,16 @@ printf '%s\n' "${content//__ACME_EMAIL__/$EMAIL}" >"$tmp"
 
 echo "==> apply Traefik HelmChartConfig (email $EMAIL)"
 "$KUBECTL" apply -f "$tmp"
+
+# Day one: k3s is installed with Traefik and ServiceLB disabled so Compose
+# Caddy keeps 80/443. The HelmChartConfig waits until enable-ingress.sh
+# starts the chart. Do not treat a missing Deployment as a failure.
+if ! "$KUBECTL" -n kube-system get deploy/traefik >/dev/null 2>&1; then
+  echo "==> HelmChartConfig is stored. Traefik is not running."
+  echo "    80/443 stay with Caddy until you stop Compose and run:"
+  echo "    bash deploy/k8s/scripts/enable-ingress.sh"
+  exit 0
+fi
 
 echo "==> wait for Traefik to roll the new config"
 # The Helm controller applies values asynchronously. Rollout failure is the

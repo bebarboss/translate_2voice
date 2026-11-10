@@ -1,0 +1,8 @@
+# Copy to /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml BEFORE
+# installing k3s. Traefik and ServiceLB stay off so they do not bind 80/443
+# while Docker Compose Caddy still serves the site.
+# Remove this file only with deploy/k8s/scripts/enable-ingress.sh, after
+# Compose has stopped.
+disable:
+  - traefik
+  - servicelb
