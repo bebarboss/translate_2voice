@@ -65,8 +65,26 @@ def _jpeg(mark: bytes) -> bytes:
     return b"\xff\xd8\xff" + mark
 
 
+def _with_package(book):
+    """เติมเครดิตได้เมื่อมีแพ็กเกจแล้ว ทดลองให้สิทธิ์โดยไม่เพิ่มเครดิตเติม"""
+    book.claim_trial("u1")
+
+
+def _matching(book, credits: int = 10):
+    """สลิปที่ยอดตรงกับออเดอร์ ตามราคาเครดิตปัจจุบัน ไม่ผูกกับตัวเลขบาทที่เคยใช้"""
+    return _slip(amount=credits * book.CREDIT_PRICE)
+
+
+def test_topup_requires_a_package(book):
+    with pytest.raises(book.AccountError) as err:
+        book.buy_credits("u1", 10)
+    assert err.value.status == 402
+    assert book.wallet("u1")["credits"] == 0
+
+
 def test_matching_slip_adds_credits(book, monkeypatch):
-    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip())
+    _with_package(book)
+    monkeypatch.setattr(book, "read_slip", lambda data, mime: _matching(book))
     order = book.buy_credits("u1", 10)
     assert order["status"] == "pending"
     assert order["amount"] == 10 * book.CREDIT_PRICE
@@ -78,7 +96,9 @@ def test_matching_slip_adds_credits(book, monkeypatch):
 
 
 def test_mismatch_waits_for_admin_then_approve(book, monkeypatch):
-    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip(amount=10000, text="จำนวนเงิน 100.00 บาท 1234567890"))
+    _with_package(book)
+    wrong = 10 * book.CREDIT_PRICE + 100
+    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip(amount=wrong, text="จำนวนเงิน 100.00 บาท 1234567890"))
     order = book.buy_credits("u1", 10)
     waiting = book.submit_slip("u1", order["id"], _jpeg(b"b"))
     assert waiting["status"] == "review"
@@ -89,7 +109,8 @@ def test_mismatch_waits_for_admin_then_approve(book, monkeypatch):
 
 
 def test_duplicate_slip_is_rejected_and_resubmit_stays_in_review(book, monkeypatch):
-    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip())
+    _with_package(book)
+    monkeypatch.setattr(book, "read_slip", lambda data, mime: _matching(book))
     first = book.buy_credits("u1", 10)
     image = _jpeg(b"same")
     assert book.submit_slip("u1", first["id"], image)["status"] == "paid"
@@ -97,17 +118,19 @@ def test_duplicate_slip_is_rejected_and_resubmit_stays_in_review(book, monkeypat
     with pytest.raises(book.AccountError) as err:
         book.submit_slip("u1", second["id"], image)
     assert err.value.status == 409
-    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip(amount=10000, text="100.00"))
+    wrong = 10 * book.CREDIT_PRICE + 100
+    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip(amount=wrong, text="100.00"))
     bad = book.submit_slip("u1", second["id"], _jpeg(b"other"))
     assert bad["status"] == "review"
     book.reject_payment(second["id"], "admin@b.c", "ยอดไม่ครบ")
-    monkeypatch.setattr(book, "read_slip", lambda data, mime: _slip())
+    monkeypatch.setattr(book, "read_slip", lambda data, mime: _matching(book))
     again = book.submit_slip("u1", second["id"], _jpeg(b"fresh"))
     assert again["status"] == "review"
     assert book.wallet("u1")["credits"] == 10
 
 
 def test_unreadable_image_and_ocr_failure(book, monkeypatch):
+    _with_package(book)
     order = book.buy_credits("u1", 10)
     with pytest.raises(book.AccountError) as err:
         book.submit_slip("u1", order["id"], b"not-an-image")

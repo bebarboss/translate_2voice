@@ -4,6 +4,10 @@ kind: Kustomization
 namespace: pakdee
 
 resources:
+  # CRDs first so Middleware and ServersTransport apply on a k3s that was
+  # installed with Traefik disabled (Caddy still owns 80/443).
+  - traefik/crds/traefik.io_middlewares.yaml
+  - traefik/crds/traefik.io_serverstransports.yaml
   - namespace.yaml
   - postgres/service.yaml
   - postgres/statefulset.yaml

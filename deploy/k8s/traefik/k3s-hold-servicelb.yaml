@@ -1,0 +1,7 @@
+# This VPS. Copy to /etc/rancher/k3s/config.yaml or
+# /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
+# Traefik stays up. ServiceLB stays off, so Traefik's LoadBalancer is not
+# published on the node and Compose Caddy keeps 80/443.
+# enable-ingress.sh removes this disable entry after Caddy has stopped.
+disable:
+  - servicelb

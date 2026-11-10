@@ -27,7 +27,12 @@ need_secret pakdee-secrets
 need_secret ghcr-pull
 
 echo "==> apply $MANIFEST"
-"$KUBECTL" apply -f "$MANIFEST"
+# The bundle includes Traefik CRDs. The first apply can fail on Middleware
+# until those CRDs are Established. The second apply is the one that must work.
+if ! "$KUBECTL" apply -f "$MANIFEST"; then
+  echo "==> apply again now that CRDs exist" >&2
+  "$KUBECTL" apply -f "$MANIFEST"
+fi
 
 dump() {
   local kind="$1"

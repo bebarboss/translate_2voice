@@ -9,16 +9,26 @@ Production moves from `deploy/docker-compose.yml` (project `pakdee-vps`) to k3s 
 | Piece | Choice |
 | --- | --- |
 | App manifests | Kustomize in `deploy/k8s/` (namespace `pakdee`) |
-| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. |
+| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. ServiceLB stays **off** until cutover, so nothing binds 80/443 while Caddy is serving. Traefik itself may already be running (this VPS) or stay disabled. |
 | TLS | Traefik Let's Encrypt HTTP-01, certificates stored on a `local-path` volume. Works behind Cloudflare orange-cloud if port 80 is not redirected at Cloudflare. Origin CA is the fallback. |
 | Postgres | StatefulSet, `pgvector/pgvector:pg16`, 10Gi `local-path` PVC, init SQL from `deploy/db/init/`. ClusterIP `db:5432` only. |
 | API / web | Deployments, **Recreate** (one replica). The API queue is in-process and the media volume is ReadWriteOnce. Images `ghcr.io/bebarboss/pakdee-api` and `ghcr.io/bebarboss/pakdee-web`, tagged with the git SHA and `latest`. |
 | Config | `config.env` → ConfigMap `pakdee-config`. Secrets from `secret.example.yaml`, applied by you, never committed. |
-| CI | `.github/workflows/deploy-k3s.yml`. PRs run pytest and `npm run typecheck`. Push to `main` builds, pushes, SSHes to the VPS, `kubectl apply`, waits, and `kubectl rollout undo` if the new pods do not become ready. |
+| CI | `.github/workflows/deploy-k3s.yml`. The pull-request job id and check name are `test` (pytest and `npm run typecheck`). Branch protection on `main` requires that exact context. Push to `main` builds, pushes, SSHes to the VPS, `kubectl apply`, waits, and `kubectl rollout undo` if the new pods do not become ready. |
 | Dashboard | [Kite](https://kitehq.dev) via Helm `oci://ghcr.io/kite-org/charts/kite` in namespace `kite-system`. |
 | Domains | `pakdee-api.cobie.online`, `pakdee-app.cobie.online`, `kite.cobie.online` (`KITE_HOST` in `config.env`). |
 
-Traefik is already part of k3s, so the node does not also run Caddy. The Compose Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
+Compose Caddy keeps 80/443 until `enable-ingress.sh` turns ServiceLB on. Two installs both do that. On this VPS Traefik is already running and only ServiceLB is disabled, so the LoadBalancer service has no host ports. A fresh install may disable Traefik as well. The Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
+
+Render check, from a checkout (no cluster required):
+
+```bash
+bash deploy/k8s/scripts/render.sh > /tmp/pakdee.yaml
+kubectl kustomize deploy/k8s --load-restrictor LoadRestrictionsNone > /tmp/pakdee.yaml
+kustomize build deploy/k8s --load-restrictor LoadRestrictionsNone > /tmp/pakdee.yaml
+```
+
+The load restrictor is required because the Postgres ConfigMap reads `deploy/db/init/*.sql`, which sits outside `deploy/k8s`. `render.sh` is that command. Plain `kubectl kustomize deploy/k8s` without the flag refuses those files. `kubeconform -strict` against Kubernetes 1.33 validates that output. Skip kind `CustomResourceDefinition`: the schema bundle has no document for that kind. Middleware and ServersTransport are still checked.
 
 Memory limits on this box: Traefik 192Mi, Postgres 640Mi, API 1280Mi, web 384Mi, Kite 256Mi. Requests are much smaller so the pods schedule next to k3s itself. A deploy restarts API and web one at a time (a few seconds). Do not raise those limits all at once or the node can be OOM-killed.
 
@@ -28,13 +38,13 @@ Do these on the VPS **before** merging to `main` (or re-run the workflow after).
 
 ทำบน VPS ก่อน merge เข้า `main` ไม่งั้น job จะล้มเพราะยังไม่มี secret หรือ kubectl
 
-1. Install k3s and give user `khaimook` a kubeconfig.
-2. Apply the Traefik ACME config (`apply-traefik.sh`).
-3. Create namespace secrets `pakdee-secrets` and `ghcr-pull`.
+1. Install k3s with **ServiceLB disabled**. Traefik may stay enabled (this VPS) or be disabled too. Give user `khaimook` a kubeconfig.
+2. Apply the Traefik ACME config (`apply-traefik.sh`). If Traefik is already running it rolls the chart. If Traefik is disabled it only stores the HelmChartConfig. Either way it does not bind 80/443.
+3. Create namespace secrets `pakdee-secrets` and `ghcr-pull`, then apply `deploy/k8s` (works on this k3s immediately).
 4. Point Cloudflare DNS (orange cloud) and turn off edge HTTPS redirect for the ACME path, or use an Origin certificate.
 5. Add the GitHub Actions secrets listed below.
-6. Merge. CI builds images and starts pods. Ports 80/443 can still be held by Compose at this point; Traefik's load balancer will retry until cutover.
-7. Cut over with the dump / restore / rsync steps, then stop Compose.
+6. Merge. CI builds images and starts pods. Caddy still owns 80/443. Nothing in k3s listens there.
+7. Cut over with the dump / restore / rsync steps, stop Compose, then run `enable-ingress.sh`.
 
 Kite is separate. Install it with `install-kite.sh` or Actions → **CI and deploy k3s** → **Run workflow** with **install_kite** checked. That dispatch does not rebuild the app.
 
@@ -58,15 +68,28 @@ The old workflow `Deploy VPS (compose rollback)` no longer runs on push. Trigger
 
 ## 1. Install k3s / ติดตั้ง k3s
 
-Compose can keep serving while you do this. Traefik will not bind 80/443 until Caddy stops; the ServiceLB pods crash-loop until then. That is expected.
+Compose keeps serving. ServiceLB must stay off so k3s does not bind 80/443. Do not pass `--disable` on the install command line. A config drop-in is the switch `enable-ingress.sh` removes.
+
+Caddy ยังถือพอร์ต 80/443 ได้สองแบบ แบบที่ใช้อยู่บน VPS นี้เปิด Traefik ไว้แต่ปิด ServiceLB อีกแบบปิดทั้งคู่ อย่าใส่ `--disable` ในคำสั่งติดตั้ง
+
+**This VPS: Traefik on, ServiceLB off.** Traefik's Service stays `LoadBalancer` with no one to publish it, so the node ports stay with Caddy.
 
 ```bash
+sudo mkdir -p /etc/rancher/k3s/config.yaml.d
+sudo cp deploy/k8s/traefik/k3s-hold-servicelb.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
 curl -sfL https://get.k3s.io | sh -
 sudo install -d -o khaimook -g khaimook -m 700 /home/khaimook/.kube
 sudo install -o khaimook -g khaimook -m 600 /etc/rancher/k3s/k3s.yaml /home/khaimook/.kube/config
-# file already points at https://127.0.0.1:6443
 kubectl get nodes
+kubectl -n kube-system get deploy
+# traefik is present
+sudo ss -lptn 'sport = :443'
+# caddy / docker-proxy, not svclb
 ```
+
+**Fresh install: Traefik and ServiceLB both off.** Same ports, and `deploy/traefik` does not exist until cutover. Copy `deploy/k8s/traefik/k3s-hold-ports.yaml` to that same path instead of `k3s-hold-servicelb.yaml`. Do not copy that file onto a node where Traefik is already running. The next restart would stop it.
+
+ถ้า Traefik รันอยู่แล้ว ห้ามใช้ไฟล์ที่ปิด `traefik` ด้วย จะทำให้ restart ครั้งหน้าดับ Traefik
 
 Confirm port 6443 is not reachable from the internet. Allow 22, 80, and 443 (tcp and udp). Do not enable ufw until OpenSSH is allowed, or you will lock yourself out.
 
@@ -103,14 +126,24 @@ Traefik redirects HTTP→HTTPS on the origin **after** it answers `/.well-known/
 
 Orange-cloud clients use Cloudflare's HTTP/3. Origin UDP 443 is only for a grey-cloud record. WebSockets (Kite logs and terminal) pass Traefik; Cloudflare's proxy may still idle-timeout long shells on the free plan.
 
-Apply the resolver (reads `ACME_EMAIL` from `deploy/.env` if you omit it):
+Apply the resolver now (reads `ACME_EMAIL` from `deploy/.env` if you omit it). With ServiceLB off this does not bind 80/443. If Traefik is already running (this VPS) the script waits for the rollout. If Traefik is disabled, it stores the HelmChartConfig and exits.
 
 ```bash
 bash deploy/k8s/scripts/apply-traefik.sh you@example.com
-kubectl -n kube-system logs deploy/traefik --tail=50
 ```
 
-Certificates land in the Traefik PVC (`/data/acme.json`), so a pod restart does not request a new certificate.
+Certificates land in the Traefik PVC (`/data/acme.json`) after cutover, so a later pod restart does not request a new certificate.
+
+The app manifests apply on this cluster immediately. The bundle includes the Traefik CRDs, so Middleware and the Ingress apply even when the Traefik controller is not installed yet. They receive no traffic until `enable-ingress.sh` starts ServiceLB.
+
+```bash
+bash deploy/k8s/scripts/render.sh > /tmp/pakdee.yaml
+kubectl apply -f /tmp/pakdee.yaml || true
+kubectl apply -f /tmp/pakdee.yaml
+kubectl -n pakdee get deploy,sts,ingress
+```
+
+The first apply can miss Middleware until the CRDs are Established. The second apply is the one that must succeed. `rollout.sh` does the same.
 
 ### If HTTP-01 cannot get through Cloudflare
 
@@ -233,22 +266,40 @@ The API image runs as root, matching today's container, so root-owned files from
 
 ## 7. Cutover / สลับทราฟฟิก
 
-Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs after port 443 is free. Order:
+Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs after Traefik takes port 443. k3s does not listen on 80/443 until step 6.
 
-1. Scale k3s `deploy/api` to 0 (done above).
-2. `docker compose ... stop api web caddy` so nothing writes and ports 80/443 are free. Leave `db` up until the dump finishes, then stop it **without** `-v`:
+1. Scale k3s `deploy/api` to 0 (section 5).
+2. Stop Compose `api`, `web`, and `caddy`. Leave `db` up for the dump:
+   ```bash
+   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop api web caddy
+   ```
+3. Dump, restore, compare counts (section 5). Then stop Compose `db` **without** `-v`:
    ```bash
    docker compose -f deploy/docker-compose.yml --env-file deploy/.env stop db
    ```
-3. Dump, restore, compare counts (section 5).
 4. Rsync `data/` and `backups/` (section 6).
-5. Bring the API back and wait:
+5. Confirm nothing is listening:
+   ```bash
+   sudo ss -lptn 'sport = :80'
+   sudo ss -lptn 'sport = :443'
+   ```
+6. **Enable ingress on 80/443.** Caddy is stopped, so the ports are free. This removes `servicelb` from the k3s disable list (and `traefik` too, if that install had disabled it), restarts k3s, and waits for Traefik. On this VPS Traefik is already running, so the restart is what starts ServiceLB and binds the ports:
+   ```bash
+   bash deploy/k8s/scripts/enable-ingress.sh you@example.com
+   ```
+   That is the only step that publishes Traefik. ServiceLB then binds 80/tcp, 443/tcp, and 443/udp. Confirm the listeners are `svclb` or `traefik`, not `caddy` or `docker-proxy`:
+   ```bash
+   sudo ss -lptn 'sport = :80'
+   sudo ss -lptn 'sport = :443'
+   kubectl -n kube-system get svc traefik
+   ```
+7. Bring the API back and wait:
    ```bash
    kubectl -n pakdee scale deploy/api --replicas=1
    kubectl -n pakdee rollout status deploy/api --timeout=300s
    kubectl -n kube-system rollout status deploy/traefik --timeout=180s
    ```
-6. Check:
+8. Check:
    ```bash
    curl -fsS https://pakdee-api.cobie.online/health
    curl -fsSI https://pakdee-app.cobie.online/ | head
@@ -259,39 +310,15 @@ Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs
 
 Do not `docker compose down -v`. That deletes `pg_data`.
 
-## 8. Roll back to Compose / ย้อนกลับ
+## 8. Roll back / ย้อนกลับ
 
-A bad **image** on later deploys is undone by CI (`kubectl rollout undo`). Use this section when the whole cluster should stop and Compose should serve again.
+Commands for a bad image, a failed cutover, a database restore, and pausing CI deploys are in [ROLLBACK.md](ROLLBACK.md).
 
-If people have used the site since cutover, copy fresh data out first. Skip the dump if you are aborting before any k3s traffic.
-
-```bash
-kubectl -n pakdee scale deploy/api --replicas=0
-kubectl -n pakdee exec -T db-0 -- \
-  pg_dump -U pakdee -d pakdee --format=custom --no-owner --no-acl -f /tmp/pakdee-back.dump
-kubectl -n pakdee cp db-0:/tmp/pakdee-back.dump ./backups/pakdee-back.dump
-
-PV="$(kubectl -n pakdee get pvc api-data -o jsonpath='{.spec.volumeName}')"
-sudo rsync -aH "$(kubectl get pv "$PV" -o jsonpath='{.spec.hostPath.path}')/" "$(pwd)/data/"
-
-# frees 80/443 and stops Traefik, the app, and Kite; disks stay
-sudo systemctl stop k3s
-
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env cp ./backups/pakdee-back.dump db:/tmp/pakdee-back.dump
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
-  pg_restore -U pakdee -d pakdee --no-owner --no-acl --clean --if-exists /tmp/pakdee-back.dump
-bash deploy/up.sh --web
-curl -fsS https://pakdee-api.cobie.online/health
-```
-
-`systemctl stop` does not uninstall k3s. `systemctl start k3s` brings the cluster back, including the PVCs. To let CI deploy Compose again, use Actions → **Deploy VPS (compose rollback)** only while k3s is stopped.
-
-Deleting the StatefulSet does not delete the database PVC (`whenDeleted: Retain`). `kubectl delete pvc` does, and local-path then removes the directory.
+คำสั่งย้อนกลับ deploy ที่พัง, สลับทราฟฟิกไม่สำเร็จ, กู้ฐานข้อมูล, และหยุด deploy อัตโนมัติ อยู่ใน [ROLLBACK.md](ROLLBACK.md).
 
 ## 9. What happens on every merge / หลัง merge
 
-Push to `main` runs tests, builds both images for `linux/amd64` (`ML=0`, no API key baked into the web image), pushes `:SHA` and `:latest`, renders `deploy/k8s` (`bash deploy/k8s/scripts/render.sh`, which allows Kustomize to read `deploy/db/init`), and replaces the image tags with that SHA. It SSHes in and runs `rollout.sh`. API waits up to 5 minutes (imports are slow), web up to 3 minutes. If either Deployment fails, both are rolled back to the previous ReplicaSet and the job fails. The database is not rolled back.
+Push to `main` runs tests, builds both images for `linux/amd64` (`ML=0`, no API key baked into the web image), pushes `:SHA` and `:latest`, renders `deploy/k8s` (`bash deploy/k8s/scripts/render.sh`, which allows Kustomize to read `deploy/db/init`), and replaces the image tags with that SHA. It SSHes in and runs `rollout.sh`. API waits up to 5 minutes (imports are slow), web up to 3 minutes. If the API Deployment fails, CI runs `kubectl rollout undo deployment/api`. If the web Deployment fails, CI undoes web and the API. The database is never rolled back. Set Actions variable `K3S_DEPLOY` to `false` to skip that SSH deploy; details are in [ROLLBACK.md](ROLLBACK.md).
 
 **Run workflow → api_only** rebuilds only the API and `kubectl set image` on `deployment/api`. **install_kite** only runs the Kite script. A normal push does not touch Kite.
 
@@ -305,6 +332,6 @@ In-cluster objects CI does not create: `pakdee-secrets`, `ghcr-pull`, the Traefi
 | `ImagePullBackOff` | `ghcr-pull` and package visibility. `kubectl -n pakdee describe pod` |
 | API not ready | `kubectl -n pakdee logs deploy/api`. `DATABASE_URL` host is `db`. Password matches `POSTGRES_PASSWORD`. |
 | Certificate stuck | Cloudflare Always Use HTTPS, port 80, DNS still pointing at the old Caddy during the challenge. `kubectl -n kube-system logs deploy/traefik` |
-| Traefik not listening | Compose still holds 80/443. `sudo ss -lptn 'sport = :443'` |
+| Traefik not listening | Expected before cutover. With ServiceLB off, `ss` shows Caddy even when `deploy/traefik` is Running. After `enable-ingress.sh`, `sudo ss -lptn 'sport = :443'` should show `svclb` or `traefik`. |
 | Kite asks for a password you never set | Someone else opened the URL first, or you are on a fresh PVC. |
 | Client IP is a Cloudflare address | Optional: set `ports.websecure.forwardedHeaders.trustedIPs` to the current Cloudflare ranges (`https://www.cloudflare.com/ips-v4`). Do not set `insecure: true` while 443 is open to the world. |
