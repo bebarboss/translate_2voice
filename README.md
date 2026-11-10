@@ -3,7 +3,7 @@
 Pakdee (พากย์ดี) — ระบบพากย์คลิปละครต่างประเทศเป็นภาษาไทยหรืออังกฤษ ด้วยเสียงที่โคลนจากนักแสดงต้นฉบับ ตัวละครแบรนด์เป็นนกแก้ว แบ่งเป็นสองส่วน
 
 **คู่มือผู้ใช้:** [docs/user-manual.md](docs/user-manual.md)  
-**Deploy บน VPS:** [docs/deploy-vps.md](docs/deploy-vps.md) (`deploy/`)
+**Deploy บน VPS:** [deploy/k8s/README.md](deploy/k8s/README.md) (k3s) · [docs/deploy-vps.md](docs/deploy-vps.md) (Docker Compose, ใช้ย้อนกลับ)
 
 - **Backend** (`backend/`) — FastAPI รันโมเดลบนการ์ดจอเครื่องตัวเอง หรือส่งเฉพาะขั้นที่ใช้การ์ดจอไป Modal (`WORKER=modal`)
 - **Frontend** (`frontend/`) — Next.js สำหรับอัปโหลด ตรวจบท และดาวน์โหลด
@@ -46,7 +46,7 @@ backend/                 API (Python / FastAPI)
   Dockerfile             image ของ API
   requirements*.txt
 frontend/                หน้าเว็บ Next.js (ดู frontend/README.md)
-deploy/                  Docker Compose + Caddy บน VPS
+deploy/                  Docker Compose (rollback) และ manifests k3s (`deploy/k8s/`)
 docs/                    คู่มือ
 data/                    ไฟล์งาน runtime (ไม่ commit)
 .env                     คีย์ API / Modal / DB (รากโปรเจกต์)

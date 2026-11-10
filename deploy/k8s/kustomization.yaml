@@ -1,0 +1,66 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pakdee
+
+resources:
+  - namespace.yaml
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+  - api/pvc.yaml
+  - api/service.yaml
+  - api/deployment.yaml
+  - frontend/service.yaml
+  - frontend/deployment.yaml
+  - traefik-middleware.yaml
+  - ingress.yaml
+
+configMapGenerator:
+  - name: pakdee-config
+    envs:
+      - config.env
+    options:
+      disableNameSuffixHash: true
+  - name: postgres-init
+    files:
+      - 00_extensions.sql=../db/init/00_extensions.sql
+      - 01_public_app.sql=../db/init/01_public_app.sql
+      - 02_studio_accounts.sql=../db/init/02_studio_accounts.sql
+      - 03_studio_jobs.sql=../db/init/03_studio_jobs.sql
+      - 04_topups_provider_ref.sql=../db/init/04_topups_provider_ref.sql
+      - 05_feedback.sql=../db/init/05_feedback.sql
+      - 06_translation_memory.sql=../db/init/06_translation_memory.sql
+      - 07_quality.sql=../db/init/07_quality.sql
+      - 08_job_metrics.sql=../db/init/08_job_metrics.sql
+
+images:
+  - name: ghcr.io/bebarboss/pakdee-api
+    newTag: latest
+  - name: ghcr.io/bebarboss/pakdee-web
+    newTag: latest
+
+# Keep Ingress hosts in sync with config.env. CI renders this bundle and
+# only rewrites the image tags, so a domain edit here is what gets applied.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: pakdee-config
+      fieldPath: data.API_DOMAIN
+    targets:
+      - select:
+          kind: Ingress
+          name: pakdee
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0
+  - source:
+      kind: ConfigMap
+      name: pakdee-config
+      fieldPath: data.WEB_DOMAIN
+    targets:
+      - select:
+          kind: Ingress
+          name: pakdee
+        fieldPaths:
+          - spec.rules.1.host
+          - spec.tls.0.hosts.1

@@ -1,0 +1,310 @@
+# Pakdee on k3s / พากย์ดีบน k3s
+
+Production moves from `deploy/docker-compose.yml` (project `pakdee-vps`) to k3s on the same single VPS (2 vCPU, about 3.8 GB RAM). Compose files stay in the repo so you can roll back. Nothing in this change connects to the live server; you run the steps below yourself.
+
+ย้าย production จาก Docker Compose ไป k3s บน VPS เครื่องเดิม ไฟล์ Compose ยังอยู่ครบเพื่อย้อนกลับ เอกสารนี้ไม่แตะเซิร์ฟเวอร์จริง คุณเป็นคนรันคำสั่งบนเครื่องเอง
+
+## Design / แนวทาง
+
+| Piece | Choice |
+| --- | --- |
+| App manifests | Kustomize in `deploy/k8s/` (namespace `pakdee`) |
+| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. |
+| TLS | Traefik Let's Encrypt HTTP-01, certificates stored on a `local-path` volume. Works behind Cloudflare orange-cloud if port 80 is not redirected at Cloudflare. Origin CA is the fallback. |
+| Postgres | StatefulSet, `pgvector/pgvector:pg16`, 10Gi `local-path` PVC, init SQL from `deploy/db/init/`. ClusterIP `db:5432` only. |
+| API / web | Deployments, **Recreate** (one replica). The API queue is in-process and the media volume is ReadWriteOnce. Images `ghcr.io/bebarboss/pakdee-api` and `ghcr.io/bebarboss/pakdee-web`, tagged with the git SHA and `latest`. |
+| Config | `config.env` → ConfigMap `pakdee-config`. Secrets from `secret.example.yaml`, applied by you, never committed. |
+| CI | `.github/workflows/deploy-k3s.yml`. PRs run pytest and `npm run typecheck`. Push to `main` builds, pushes, SSHes to the VPS, `kubectl apply`, waits, and `kubectl rollout undo` if the new pods do not become ready. |
+| Dashboard | [Kite](https://kitehq.dev) via Helm `oci://ghcr.io/kite-org/charts/kite` in namespace `kite-system`. |
+| Domains | `pakdee-api.cobie.online`, `pakdee-app.cobie.online`, `kite.cobie.online` (`KITE_HOST` in `config.env`). |
+
+Traefik is already part of k3s, so the node does not also run Caddy. The Compose Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
+
+Memory limits on this box: Traefik 192Mi, Postgres 640Mi, API 1280Mi, web 384Mi, Kite 256Mi. Requests are much smaller so the pods schedule next to k3s itself. A deploy restarts API and web one at a time (a few seconds). Do not raise those limits all at once or the node can be OOM-killed.
+
+## What you must do before the first automatic deploy / ก่อน deploy อัตโนมัติครั้งแรก
+
+Do these on the VPS **before** merging to `main` (or re-run the workflow after). The first CI run fails closed if the secrets or kubeconfig are missing. It does not SSH anywhere until you have created the GitHub secrets.
+
+ทำบน VPS ก่อน merge เข้า `main` ไม่งั้น job จะล้มเพราะยังไม่มี secret หรือ kubectl
+
+1. Install k3s and give user `khaimook` a kubeconfig.
+2. Apply the Traefik ACME config (`apply-traefik.sh`).
+3. Create namespace secrets `pakdee-secrets` and `ghcr-pull`.
+4. Point Cloudflare DNS (orange cloud) and turn off edge HTTPS redirect for the ACME path, or use an Origin certificate.
+5. Add the GitHub Actions secrets listed below.
+6. Merge. CI builds images and starts pods. Ports 80/443 can still be held by Compose at this point; Traefik's load balancer will retry until cutover.
+7. Cut over with the dump / restore / rsync steps, then stop Compose.
+
+Kite is separate. Install it with `install-kite.sh` or Actions → **CI and deploy k3s** → **Run workflow** with **install_kite** checked. That dispatch does not rebuild the app.
+
+## GitHub Actions secrets / ความลับของ GitHub
+
+Settings → Secrets and variables → Actions. These are the only Actions secrets this workflow reads. Copy the values you already use for `VPS_HOST`, `VPS_USER`, and `VPS_SSH_KEY` if that key is the `khaimook` deploy key. Prefer a dedicated ed25519 key that can log in as `khaimook` and nothing else. The k3s API stays on the VPS; the workflow never receives a kubeconfig.
+
+| Secret | Required | Example / meaning |
+| --- | --- | --- |
+| `K3S_SSH_HOST` | yes | VPS address |
+| `K3S_SSH_USER` | yes | `khaimook` |
+| `K3S_SSH_KEY` | yes | Private key PEM, including the `BEGIN` / `END` lines and real newlines |
+| `K3S_SSH_KNOWN_HOSTS` | yes | Output of `ssh-keyscan -p 22 -H <host>` (stops a MITM on the first connection) |
+| `K3S_SSH_PORT` | no | `22` if unset |
+
+`GITHUB_TOKEN` is provided by Actions and is what **pushes** images. It is not a secret you create. The cluster **pulls** with a separate token stored only on the VPS (next section).
+
+There is no lint script in the repo. CI runs `pytest` in `backend/` and `npm run typecheck` in `frontend/`.
+
+The old workflow `Deploy VPS (compose rollback)` no longer runs on push. Trigger it by hand only after `sudo systemctl stop k3s`.
+
+## 1. Install k3s / ติดตั้ง k3s
+
+Compose can keep serving while you do this. Traefik will not bind 80/443 until Caddy stops; the ServiceLB pods crash-loop until then. That is expected.
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+sudo install -d -o khaimook -g khaimook -m 700 /home/khaimook/.kube
+sudo install -o khaimook -g khaimook -m 600 /etc/rancher/k3s/k3s.yaml /home/khaimook/.kube/config
+# file already points at https://127.0.0.1:6443
+kubectl get nodes
+```
+
+Confirm port 6443 is not reachable from the internet. Allow 22, 80, and 443 (tcp and udp). Do not enable ufw until OpenSSH is allowed, or you will lock yourself out.
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 443/udp
+sudo ufw deny 6443/tcp
+sudo ufw status
+```
+
+Install Helm only if you will install Kite (the script does this when `helm` is missing):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
+```
+
+## 2. Traefik and Cloudflare / TLS
+
+Hostnames, all orange-cloud A records to the VPS IP:
+
+- `pakdee-api.cobie.online`
+- `pakdee-app.cobie.online`
+- `kite.cobie.online` (or whatever you set as `KITE_HOST`)
+
+SSL/TLS mode: **Full (strict)** once the origin has a certificate. HTTP-01 itself only needs Cloudflare to forward **port 80** to the origin.
+
+Traefik redirects HTTP→HTTPS on the origin **after** it answers `/.well-known/acme-challenge/`. That redirect is compatible with Let's Encrypt. Cloudflare's **Always Use HTTPS** is not: the challenge never reaches the VPS. Before the first issuance (and for renewals):
+
+- Leave **Always Use HTTPS** off, or
+- Add a Configuration Rule: if URI Path starts with `/.well-known/acme-challenge/` then skip Always Use HTTPS.
+- Bypass cache for that path.
+
+Orange-cloud clients use Cloudflare's HTTP/3. Origin UDP 443 is only for a grey-cloud record. WebSockets (Kite logs and terminal) pass Traefik; Cloudflare's proxy may still idle-timeout long shells on the free plan.
+
+Apply the resolver (reads `ACME_EMAIL` from `deploy/.env` if you omit it):
+
+```bash
+bash deploy/k8s/scripts/apply-traefik.sh you@example.com
+kubectl -n kube-system logs deploy/traefik --tail=50
+```
+
+Certificates land in the Traefik PVC (`/data/acme.json`), so a pod restart does not request a new certificate.
+
+### If HTTP-01 cannot get through Cloudflare
+
+**Origin CA (simplest when the names are already proxied).** In Cloudflare → SSL/TLS → Origin Server, create a certificate that covers the three hostnames (15 years). Full (strict) trusts it. No Let's Encrypt.
+
+```bash
+kubectl -n pakdee create secret tls pakdee-origin-tls \
+  --cert=origin.pem --key=origin.key
+```
+
+Then on the Ingress, remove the `certresolver` annotation and set `secretName: pakdee-origin-tls` under `spec.tls`. Do the same for `deploy/k8s/kite/ingress.yaml`. Delete the local key files. Renew before the Origin certificate expires.
+
+**DNS-01.** Install cert-manager and an Issuer that uses a Cloudflare API token (Zone / DNS / Edit on `cobie.online` only). Point the Ingress at the Certificate's secret and remove `certresolver`. cert-manager is extra memory on this node; use it only if you cannot open port 80 for the challenge. This repo does not ship that Issuer because the token must not be committed.
+
+## 3. App secrets and the GHCR pull secret / ความลับของแอป
+
+```bash
+kubectl apply -f deploy/k8s/namespace.yaml
+cp deploy/k8s/secret.example.yaml /tmp/pakdee-secret.yaml
+nano /tmp/pakdee-secret.yaml
+kubectl apply -f /tmp/pakdee-secret.yaml
+shred -u /tmp/pakdee-secret.yaml
+```
+
+`DATABASE_URL` must use host `db`, database and user `pakdee` (unless you changed all three together), and the same password as `POSTGRES_PASSWORD`. Copy the real values from the existing root `.env` and `deploy/.env`. Do not commit the filled file.
+
+The workflow pushes with `GITHUB_TOKEN`. The node pulls with a personal access token that has **read:packages** (classic) or a fine-grained token limited to these packages. Images stay private.
+
+```bash
+kubectl -n pakdee create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username=bebarboss \
+  --docker-password='<github-pat-read-packages>'
+```
+
+After the first push, confirm the packages exist under `ghcr.io/bebarboss/pakdee-api` and `pakdee-web` and that the Actions token could link them (the image label `org.opencontainers.image.source` points at this repo). If the push is denied, in the package settings allow this repository's Actions access.
+
+`config.env` is safe to commit. It already has the production hostnames. `KITE_HOST` is the one knob for the dashboard. Ingress hosts for the app are filled from `API_DOMAIN` and `WEB_DOMAIN` at render time. A change is picked up on the next deploy because the image tag changes and the pods restart. A manual edit between deploys needs `kubectl -n pakdee rollout restart deploy/api deploy/web`.
+
+## 4. Kite / แดชบอร์ด
+
+Chart version is pinned to `0.17.0` in `install-kite.sh`. SQLite is on a 1Gi `local-path` PVC (`/data/kite.db`, WAL mode). There is no default login and no encryption key in git. The script creates Secret `kite-secrets` with `openssl rand` the first time and will not rotate it.
+
+RBAC is not cluster-admin. Kite can read the cluster, change workloads, exec into pods, and read/write Secrets (so the Helm UI works, and a Kite admin can see `pakdee-secrets`). It cannot create ClusterRoleBindings or bind cluster roles, and it cannot shell onto the node. `anonymousUserEnabled` is false.
+
+```bash
+# optional: KITE_HOST=stats.cobie.online
+bash deploy/k8s/scripts/install-kite.sh
+```
+
+Create the admin **before** the name resolves publicly. There is no default password; the first visitor becomes the administrator. Use a long random password and store it in a password manager.
+
+```bash
+# on the VPS
+kubectl -n kite-system port-forward --address 127.0.0.1 svc/kite 18080:8080
+# on your laptop
+ssh -L 8080:127.0.0.1:18080 khaimook@<vps>
+# browser: http://127.0.0.1:8080
+```
+
+Then open `https://kite.cobie.online` and add the cluster as **in-cluster**. Do not delete `kite-secrets` or the PVC. A new encryption key cannot read the old database.
+
+Re-run the script or the **install_kite** workflow to upgrade. Both call `helm upgrade --install` and apply the Ingress again.
+
+Kite limits are 20m/64Mi request and 300m/256Mi limit. If it OOM-kills, raise the limit in `deploy/k8s/kite/values.yaml` before you raise anything else.
+
+## 5. Move Postgres / ย้ายฐานข้อมูล
+
+Do this in the cutover window, not while both APIs are writing. Compose `db` stays up for the dump. k3s Postgres must already be running (init SQL has created the empty schema). Scale the k3s API to 0 so it is not connected.
+
+```bash
+kubectl -n pakdee scale deploy/api --replicas=0
+
+# stop writers; keep the Compose database process up
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop api web caddy
+
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
+  psql -U pakdee -d pakdee -c \
+  "select 'studio.users' as t, count(*) from studio.users
+   union all select 'studio.jobs', count(*) from studio.jobs
+   union all select 'voices', count(*) from voices;"
+
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
+  pg_dump -U pakdee -d pakdee --format=custom --no-owner --no-acl \
+  -f /tmp/pakdee-cutover.dump
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env \
+  cp db:/tmp/pakdee-cutover.dump ./backups/pakdee-cutover.dump
+```
+
+Restore into k3s. `--clean --if-exists` drops objects the init scripts already created, then recreates them from the dump. Ignore benign "does not exist" messages. Do not ignore errors about the `vector` extension; the image provides it.
+
+```bash
+kubectl -n pakdee cp ./backups/pakdee-cutover.dump db-0:/tmp/pakdee-cutover.dump
+kubectl -n pakdee exec -i db-0 -- \
+  pg_restore -U pakdee -d pakdee --no-owner --no-acl --clean --if-exists /tmp/pakdee-cutover.dump
+
+kubectl -n pakdee exec db-0 -- \
+  psql -U pakdee -d pakdee -c \
+  "select 'studio.users' as t, count(*) from studio.users
+   union all select 'studio.jobs', count(*) from studio.jobs
+   union all select 'voices', count(*) from voices;"
+```
+
+The two count listings must match before you send traffic. Jobs that were `running` are marked failed when the API process starts again; retry them from the UI. That is the same behaviour as a Compose restart.
+
+## 6. Move job files / ย้ายไฟล์งาน
+
+Media still lives on disk (`data/jobs/...`), not only in Postgres. With the API scaled to 0 the volume is free.
+
+```bash
+PV="$(kubectl -n pakdee get pvc api-data -o jsonpath='{.spec.volumeName}')"
+HOST_PATH="$(kubectl get pv "$PV" -o jsonpath='{.spec.hostPath.path}')"
+sudo rsync -aH "$(pwd)/data/" "$HOST_PATH/"
+
+PVB="$(kubectl -n pakdee get pvc api-backups -o jsonpath='{.spec.volumeName}')"
+sudo rsync -aH "$(pwd)/backups/" "$(kubectl get pv "$PVB" -o jsonpath='{.spec.hostPath.path}')/"
+```
+
+The API image runs as root, matching today's container, so root-owned files from Compose are readable.
+
+## 7. Cutover / สลับทราฟฟิก
+
+Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs after port 443 is free. Order:
+
+1. Scale k3s `deploy/api` to 0 (done above).
+2. `docker compose ... stop api web caddy` so nothing writes and ports 80/443 are free. Leave `db` up until the dump finishes, then stop it **without** `-v`:
+   ```bash
+   docker compose -f deploy/docker-compose.yml --env-file deploy/.env stop db
+   ```
+3. Dump, restore, compare counts (section 5).
+4. Rsync `data/` and `backups/` (section 6).
+5. Bring the API back and wait:
+   ```bash
+   kubectl -n pakdee scale deploy/api --replicas=1
+   kubectl -n pakdee rollout status deploy/api --timeout=300s
+   kubectl -n kube-system rollout status deploy/traefik --timeout=180s
+   ```
+6. Check:
+   ```bash
+   curl -fsS https://pakdee-api.cobie.online/health
+   curl -fsSI https://pakdee-app.cobie.online/ | head
+   kubectl -n pakdee get pods
+   kubectl -n kube-system logs deploy/traefik --tail=40
+   ```
+   Expect `{"status":"ok",...}` and a certificate line such as `Certificate obtained`.
+
+Do not `docker compose down -v`. That deletes `pg_data`.
+
+## 8. Roll back to Compose / ย้อนกลับ
+
+A bad **image** on later deploys is undone by CI (`kubectl rollout undo`). Use this section when the whole cluster should stop and Compose should serve again.
+
+If people have used the site since cutover, copy fresh data out first. Skip the dump if you are aborting before any k3s traffic.
+
+```bash
+kubectl -n pakdee scale deploy/api --replicas=0
+kubectl -n pakdee exec -T db-0 -- \
+  pg_dump -U pakdee -d pakdee --format=custom --no-owner --no-acl -f /tmp/pakdee-back.dump
+kubectl -n pakdee cp db-0:/tmp/pakdee-back.dump ./backups/pakdee-back.dump
+
+PV="$(kubectl -n pakdee get pvc api-data -o jsonpath='{.spec.volumeName}')"
+sudo rsync -aH "$(kubectl get pv "$PV" -o jsonpath='{.spec.hostPath.path}')/" "$(pwd)/data/"
+
+# frees 80/443 and stops Traefik, the app, and Kite; disks stay
+sudo systemctl stop k3s
+
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env cp ./backups/pakdee-back.dump db:/tmp/pakdee-back.dump
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
+  pg_restore -U pakdee -d pakdee --no-owner --no-acl --clean --if-exists /tmp/pakdee-back.dump
+bash deploy/up.sh --web
+curl -fsS https://pakdee-api.cobie.online/health
+```
+
+`systemctl stop` does not uninstall k3s. `systemctl start k3s` brings the cluster back, including the PVCs. To let CI deploy Compose again, use Actions → **Deploy VPS (compose rollback)** only while k3s is stopped.
+
+Deleting the StatefulSet does not delete the database PVC (`whenDeleted: Retain`). `kubectl delete pvc` does, and local-path then removes the directory.
+
+## 9. What happens on every merge / หลัง merge
+
+Push to `main` runs tests, builds both images for `linux/amd64` (`ML=0`, no API key baked into the web image), pushes `:SHA` and `:latest`, renders `deploy/k8s` (`bash deploy/k8s/scripts/render.sh`, which allows Kustomize to read `deploy/db/init`), and replaces the image tags with that SHA. It SSHes in and runs `rollout.sh`. API waits up to 5 minutes (imports are slow), web up to 3 minutes. If either Deployment fails, both are rolled back to the previous ReplicaSet and the job fails. The database is not rolled back.
+
+**Run workflow → api_only** rebuilds only the API and `kubectl set image` on `deployment/api`. **install_kite** only runs the Kite script. A normal push does not touch Kite.
+
+In-cluster objects CI does not create: `pakdee-secrets`, `ghcr-pull`, the Traefik HelmChartConfig, and Kite. Those are yours to apply once.
+
+## Troubleshooting / แก้ปัญหา
+
+| Symptom | Check |
+| --- | --- |
+| CI cannot SSH | `K3S_SSH_KNOWN_HOSTS` must match this host. Re-run `ssh-keyscan`. |
+| `ImagePullBackOff` | `ghcr-pull` and package visibility. `kubectl -n pakdee describe pod` |
+| API not ready | `kubectl -n pakdee logs deploy/api`. `DATABASE_URL` host is `db`. Password matches `POSTGRES_PASSWORD`. |
+| Certificate stuck | Cloudflare Always Use HTTPS, port 80, DNS still pointing at the old Caddy during the challenge. `kubectl -n kube-system logs deploy/traefik` |
+| Traefik not listening | Compose still holds 80/443. `sudo ss -lptn 'sport = :443'` |
+| Kite asks for a password you never set | Someone else opened the URL first, or you are on a fresh PVC. |
+| Client IP is a Cloudflare address | Optional: set `ports.websecure.forwardedHeaders.trustedIPs` to the current Cloudflare ranges (`https://www.cloudflare.com/ips-v4`). Do not set `insecure: true` while 443 is open to the world. |

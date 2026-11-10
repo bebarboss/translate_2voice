@@ -2,9 +2,17 @@
 export const SESSION_COOKIE = "dub_session";
 export const SESSION_MAX_AGE = 30 * 24 * 3600; // ตรงกับ SESSION_DAYS ใน app/accounts.py
 
-export function sessionCookie(token: string): string {
-  const secure = process.env.VERCEL ? "; Secure" : "";
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}${secure}`;
+function cookieSecureSuffix(): string {
+  // Bracket access so Next does not inline the value at build time.
+  const flag = (process.env["COOKIE_SECURE"] ?? "").trim().toLowerCase();
+  const on = flag === "1" || flag === "true" || Boolean(process.env["VERCEL"]);
+  return on ? "; Secure" : "";
 }
 
-export const clearSessionCookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+export function sessionCookie(token: string): string {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SESSION_MAX_AGE}${cookieSecureSuffix()}`;
+}
+
+export function clearSessionCookie(): string {
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${cookieSecureSuffix()}`;
+}

@@ -10,3 +10,5 @@ backups/
 frontend/node_modules/
 frontend/.next/
 web/
+deploy/k8s/secret.yaml
+deploy/k8s/secret.local.yaml

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pakdee
+  labels:
+    app.kubernetes.io/name: pakdee
+    app.kubernetes.io/part-of: pakdee

@@ -1,5 +1,8 @@
 # Deploy Pakdee บน VPS
 
+> ทาง production ใหม่คือ **k3s** — ขั้นตอนติดตั้ง, ย้ายฐานข้อมูล, CI และ Kite อยู่ที่ [deploy/k8s/README.md](../deploy/k8s/README.md)  
+> ไฟล์ Compose ในหน้านี้ยังอยู่ครบ สำหรับย้อนกลับไป Docker Compose ไม่ได้ลบ
+
 รัน API (และถ้าต้องการ หน้าเว็บ) บน VPS ด้วย Docker Compose + Caddy (HTTPS อัตโนมัติ)  
 ขั้น GPU ยังใช้ **Modal** (`WORKER=modal`) — VPS ไม่ต้องมี การ์ดจอ
 
@@ -154,7 +157,9 @@ bash deploy/remote-update.sh
 
 ### Auto-deploy จาก GitHub Actions
 
-ไฟล์ `.github/workflows/deploy-vps.yml` จะ SSH เข้า VPS แล้วรัน `deploy/remote-update.sh` ทุกครั้งที่ push `main`
+push ขึ้น `main` ไม่ได้ rebuild Compose แล้ว — workflow `.github/workflows/deploy-k3s.yml` build image ขึ้น GHCR แล้ว rollout บน k3s ดู [deploy/k8s/README.md](../deploy/k8s/README.md)
+
+`.github/workflows/deploy-vps.yml` เหลือเป็น **workflow_dispatch** สำหรับย้อนกลับ Compose หลัง `sudo systemctl stop k3s` (ปล่อยพอร์ต 80/443) เท่านั้น มันจะ SSH เข้า VPS แล้วรัน `deploy/remote-update.sh`
 
 1. บน VPS ใส่ public key ของ deploy key ใน `~/.ssh/authorized_keys` ของ user ที่รัน Docker ได้
 2. ใน GitHub repo → **Settings → Secrets and variables → Actions** เพิ่ม:

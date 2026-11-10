@@ -1,0 +1,17 @@
+# ClusterIP only. The API reaches Postgres at db:5432 inside the namespace.
+# There is no NodePort and no host port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  labels:
+    app.kubernetes.io/name: db
+    app.kubernetes.io/part-of: pakdee
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres

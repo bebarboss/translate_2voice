@@ -1,17 +1,18 @@
-# Auto-deploy ไป VPS เมื่อ push ขึ้น main
+# Manual rollback to Docker Compose.
+# Automatic deploys moved to deploy-k3s.yml (k3s).
+# Run this only after k3s has released ports 80/443 (`sudo systemctl stop k3s`).
+# Compose files are unchanged so this path still works.
 #
-# GitHub → Settings → Secrets and variables → Actions ตั้ง:
+# GitHub → Settings → Secrets and variables → Actions:
 #   VPS_HOST     เช่น 119.10.143.47
 #   VPS_USER     เช่น khaimook
 #   VPS_SSH_KEY  private key ทั้งก้อน (-----BEGIN … KEY----- … -----END-----)
 #   VPS_PATH     โฟลเดอร์โปรเจกต์ เช่น /home/khaimook/translate_2voice
 #   VPS_PORT     (optional) ค่าเริ่มต้น 22
 
-name: Deploy VPS
+name: Deploy VPS (compose rollback)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       api_only:
