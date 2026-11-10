@@ -1,0 +1,124 @@
+# Kite dashboard (https://kitehq.dev), chart oci://ghcr.io/kite-org/charts/kite
+# Pin the chart version in deploy/k8s/scripts/install-kite.sh (0.17.0).
+#
+# No admin password is set. The first person to open the UI creates the
+# administrator. anonymousUserEnabled stays false.
+# Encryption and JWT keys are NOT in this file. The install script generates
+# Secret kite-secrets (JWT_SECRET, KITE_ENCRYPT_KEY) once and leaves it alone
+# on later upgrades. Changing that key makes stored credentials unreadable.
+#
+# The public hostname is KITE_HOST in deploy/k8s/config.env (default
+# kite.cobie.online). install-kite.sh passes it as `host` and renders the Ingress.
+# This chart's Ingress template always emits secretName, which fights Traefik's
+# ACME resolver, so ingress stays off here and deploy/k8s/kite/ingress.yaml is applied.
+
+replicaCount: 1
+
+deploymentStrategy:
+  type: Recreate
+
+anonymousUserEnabled: false
+
+# Leave empty. install-kite.sh sets host=https://$KITE_HOST
+host: ""
+
+secret:
+  create: false
+  existingSecret: kite-secrets
+
+db:
+  type: sqlite
+  sqlite:
+    persistence:
+      pvc:
+        enabled: true
+        storageClass: local-path
+        accessModes:
+          - ReadWriteOnce
+        size: 1Gi
+      mountPath: /data
+      filename: kite.db
+    # local-path is a host directory. The pure-Go SQLite driver needs WAL
+    # there or it can fail with "out of memory (14)" (Kite FAQ).
+    options: "_journal_mode=WAL&_busy_timeout=5000"
+
+plugins:
+  directory: /data/plugins
+  persistence:
+    enabled: false
+
+# Day-to-day cluster admin without cluster-admin.
+# Can read every resource, change workloads, read and write Secrets
+# (Helm releases are Secrets; the UI can therefore see pakdee-secrets).
+# Cannot create ClusterRoleBindings or use bind/escalate, and cannot open
+# a shell on a node. Widen rbac.rules if a screen returns Forbidden.
+rbac:
+  create: true
+  rules:
+    - apiGroups: ["*"]
+      resources: ["*"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["", "apps", "batch", "networking.k8s.io", "autoscaling", "policy"]
+      resources: ["*"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["traefik.io", "traefik.containo.us"]
+      resources: ["*"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: [""]
+      resources: ["pods/log", "pods/exec", "pods/portforward", "pods/eviction"]
+      verbs: ["get", "create"]
+    - apiGroups: ["apps"]
+      resources: ["deployments/scale", "replicasets/scale", "statefulsets/scale"]
+      verbs: ["get", "update", "patch"]
+    - apiGroups: [""]
+      resources: ["nodes"]
+      verbs: ["get", "list", "watch", "patch", "update"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["roles", "rolebindings"]
+      verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    - apiGroups: ["rbac.authorization.k8s.io"]
+      resources: ["clusterroles", "clusterrolebindings"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apiextensions.k8s.io"]
+      resources: ["customresourcedefinitions"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["metrics.k8s.io"]
+      resources: ["*"]
+      verbs: ["get", "list"]
+    - apiGroups: ["storage.k8s.io"]
+      resources: ["storageclasses", "volumeattachments"]
+      verbs: ["get", "list", "watch"]
+    - nonResourceURLs: ["/healthz", "/readyz", "/livez", "/version", "/metrics"]
+      verbs: ["get"]
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3

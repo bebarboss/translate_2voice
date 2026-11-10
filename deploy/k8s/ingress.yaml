@@ -1,0 +1,43 @@
+# Hosts are replaced from the pakdee-config ConfigMap (API_DOMAIN, WEB_DOMAIN).
+# The values below match production and stay correct if a replacement is skipped.
+# TLS is issued by the Traefik resolver named "letsencrypt" (see traefik/helmchartconfig.yaml).
+# No secretName: the certificate stays in Traefik's ACME storage, not a Kubernetes TLS secret.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pakdee
+  labels:
+    app.kubernetes.io/name: pakdee
+    app.kubernetes.io/part-of: pakdee
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+    traefik.ingress.kubernetes.io/router.middlewares: pakdee-secure-headers@kubernetescrd,pakdee-compress@kubernetescrd
+    traefik.ingress.kubernetes.io/service.serverstransport: pakdee-long-timeout@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: pakdee-api.cobie.online
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+    - host: pakdee-app.cobie.online
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - pakdee-api.cobie.online
+        - pakdee-app.cobie.online

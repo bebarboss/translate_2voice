@@ -8,8 +8,11 @@ export const dynamic = "force-dynamic";
 // สตรีมวิดีโอยาว ๆ บน Vercel (Hobby สูงสุด 300 วินาที)
 export const maxDuration = 300;
 
-const BACKEND = (process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/+$/, "") + "/";
-const API_KEY = process.env.API_KEY ?? "";
+function runtimeEnv(name: string, fallback = ""): string {
+  // Bracket access so `next build` does not bake the value into the image.
+  const value = process.env[name];
+  return (value ?? fallback).trim();
+}
 
 const FORWARD_REQUEST = ["content-type", "content-length", "range", "accept", "if-none-match"];
 const FORWARD_RESPONSE = [
@@ -20,8 +23,10 @@ const FORWARD_RESPONSE = [
 type Ctx = { params: Promise<{ path: string[] }> };
 
 async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
+  const backend = runtimeEnv("BACKEND_URL", "http://localhost:8000").replace(/\/+$/, "") + "/";
+  const apiKey = runtimeEnv("API_KEY");
   const { path } = await ctx.params;
-  const url = new URL(path.map(encodeURIComponent).join("/"), BACKEND);
+  const url = new URL(path.map(encodeURIComponent).join("/"), backend);
   url.search = req.nextUrl.search;
 
   const headers = new Headers();
@@ -29,7 +34,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
     const value = req.headers.get(name);
     if (value) headers.set(name, value);
   }
-  if (API_KEY) headers.set("x-api-key", API_KEY);
+  if (apiKey) headers.set("x-api-key", apiKey);
   // หลักฐานการกดยอมรับหนังสือยินยอมของนักพากย์ (API บันทึก IP และเบราว์เซอร์)
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim();
   if (ip) headers.set("x-client-ip", ip);
@@ -75,7 +80,7 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
     out.append("set-cookie", sessionCookie(token));
     return Response.json({ user }, { status: res.status, headers: out });
   }
-  if (route === "auth/logout" || (res.status === 401 && session)) out.append("set-cookie", clearSessionCookie);
+  if (route === "auth/logout" || (res.status === 401 && session)) out.append("set-cookie", clearSessionCookie());
   return new Response(res.body, { status: res.status, headers: out });
 }
 

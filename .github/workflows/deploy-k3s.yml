@@ -1,0 +1,272 @@
+# Tests on every pull request.
+# Push to main (after merge): test, build web+api, push to GHCR, SSH to the
+# VPS and kubectl-apply. A failed rollout undoes the Deployments.
+#
+# GitHub Actions secrets (Settings → Secrets and variables → Actions):
+#   K3S_SSH_HOST         VPS address. The old VPS_HOST value can be copied.
+#   K3S_SSH_USER         deploy user, e.g. khaimook
+#   K3S_SSH_KEY          dedicated ed25519 private key (full PEM, including newlines)
+#   K3S_SSH_KNOWN_HOSTS  one line from: ssh-keyscan -p 22 -H <host>
+#   K3S_SSH_PORT         optional, default 22
+#
+# The cluster pull secret and pakdee-secrets are created on the VPS, not here.
+# GITHUB_TOKEN (automatic) is what pushes images. See deploy/k8s/README.md.
+
+name: CI and deploy k3s
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      api_only:
+        description: "Rebuild and roll out the API image only"
+        type: boolean
+        default: false
+      install_kite:
+        description: "Install or upgrade the Kite dashboard only (skip image build)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.install_kite != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: System packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libsndfile1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Backend tests
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          python -m pytest -q
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend typecheck
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run typecheck
+
+  build:
+    needs: test
+    if: github.event_name != 'pull_request' && github.event.inputs.install_kite != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          build-args: |
+            ML=0
+          tags: |
+            ghcr.io/bebarboss/pakdee-api:${{ github.sha }}
+            ghcr.io/bebarboss/pakdee-api:latest
+          cache-from: type=gha,scope=pakdee-api
+          cache-to: type=gha,mode=max,scope=pakdee-api
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Build and push web
+        if: github.event.inputs.api_only != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: deploy/frontend.Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          platforms: linux/amd64
+          build-args: |
+            BACKEND_URL=http://api:8000
+            DIRECT_UPLOAD=0
+            API_KEY=
+          tags: |
+            ghcr.io/bebarboss/pakdee-web:${{ github.sha }}
+            ghcr.io/bebarboss/pakdee-web:latest
+          cache-from: type=gha,scope=pakdee-web
+          cache-to: type=gha,mode=max,scope=pakdee-web
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.event.inputs.install_kite != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        run: |
+          version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"
+          curl -fsSL -o "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/${version}/bin/linux/amd64/kubectl"
+          chmod +x "$RUNNER_TEMP/kubectl"
+          sudo mv "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Render manifests
+        if: github.event.inputs.api_only != 'true'
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          bash deploy/k8s/scripts/render.sh > /tmp/pakdee.rendered.yaml
+          sed -i \
+            -e "s#ghcr.io/bebarboss/pakdee-api:latest#ghcr.io/bebarboss/pakdee-api:${SHA}#g" \
+            -e "s#ghcr.io/bebarboss/pakdee-web:latest#ghcr.io/bebarboss/pakdee-web:${SHA}#g" \
+            /tmp/pakdee.rendered.yaml
+          grep -q "ghcr.io/bebarboss/pakdee-api:${SHA}" /tmp/pakdee.rendered.yaml
+          grep -q "ghcr.io/bebarboss/pakdee-web:${SHA}" /tmp/pakdee.rendered.yaml
+
+      - name: Configure SSH
+        env:
+          K3S_SSH_KEY: ${{ secrets.K3S_SSH_KEY }}
+          K3S_SSH_KNOWN_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${K3S_SSH_KEY}" ] || [ -z "${K3S_SSH_KNOWN_HOSTS}" ]; then
+            echo "Set GitHub Actions secrets K3S_SSH_KEY and K3S_SSH_KNOWN_HOSTS" >&2
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$K3S_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$K3S_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Roll out API image only
+        if: github.event.inputs.api_only == 'true'
+        env:
+          K3S_SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          K3S_SSH_USER: ${{ secrets.K3S_SSH_USER }}
+          K3S_SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${K3S_SSH_HOST}" ] || [ -z "${K3S_SSH_USER}" ]; then
+            echo "Set GitHub Actions secrets K3S_SSH_HOST and K3S_SSH_USER" >&2
+            exit 1
+          fi
+          port="${K3S_SSH_PORT:-22}"
+          image="ghcr.io/bebarboss/pakdee-api:${SHA}"
+          ssh -p "$port" -o IdentitiesOnly=yes "${K3S_SSH_USER}@${K3S_SSH_HOST}" \
+            "set -euo pipefail
+             kubectl -n pakdee set image deployment/api api=${image}
+             if ! kubectl -n pakdee rollout status deployment/api --timeout=300s; then
+               kubectl -n pakdee logs deployment/api --tail=80 || true
+               kubectl -n pakdee rollout undo deployment/api || true
+               exit 1
+             fi"
+
+      - name: Apply manifests and wait
+        if: github.event.inputs.api_only != 'true'
+        env:
+          K3S_SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          K3S_SSH_USER: ${{ secrets.K3S_SSH_USER }}
+          K3S_SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${K3S_SSH_HOST}" ] || [ -z "${K3S_SSH_USER}" ]; then
+            echo "Set GitHub Actions secrets K3S_SSH_HOST and K3S_SSH_USER" >&2
+            exit 1
+          fi
+          port="${K3S_SSH_PORT:-22}"
+          target="${K3S_SSH_USER}@${K3S_SSH_HOST}"
+          scp -P "$port" -o IdentitiesOnly=yes /tmp/pakdee.rendered.yaml "${target}:/tmp/pakdee.yaml"
+          scp -P "$port" -o IdentitiesOnly=yes deploy/k8s/scripts/rollout.sh "${target}:/tmp/pakdee-rollout.sh"
+          ssh -p "$port" -o IdentitiesOnly=yes "$target" \
+            'bash /tmp/pakdee-rollout.sh /tmp/pakdee.yaml; rc=$?; rm -f /tmp/pakdee.yaml /tmp/pakdee-rollout.sh; exit $rc'
+
+  kite:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.install_kite == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          K3S_SSH_KEY: ${{ secrets.K3S_SSH_KEY }}
+          K3S_SSH_KNOWN_HOSTS: ${{ secrets.K3S_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${K3S_SSH_KEY}" ] || [ -z "${K3S_SSH_KNOWN_HOSTS}" ]; then
+            echo "Set GitHub Actions secrets K3S_SSH_KEY and K3S_SSH_KNOWN_HOSTS" >&2
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$K3S_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$K3S_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Install or upgrade Kite on the VPS
+        env:
+          K3S_SSH_HOST: ${{ secrets.K3S_SSH_HOST }}
+          K3S_SSH_USER: ${{ secrets.K3S_SSH_USER }}
+          K3S_SSH_PORT: ${{ secrets.K3S_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${K3S_SSH_HOST}" ] || [ -z "${K3S_SSH_USER}" ]; then
+            echo "Set GitHub Actions secrets K3S_SSH_HOST and K3S_SSH_USER" >&2
+            exit 1
+          fi
+          port="${K3S_SSH_PORT:-22}"
+          target="${K3S_SSH_USER}@${K3S_SSH_HOST}"
+          ssh -p "$port" -o IdentitiesOnly=yes "$target" "rm -rf /tmp/pakdee-k8s && mkdir -p /tmp/pakdee-k8s/scripts /tmp/pakdee-k8s/kite"
+          scp -P "$port" -o IdentitiesOnly=yes deploy/k8s/config.env "${target}:/tmp/pakdee-k8s/config.env"
+          scp -P "$port" -o IdentitiesOnly=yes deploy/k8s/kite/values.yaml deploy/k8s/kite/ingress.yaml "${target}:/tmp/pakdee-k8s/kite/"
+          scp -P "$port" -o IdentitiesOnly=yes deploy/k8s/scripts/install-kite.sh "${target}:/tmp/pakdee-k8s/scripts/install-kite.sh"
+          ssh -p "$port" -o IdentitiesOnly=yes "$target" "bash /tmp/pakdee-k8s/scripts/install-kite.sh"

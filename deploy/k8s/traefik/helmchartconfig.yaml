@@ -1,0 +1,79 @@
+# k3s Traefik (chart 40+, including 41.x shipped with current k3s).
+# Apply with deploy/k8s/scripts/apply-traefik.sh so __ACME_EMAIL__ is replaced.
+# Do not commit a real mailbox if you do not want it in git; the script reads
+# ACME_EMAIL from the environment or from deploy/.env on the VPS.
+#
+# HTTP-01 is answered on entrypoint "web" before the HTTPS redirect, which is
+# what Traefik documents as compatible with Let's Encrypt. A redirect that
+# happens at Cloudflare ("Always Use HTTPS") never reaches this process.
+# See deploy/k8s/README.md.
+#
+# Chart 41 moved two keys. This file uses the current ones:
+#   ports.web.http.redirections.entryPoint
+#   service.spec.type
+# On a chart older than 40, the redirect key was ports.web.redirections.entryPoint
+# and service.type was the Service type. `service.type` is ignored on chart 40+.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    deployment:
+      replicas: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 300m
+        memory: 192Mi
+    persistence:
+      enabled: true
+      name: data
+      accessMode: ReadWriteOnce
+      size: 128Mi
+      storageClass: local-path
+      path: /data
+    certificatesResolvers:
+      letsencrypt:
+        acme:
+          email: "__ACME_EMAIL__"
+          storage: /data/acme.json
+          httpChallenge:
+            entryPoint: web
+    ports:
+      web:
+        exposedPort: 80
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+        transport:
+          respondingTimeouts:
+            readTimeout: 30m
+            writeTimeout: 30m
+            idleTimeout: 30m
+      websecure:
+        exposedPort: 443
+        http3:
+          enabled: true
+        transport:
+          respondingTimeouts:
+            readTimeout: 30m
+            writeTimeout: 30m
+            idleTimeout: 30m
+    # Separate TCP and UDP Services so HTTP/3 does not need MixedProtocolLBService.
+    # Orange-cloud Cloudflare terminates HTTP/3 at the edge; origin UDP 443 is
+    # only used when the DNS record is DNS-only (grey cloud).
+    service:
+      single: false
+      spec:
+        type: LoadBalancer
+    log:
+      level: INFO
+    accessLog:
+      enabled: false

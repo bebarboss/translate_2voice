@@ -1,0 +1,32 @@
+# local-path does not enforce the size against the node disk. The request
+# is a record of the intended budget. Raise it before the first bind if the
+# job library is larger; resizing later depends on the provisioner.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-data
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: pakdee
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-backups
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: pakdee
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi

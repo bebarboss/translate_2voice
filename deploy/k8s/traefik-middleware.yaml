@@ -1,0 +1,58 @@
+# Same response headers as deploy/Caddyfile.web, plus gzip that skips media.
+# Referenced from the Ingress as pakdee-secure-headers@kubernetescrd
+# and pakdee-compress@kubernetescrd.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: secure-headers
+  labels:
+    app.kubernetes.io/name: pakdee
+    app.kubernetes.io/part-of: pakdee
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+    forceSTSHeader: true
+    contentTypeNosniff: true
+    referrerPolicy: strict-origin-when-cross-origin
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: compress
+  labels:
+    app.kubernetes.io/name: pakdee
+    app.kubernetes.io/part-of: pakdee
+spec:
+  compress:
+    excludedContentTypes:
+      - text/event-stream
+      - video/mp4
+      - video/webm
+      - video/quicktime
+      - audio/mpeg
+      - audio/wav
+      - audio/mp4
+      - audio/ogg
+      - application/zip
+      - application/octet-stream
+      - image/png
+      - image/jpeg
+      - image/webp
+---
+# Caddy used 30 minute proxy timeouts for long API calls and large uploads.
+# Traefik streams request bodies (no 600MB buffer). The API still enforces
+# MAX_UPLOAD_MB; timeline zips are larger and must not be cut off here.
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: long-timeout
+  labels:
+    app.kubernetes.io/name: pakdee
+    app.kubernetes.io/part-of: pakdee
+spec:
+  forwardingTimeouts:
+    dialTimeout: 30s
+    responseHeaderTimeout: 30m
+    idleConnTimeout: 30m
