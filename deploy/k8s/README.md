@@ -9,16 +9,16 @@ Production moves from `deploy/docker-compose.yml` (project `pakdee-vps`) to k3s 
 | Piece | Choice |
 | --- | --- |
 | App manifests | Kustomize in `deploy/k8s/` (namespace `pakdee`) |
-| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. Traefik and ServiceLB are **off** until cutover, so they never bind 80/443 while Caddy is serving. |
+| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. ServiceLB stays **off** until cutover, so nothing binds 80/443 while Caddy is serving. Traefik itself may already be running (this VPS) or stay disabled. |
 | TLS | Traefik Let's Encrypt HTTP-01, certificates stored on a `local-path` volume. Works behind Cloudflare orange-cloud if port 80 is not redirected at Cloudflare. Origin CA is the fallback. |
 | Postgres | StatefulSet, `pgvector/pgvector:pg16`, 10Gi `local-path` PVC, init SQL from `deploy/db/init/`. ClusterIP `db:5432` only. |
 | API / web | Deployments, **Recreate** (one replica). The API queue is in-process and the media volume is ReadWriteOnce. Images `ghcr.io/bebarboss/pakdee-api` and `ghcr.io/bebarboss/pakdee-web`, tagged with the git SHA and `latest`. |
 | Config | `config.env` → ConfigMap `pakdee-config`. Secrets from `secret.example.yaml`, applied by you, never committed. |
-| CI | `.github/workflows/deploy-k3s.yml`. PRs run pytest and `npm run typecheck`. Push to `main` builds, pushes, SSHes to the VPS, `kubectl apply`, waits, and `kubectl rollout undo` if the new pods do not become ready. |
+| CI | `.github/workflows/deploy-k3s.yml`. The pull-request job id and check name are `test` (pytest and `npm run typecheck`). Branch protection on `main` requires that exact context. Push to `main` builds, pushes, SSHes to the VPS, `kubectl apply`, waits, and `kubectl rollout undo` if the new pods do not become ready. |
 | Dashboard | [Kite](https://kitehq.dev) via Helm `oci://ghcr.io/kite-org/charts/kite` in namespace `kite-system`. |
 | Domains | `pakdee-api.cobie.online`, `pakdee-app.cobie.online`, `kite.cobie.online` (`KITE_HOST` in `config.env`). |
 
-Traefik ships with k3s, but the install below does not start it. Compose Caddy keeps 80/443 until `enable-ingress.sh`. The Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
+Compose Caddy keeps 80/443 until `enable-ingress.sh` turns ServiceLB on. Two installs both do that. On this VPS Traefik is already running and only ServiceLB is disabled, so the LoadBalancer service has no host ports. A fresh install may disable Traefik as well. The Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
 
 Render check, from a checkout (no cluster required):
 
@@ -38,8 +38,8 @@ Do these on the VPS **before** merging to `main` (or re-run the workflow after).
 
 ทำบน VPS ก่อน merge เข้า `main` ไม่งั้น job จะล้มเพราะยังไม่มี secret หรือ kubectl
 
-1. Install k3s **with Traefik and ServiceLB disabled** and give user `khaimook` a kubeconfig.
-2. Apply the Traefik ACME config (`apply-traefik.sh`). That only stores a HelmChartConfig. It does not bind 80/443.
+1. Install k3s with **ServiceLB disabled**. Traefik may stay enabled (this VPS) or be disabled too. Give user `khaimook` a kubeconfig.
+2. Apply the Traefik ACME config (`apply-traefik.sh`). If Traefik is already running it rolls the chart. If Traefik is disabled it only stores the HelmChartConfig. Either way it does not bind 80/443.
 3. Create namespace secrets `pakdee-secrets` and `ghcr-pull`, then apply `deploy/k8s` (works on this k3s immediately).
 4. Point Cloudflare DNS (orange cloud) and turn off edge HTTPS redirect for the ACME path, or use an Origin certificate.
 5. Add the GitHub Actions secrets listed below.
@@ -68,23 +68,28 @@ The old workflow `Deploy VPS (compose rollback)` no longer runs on push. Trigger
 
 ## 1. Install k3s / ติดตั้ง k3s
 
-Compose keeps serving. Install k3s **without** Traefik and **without** ServiceLB, so nothing in the cluster binds 80/443. Do not pass `--disable` on the install command line. A drop-in file is what turns them off, and deleting that file is the cutover switch.
+Compose keeps serving. ServiceLB must stay off so k3s does not bind 80/443. Do not pass `--disable` on the install command line. A config drop-in is the switch `enable-ingress.sh` removes.
 
-ติดตั้งโดยไม่เปิด Traefik และ ServiceLB เพื่อไม่ให้แย่งพอร์ต 80/443 จาก Caddy อย่าใส่ `--disable` ในคำสั่งติดตั้ง ใช้ไฟล์ drop-in แล้วค่อยลบตอนสลับ
+Caddy ยังถือพอร์ต 80/443 ได้สองแบบ แบบที่ใช้อยู่บน VPS นี้เปิด Traefik ไว้แต่ปิด ServiceLB อีกแบบปิดทั้งคู่ อย่าใส่ `--disable` ในคำสั่งติดตั้ง
+
+**This VPS: Traefik on, ServiceLB off.** Traefik's Service stays `LoadBalancer` with no one to publish it, so the node ports stay with Caddy.
 
 ```bash
 sudo mkdir -p /etc/rancher/k3s/config.yaml.d
-sudo cp deploy/k8s/traefik/k3s-hold-ports.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
+sudo cp deploy/k8s/traefik/k3s-hold-servicelb.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
 curl -sfL https://get.k3s.io | sh -
 sudo install -d -o khaimook -g khaimook -m 700 /home/khaimook/.kube
 sudo install -o khaimook -g khaimook -m 600 /etc/rancher/k3s/k3s.yaml /home/khaimook/.kube/config
-# file already points at https://127.0.0.1:6443
 kubectl get nodes
 kubectl -n kube-system get deploy
-# traefik must be absent
+# traefik is present
 sudo ss -lptn 'sport = :443'
 # caddy / docker-proxy, not svclb
 ```
+
+**Fresh install: Traefik and ServiceLB both off.** Same ports, and `deploy/traefik` does not exist until cutover. Copy `deploy/k8s/traefik/k3s-hold-ports.yaml` to that same path instead of `k3s-hold-servicelb.yaml`. Do not copy that file onto a node where Traefik is already running. The next restart would stop it.
+
+ถ้า Traefik รันอยู่แล้ว ห้ามใช้ไฟล์ที่ปิด `traefik` ด้วย จะทำให้ restart ครั้งหน้าดับ Traefik
 
 Confirm port 6443 is not reachable from the internet. Allow 22, 80, and 443 (tcp and udp). Do not enable ufw until OpenSSH is allowed, or you will lock yourself out.
 
@@ -121,7 +126,7 @@ Traefik redirects HTTP→HTTPS on the origin **after** it answers `/.well-known/
 
 Orange-cloud clients use Cloudflare's HTTP/3. Origin UDP 443 is only for a grey-cloud record. WebSockets (Kite logs and terminal) pass Traefik; Cloudflare's proxy may still idle-timeout long shells on the free plan.
 
-Apply the resolver now (reads `ACME_EMAIL` from `deploy/.env` if you omit it). While the hold file is in place the script stores the HelmChartConfig and exits. It does not start Traefik and does not touch 80/443.
+Apply the resolver now (reads `ACME_EMAIL` from `deploy/.env` if you omit it). With ServiceLB off this does not bind 80/443. If Traefik is already running (this VPS) the script waits for the rollout. If Traefik is disabled, it stores the HelmChartConfig and exits.
 
 ```bash
 bash deploy/k8s/scripts/apply-traefik.sh you@example.com
@@ -129,7 +134,7 @@ bash deploy/k8s/scripts/apply-traefik.sh you@example.com
 
 Certificates land in the Traefik PVC (`/data/acme.json`) after cutover, so a later pod restart does not request a new certificate.
 
-The app manifests apply on this cluster immediately. The bundle includes the Traefik CRDs, so Middleware and the Ingress are accepted before the controller exists. They do nothing until `enable-ingress.sh`.
+The app manifests apply on this cluster immediately. The bundle includes the Traefik CRDs, so Middleware and the Ingress apply even when the Traefik controller is not installed yet. They receive no traffic until `enable-ingress.sh` starts ServiceLB.
 
 ```bash
 bash deploy/k8s/scripts/render.sh > /tmp/pakdee.yaml
@@ -278,7 +283,7 @@ Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs
    sudo ss -lptn 'sport = :80'
    sudo ss -lptn 'sport = :443'
    ```
-6. **Enable ingress on 80/443.** This deletes `/etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml`, restarts k3s, and waits for Traefik:
+6. **Enable ingress on 80/443.** Caddy is stopped, so the ports are free. This removes `servicelb` from the k3s disable list (and `traefik` too, if that install had disabled it), restarts k3s, and waits for Traefik. On this VPS Traefik is already running, so the restart is what starts ServiceLB and binds the ports:
    ```bash
    bash deploy/k8s/scripts/enable-ingress.sh you@example.com
    ```
@@ -327,6 +332,6 @@ In-cluster objects CI does not create: `pakdee-secrets`, `ghcr-pull`, the Traefi
 | `ImagePullBackOff` | `ghcr-pull` and package visibility. `kubectl -n pakdee describe pod` |
 | API not ready | `kubectl -n pakdee logs deploy/api`. `DATABASE_URL` host is `db`. Password matches `POSTGRES_PASSWORD`. |
 | Certificate stuck | Cloudflare Always Use HTTPS, port 80, DNS still pointing at the old Caddy during the challenge. `kubectl -n kube-system logs deploy/traefik` |
-| Traefik not listening | Expected before cutover. After `enable-ingress.sh`, `sudo ss -lptn 'sport = :443'` should show `svclb` or `traefik`. If it shows `caddy`, the hold file is still in place or Compose was not stopped. |
+| Traefik not listening | Expected before cutover. With ServiceLB off, `ss` shows Caddy even when `deploy/traefik` is Running. After `enable-ingress.sh`, `sudo ss -lptn 'sport = :443'` should show `svclb` or `traefik`. |
 | Kite asks for a password you never set | Someone else opened the URL first, or you are on a fresh PVC. |
 | Client IP is a Cloudflare address | Optional: set `ports.websecure.forwardedHeaders.trustedIPs` to the current Cloudflare ranges (`https://www.cloudflare.com/ips-v4`). Do not set `insecure: true` while 443 is open to the world. |

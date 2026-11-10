@@ -60,9 +60,9 @@ Do not `kubectl rollout undo statefulset/db`. That does not restore Postgres dat
 
 ## 2. Failed cutover / สลับทราฟฟิกไม่สำเร็จ
 
-Goal: Caddy listens on 80/443 again, and k3s Traefik does not.
+Goal: Caddy listens on 80/443 again. ServiceLB must be off so Traefik does not bind those ports. Traefik can stay running.
 
-เป้าหมายคือให้ Caddy ฟัง 80/443 อีกครั้ง และให้ Traefik ของ k3s หยุดฟังพอร์ตนั้น
+เป้าหมายคือให้ Caddy ฟัง 80/443 อีกครั้ง ServiceLB ต้องปิด เพื่อไม่ให้ Traefik จับพอร์ต Traefik เองยังรันต่อได้
 
 If `enable-ingress.sh` has **not** been run, k3s was never on those ports. Start Compose again:
 
@@ -71,10 +71,12 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web
 curl -fsS https://pakdee-api.cobie.online/health
 ```
 
-If `enable-ingress.sh` **has** been run, put the hold file back and restart k3s. That disables Traefik and ServiceLB and frees 80/443. App pods and the database disk stay. Then start Compose.
+If `enable-ingress.sh` **has** been run, put ServiceLB back on the disable list and restart k3s. That frees 80/443. App pods and the database disk stay. On this VPS use the servicelb-only file so Traefik keeps running. Use `k3s-hold-ports.yaml` instead when this node was installed with Traefik disabled and you want it to stay down.
+
+ถ้า VPS นี้เปิด Traefik อยู่ ให้ใช้ไฟล์ที่ปิดแค่ ServiceLB ไฟล์ที่ปิดทั้งคู่ใช้เมื่อติดตั้งแบบปิด Traefik ไว้ตั้งแต่แรก
 
 ```bash
-sudo cp deploy/k8s/traefik/k3s-hold-ports.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
+sudo cp deploy/k8s/traefik/k3s-hold-servicelb.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
 sudo systemctl restart k3s
 
 # wait until the API answers, then until 443 is free
@@ -90,7 +92,7 @@ sudo ss -lptn 'sport = :443'
 
 `ss` should show `caddy` or `docker-proxy`, not `svclb`.
 
-The same hold file is what the install uses. While it exists, a later `systemctl restart k3s` will not bring Traefik back. Run `enable-ingress.sh` again only when you mean to take the ports.
+While that drop-in lists `servicelb`, a later `systemctl restart k3s` will not publish 80/443. Run `enable-ingress.sh` again only when you mean to take the ports. `k3s-hold-ports.yaml` also lists `traefik`, so a restart with that file stops Traefik as well.
 
 If you would rather stop the whole cluster (Kite included) and leave the disks:
 

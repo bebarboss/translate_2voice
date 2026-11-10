@@ -42,10 +42,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Branch protection should require this check: "CI and deploy k3s / tests".
-  # The name stays fixed. The job runs on every pull_request.
+  # Branch protection on main requires this check context exactly: test
+  # Job id and check run name are both "test". It runs on every pull_request.
   test:
-    name: tests
+    name: test
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.install_kite != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
