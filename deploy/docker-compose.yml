@@ -102,7 +102,7 @@ services:
       args:
         BACKEND_URL: ${INTERNAL_BACKEND_URL:-http://api:8000}
         API_KEY: ${WEB_API_KEY:-}
-        DIRECT_UPLOAD: ${DIRECT_UPLOAD:-1}
+        DIRECT_UPLOAD: ${DIRECT_UPLOAD:-0}
     image: thai-dubbing-web:vps
     restart: unless-stopped
     depends_on:
@@ -111,10 +111,10 @@ services:
     environment:
       # proxy ฝั่งเซิร์ฟเวอร์คุยกับ API ใน Docker โดยตรง (อย่าใส่โดเมนสาธารณะ — จะได้ HTML/JSON เพี้ยน)
       BACKEND_URL: ${INTERNAL_BACKEND_URL:-http://api:8000}
-      # URL ที่เบราว์เซอร์อัปโหลดตรง (DIRECT_UPLOAD=1) — ต้องเป็น https สาธารณะ
+      # URL ที่เบราว์เซอร์อัปโหลดตรงเมื่อ DIRECT_UPLOAD=1
       PUBLIC_BACKEND_URL: ${PUBLIC_BACKEND_URL:?ตั้ง PUBLIC_BACKEND_URL ใน deploy/.env เช่น https://api.example.com}
       API_KEY: ${WEB_API_KEY:-}
-      DIRECT_UPLOAD: ${DIRECT_UPLOAD:-1}
+      DIRECT_UPLOAD: ${DIRECT_UPLOAD:-0}
       HOSTNAME: 0.0.0.0
       PORT: "3000"
     expose:
