@@ -26,7 +26,12 @@ spec:
         app.kubernetes.io/part-of: pakdee
     spec:
       automountServiceAccountToken: false
+      # Ubuntu 26.04 (kernel 7.0, AppArmor 4) + k3s containerd 2.3: the default
+      # cri-containerd.apparmor.d profile denies signals between processes in the
+      # pod (kill: Permission denied), so postgres/gosu/sh hang. Run unconfined.
       securityContext:
+        appArmorProfile:
+          type: Unconfined
         fsGroup: 999
         fsGroupChangePolicy: OnRootMismatch
       terminationGracePeriodSeconds: 60
