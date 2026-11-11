@@ -62,7 +62,10 @@ export default function SettingsPage() {
   return (
     <main className="page" style={{ maxWidth: 1100 }}>
       <div className="page-head">
-        <h1>{tx("ตั้งค่า")}</h1>
+        <div>
+          <h1>{tx("ตั้งค่า")}</h1>
+          <p>{tx("มีผลกับงานที่พากย์รอบถัดไป")}</p>
+        </div>
         <button type="button" className="btn primary" onClick={save} disabled={busy || !changed.length}>
           {busy ? tx("กำลังบันทึก...") : tx("บันทึกการตั้งค่า{0}", { 0: changed.length ? ` (${changed.length})` : "" })}
         </button>
@@ -71,67 +74,77 @@ export default function SettingsPage() {
       {message && <div className={`alert ${message.kind}`} role="alert">{message.text}</div>}
       {redubAll && <div className="alert info">{tx("เปลี่ยนความเร็วหรือคุณภาพเสียงแล้ว งานที่สั่งพากย์ใหม่ครั้งถัดไปจะพากย์ใหม่ทุกประโยค")}</div>}
 
-      <div className="grid-2">
+      <div className="settings">
+        <nav className="settings-nav" aria-label={tx("ตั้งค่า")}>
+          <span className="ttl">{tx("ตั้งค่า")}</span>
+          <a href="#def">{tx("ค่าเริ่มต้นตอนส่งงาน")}</a>
+          <a href="#voice">{tx("เสียงพากย์")}</a>
+          <a href="#subs">{tx("ซับไตเติลเริ่มต้น")}</a>
+        </nav>
+
         {form && (
-          <>
-            <section className="card" aria-labelledby="def">
-              <h2 id="def">{tx("ค่าเริ่มต้นตอนส่งงาน")}</h2>
-              <div className="field">
-                <span className="label">{tx("ภาษาพากย์")}</span>
-                <div className="seg" role="group" aria-label={tx("ภาษาพากย์เริ่มต้น")} style={{ alignSelf: "flex-start" }}>
-                  {(["th", "en"] as TargetLang[]).map((t) => (
-                    <button key={t} type="button" aria-pressed={form.default_target_lang === t} onClick={() => set("default_target_lang", t)}>
-                      {tx(TARGET_LABEL[t])}
-                    </button>
-                  ))}
+          <div className="settings-body">
+            <section className="set-section" aria-labelledby="def">
+              <div className="set-head"><h2 id="def">{tx("ค่าเริ่มต้นตอนส่งงาน")}</h2></div>
+              <div className="set-group">
+                <div className="set-row">
+                  <div><b>{tx("ภาษาพากย์")}</b></div>
+                  <div className="seg" role="group" aria-label={tx("ภาษาพากย์เริ่มต้น")}>
+                    {(["th", "en"] as TargetLang[]).map((t) => (
+                      <button key={t} type="button" aria-pressed={form.default_target_lang === t} onClick={() => set("default_target_lang", t)}>
+                        {tx(TARGET_LABEL[t])}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <label className="check">
-                <span className="t"><span>{tx("ตรวจบทก่อนพากย์")}</span><small>{tx("หยุดรอให้แก้บทหลังแปลเสร็จ")}</small></span>
-                <input type="checkbox" checked={form.default_review} onChange={(e) => set("default_review", e.target.checked)} />
-              </label>
-              <label className="check">
-                <span className="t"><span>{tx("ฝังซับในวิดีโอ")}</span><small>{tx("เปลี่ยนได้อีกครั้งตอนดาวน์โหลด")}</small></span>
-                <input type="checkbox" checked={form.default_burn_subs} onChange={(e) => set("default_burn_subs", e.target.checked)} />
-              </label>
-            </section>
-
-            <section className="card" aria-labelledby="voice">
-              <h2 id="voice">{tx("เสียงพากย์")}</h2>
-              <div className="field">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <label htmlFor="speed">{tx("เร่งเสียงได้สูงสุด")}</label><span className="mono">{form.max_speedup.toFixed(2)}×</span>
-                </div>
-                <input id="speed" type="range" min={1} max={2} step={0.05} value={form.max_speedup}
-                  onChange={(e) => set("max_speedup", Number(e.target.value))} />
-                <span className="dim">{tx("บทที่ยาวเกินฉากจะถูกเร่งได้ไม่เกินค่านี้ ที่เหลือระบบจะย่อบทให้")}</span>
-              </div>
-              <div className="field">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <label htmlFor="vg">{tx("ความดังเสียงพากย์")}</label><span className="mono">{Math.round(form.voice_gain * 100)}%</span>
-                </div>
-                <input id="vg" type="range" min={0} max={2} step={0.05} value={form.voice_gain}
-                  onChange={(e) => set("voice_gain", Number(e.target.value))} />
-              </div>
-              <div className="field">
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <label htmlFor="bg">{tx("ความดังเพลงประกอบ")}</label><span className="mono">{Math.round(form.bgm_gain * 100)}%</span>
-                </div>
-                <input id="bg" type="range" min={0} max={2} step={0.05} value={form.bgm_gain}
-                  onChange={(e) => set("bgm_gain", Number(e.target.value))} />
-              </div>
-              <div className="field">
-                <label htmlFor="q">{tx("คุณภาพเสียง")}</label>
-                <select id="q" className="select" value={form.f5_steps} onChange={(e) => set("f5_steps", Number(e.target.value))}>
-                  {QUALITY.some((q) => q.steps === form.f5_steps) ? null : <option value={form.f5_steps}>{form.f5_steps} steps</option>}
-                  {QUALITY.map((q) => <option key={q.steps} value={q.steps}>{tx(q.label)}</option>)}
-                </select>
-                <span className="dim">{tx("ยิ่งละเอียดยิ่งช้า การ์ดจอเล็กแนะนำ 16")}</span>
+                <label className="set-row" style={{ cursor: "pointer" }}>
+                  <div><b>{tx("ตรวจบทก่อนพากย์")}</b><span className="d">{tx("หยุดรอให้แก้บทหลังแปลเสร็จ")}</span></div>
+                  <input type="checkbox" className="switch" checked={form.default_review} onChange={(e) => set("default_review", e.target.checked)} />
+                </label>
+                <label className="set-row" style={{ cursor: "pointer" }}>
+                  <div><b>{tx("ฝังซับในวิดีโอ")}</b><span className="d">{tx("เปลี่ยนได้อีกครั้งตอนดาวน์โหลด")}</span></div>
+                  <input type="checkbox" className="switch" checked={form.default_burn_subs} onChange={(e) => set("default_burn_subs", e.target.checked)} />
+                </label>
               </div>
             </section>
 
-            <section className="card" aria-labelledby="subs" style={{ gridColumn: "1 / -1" }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
+            <section className="set-section" aria-labelledby="voice">
+              <div className="set-head"><h2 id="voice">{tx("เสียงพากย์")}</h2></div>
+              <div className="set-group">
+                <div className="set-row block">
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <label htmlFor="speed"><b>{tx("เร่งเสียงได้สูงสุด")}</b></label><span className="mono">{form.max_speedup.toFixed(2)}×</span>
+                  </div>
+                  <input id="speed" type="range" min={1} max={2} step={0.05} value={form.max_speedup}
+                    onChange={(e) => set("max_speedup", Number(e.target.value))} />
+                  <span className="d">{tx("บทที่ยาวเกินฉากจะถูกเร่งได้ไม่เกินค่านี้ ที่เหลือระบบจะย่อบทให้")}</span>
+                </div>
+                <div className="set-row block">
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <label htmlFor="vg"><b>{tx("ความดังเสียงพากย์")}</b></label><span className="mono">{Math.round(form.voice_gain * 100)}%</span>
+                  </div>
+                  <input id="vg" type="range" min={0} max={2} step={0.05} value={form.voice_gain}
+                    onChange={(e) => set("voice_gain", Number(e.target.value))} />
+                </div>
+                <div className="set-row block">
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <label htmlFor="bg"><b>{tx("ความดังเพลงประกอบ")}</b></label><span className="mono">{Math.round(form.bgm_gain * 100)}%</span>
+                  </div>
+                  <input id="bg" type="range" min={0} max={2} step={0.05} value={form.bgm_gain}
+                    onChange={(e) => set("bgm_gain", Number(e.target.value))} />
+                </div>
+                <div className="set-row">
+                  <div><label htmlFor="q"><b>{tx("คุณภาพเสียง")}</b></label><span className="d">{tx("ยิ่งละเอียดยิ่งช้า การ์ดจอเล็กแนะนำ 16")}</span></div>
+                  <select id="q" className="select set-select" value={form.f5_steps} onChange={(e) => set("f5_steps", Number(e.target.value))}>
+                    {QUALITY.some((q) => q.steps === form.f5_steps) ? null : <option value={form.f5_steps}>{form.f5_steps} steps</option>}
+                    {QUALITY.map((q) => <option key={q.steps} value={q.steps}>{tx(q.label)}</option>)}
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section className="set-section" aria-labelledby="subs">
+              <div className="set-head row" style={{ justifyContent: "space-between" }}>
                 <h2 id="subs">{tx("ซับไตเติลเริ่มต้น")}</h2>
                 <div className="seg" role="group" aria-label={tx("ดูตัวอย่างภาษา")}>
                   {(["th", "en"] as TargetLang[]).map((t) => (
@@ -139,59 +152,54 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
-              <div className="grid-2">
-                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <div className="field">
-                    <label htmlFor="fth">{tx("ฟอนต์งานไทย")}</label>
-                    <select id="fth" className="select" value={form.sub_font_th} onChange={(e) => set("sub_font_th", e.target.value)}>
-                      {fontOptions(fonts, "th", form.sub_font_th).map((g) => (
-                        <optgroup key={g.group} label={g.group}>{g.names.map((n) => <option key={n} value={n}>{n}</option>)}</optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="fen">{tx("ฟอนต์งานอังกฤษ")}</label>
-                    <select id="fen" className="select" value={form.sub_font_en} onChange={(e) => set("sub_font_en", e.target.value)}>
-                      {fontOptions(fonts, "en", form.sub_font_en).map((g) => (
-                        <optgroup key={g.group} label={g.group}>{g.names.map((n) => <option key={n} value={n}>{n}</option>)}</optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="row" style={{ gap: 18 }}>
-                    <label className="row" style={{ gap: 8 }}>
-                      <input type="color" value={form.sub_color} onChange={(e) => set("sub_color", e.target.value.toUpperCase())} />
-                      <span className="label">{tx("สีตัวอักษร")}</span>
-                    </label>
-                    <label className="row" style={{ gap: 8 }}>
-                      <input type="color" value={form.sub_outline_color} onChange={(e) => set("sub_outline_color", e.target.value.toUpperCase())} />
-                      <span className="label">{tx("สีขอบ")}</span>
-                    </label>
-                  </div>
-                  <div className="field">
-                    <div className="row" style={{ justifyContent: "space-between" }}>
-                      <label htmlFor="ss">{tx("ขนาด")}</label><span className="mono">{form.sub_size}</span>
-                    </div>
-                    <input id="ss" type="range" min={16} max={120} step={2} value={form.sub_size}
-                      onChange={(e) => set("sub_size", Number(e.target.value))} />
-                  </div>
-                  <div className="field">
-                    <span className="label">{tx("ตำแหน่ง")}</span>
-                    <div className="seg" role="group" aria-label={tx("ตำแหน่งซับเริ่มต้น")} style={{ alignSelf: "flex-start" }}>
-                      <button type="button" aria-pressed={form.sub_position === "bottom"} onClick={() => set("sub_position", "bottom")}>{tx("ด้านล่าง")}</button>
-                      <button type="button" aria-pressed={form.sub_position === "top"} onClick={() => set("sub_position", "top")}>{tx("ด้านบน")}</button>
-                    </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {previewStyle && <SubtitlePreview style={previewStyle} lang={previewLang} height={220} />}
-                  <span className="dim">
-                    
+              <div className="set-group">
+                <div className="set-row block">
+                  {previewStyle && <SubtitlePreview style={previewStyle} lang={previewLang} height={200} />}
+                  <span className="d">
                     {tx("รายชื่อฟอนต์มาจากเครื่องที่รัน API ถ้าอยากใช้ฟอนต์อื่น เช่น Sarabun หรือ Kanit ต้องติดตั้งลงเครื่องนั้นก่อน ภาพตัวอย่างใช้ฟอนต์ในเครื่องของคุณ จึงอาจต่างจากวิดีโอจริงเล็กน้อย")}
                   </span>
                 </div>
+                <div className="set-row">
+                  <div><label htmlFor="fth"><b>{tx("ฟอนต์งานไทย")}</b></label></div>
+                  <select id="fth" className="select set-select" value={form.sub_font_th} onChange={(e) => set("sub_font_th", e.target.value)}>
+                    {fontOptions(fonts, "th", form.sub_font_th).map((g) => (
+                      <optgroup key={g.group} label={g.group}>{g.names.map((n) => <option key={n} value={n}>{n}</option>)}</optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div className="set-row">
+                  <div><label htmlFor="fen"><b>{tx("ฟอนต์งานอังกฤษ")}</b></label></div>
+                  <select id="fen" className="select set-select" value={form.sub_font_en} onChange={(e) => set("sub_font_en", e.target.value)}>
+                    {fontOptions(fonts, "en", form.sub_font_en).map((g) => (
+                      <optgroup key={g.group} label={g.group}>{g.names.map((n) => <option key={n} value={n}>{n}</option>)}</optgroup>
+                    ))}
+                  </select>
+                </div>
+                <label className="set-row">
+                  <div><b>{tx("สีตัวอักษร")}</b></div>
+                  <input type="color" value={form.sub_color} onChange={(e) => set("sub_color", e.target.value.toUpperCase())} />
+                </label>
+                <label className="set-row">
+                  <div><b>{tx("สีขอบ")}</b></div>
+                  <input type="color" value={form.sub_outline_color} onChange={(e) => set("sub_outline_color", e.target.value.toUpperCase())} />
+                </label>
+                <div className="set-row block">
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <label htmlFor="ss"><b>{tx("ขนาด")}</b></label><span className="mono">{form.sub_size}</span>
+                  </div>
+                  <input id="ss" type="range" min={16} max={120} step={2} value={form.sub_size}
+                    onChange={(e) => set("sub_size", Number(e.target.value))} />
+                </div>
+                <div className="set-row">
+                  <div><b>{tx("ตำแหน่ง")}</b></div>
+                  <div className="seg" role="group" aria-label={tx("ตำแหน่งซับเริ่มต้น")}>
+                    <button type="button" aria-pressed={form.sub_position === "bottom"} onClick={() => set("sub_position", "bottom")}>{tx("ด้านล่าง")}</button>
+                    <button type="button" aria-pressed={form.sub_position === "top"} onClick={() => set("sub_position", "top")}>{tx("ด้านบน")}</button>
+                  </div>
+                </div>
               </div>
             </section>
-          </>
+          </div>
         )}
       </div>
     </main>

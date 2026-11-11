@@ -6,7 +6,7 @@ import { api, type Job, type JobStatus } from "@/lib/api";
 import { TARGET_LABEL, fmtDuration, fmtWhen, isActive, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import JobCard from "@/components/JobCard";
-import { PlusIcon, SearchIcon } from "@/components/Icons";
+import { GridIcon, ListIcon, PlusIcon, SearchIcon } from "@/components/Icons";
 
 import { tx } from "@/lib/i18n";
 type Filter = "all" | "active" | "awaiting_review" | "done" | "failed";
@@ -75,21 +75,27 @@ export default function JobsPage() {
     <main className="page" style={{ maxWidth: 1200 }}>
       <div className="page-head">
         <h1>{tx("งานทั้งหมด")}</h1>
-        <Link href="/" className="btn primary small"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
+        <div className="row">
+          <label className="search" style={{ flex: "1 1 240px", maxWidth: 320 }}>
+            <SearchIcon />
+            <span className="sr-only">{tx("ค้นหางาน")}</span>
+            <input type="search" placeholder={tx("ค้นหาชื่อไฟล์")} value={query} onChange={(e) => setQuery(e.target.value)} />
+          </label>
+          <Link href="/" className="btn primary small"><PlusIcon />{tx("ส่งคลิปใหม่")}</Link>
+        </div>
       </div>
 
-      <div className="row" style={{ gap: 8 }}>
-        <label className="search" style={{ flex: "1 1 260px", maxWidth: 360 }}>
-          <SearchIcon />
-          <span className="sr-only">{tx("ค้นหางาน")}</span>
-          <input type="search" placeholder={tx("ค้นหาชื่อไฟล์")} value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
-        <select className="select pill-select" aria-label={tx("กรองตามสถานะ")} value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
-          {FILTERS.map((f) => <option key={f.key} value={f.key}>{tx(f.label)} ({counts[f.key]})</option>)}
-        </select>
-        <div className="seg" role="group" aria-label={tx("มุมมอง")}>
-          <button type="button" aria-pressed={view === "grid"} onClick={() => pickView("grid")}>{tx("การ์ด")}</button>
-          <button type="button" aria-pressed={view === "list"} onClick={() => pickView("list")}>{tx("รายการ")}</button>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="chips" role="group" aria-label={tx("กรองตามสถานะ")}>
+          {FILTERS.map((f) => (
+            <button key={f.key} type="button" className="chip filter" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
+              {tx(f.label)} <span className="n">{counts[f.key]}</span>
+            </button>
+          ))}
+        </div>
+        <div className="seg icons" role="group" aria-label={tx("มุมมอง")}>
+          <button type="button" aria-pressed={view === "list"} aria-label={tx("รายการ")} title={tx("รายการ")} onClick={() => pickView("list")}><ListIcon size={16} /></button>
+          <button type="button" aria-pressed={view === "grid"} aria-label={tx("การ์ด")} title={tx("การ์ด")} onClick={() => pickView("grid")}><GridIcon size={16} /></button>
         </div>
       </div>
 

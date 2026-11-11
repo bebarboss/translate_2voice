@@ -1415,4 +1415,18 @@ export const EN: Record<string, string> = {
   "ค่าตอบแทนของฉัน": "My earnings",
   "เปิดหน้านักพากย์": "Open the voice actor page",
   "ยังไม่ได้กรอกบัญชีรับเงิน": "Payout account not filled in",
+  // ดีไซน์ใหม่แนว HeyGen
+  "หน้าแรก": "Home",
+  "สร้างงานใหม่": "New job",
+  "เติม": "Top up",
+  "วันนี้อยากพากย์คลิปไหนดี?": "What would you like to dub today?",
+  "Beta": "Beta",
+  "ลากคลิปมาวาง หรือ": "Drop a clip here, or",
+  "พากย์คลิปเดียว": "Dub one clip",
+  "อัปโหลดแล้วได้คลิปพากย์ไทยพร้อมซับ": "Upload and get a dubbed clip with subtitles",
+  "ซีรีส์หลายตอน": "Multi-episode series",
+  "จำชื่อตัวละครและเสียงพากย์ข้ามตอน": "Keeps character names and voices across episodes",
+  "เลือกเสียงนักพากย์ หรือใช้เสียงต้นฉบับ": "Pick a voice actor, or keep the original voices",
+  "จาก Premiere Pro / DaVinci Resolve": "From Premiere Pro / DaVinci Resolve",
+  "มีผลกับงานที่พากย์รอบถัดไป": "Applies to the next dubbing run",
 };

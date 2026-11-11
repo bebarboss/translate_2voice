@@ -162,15 +162,15 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
   return (
     <main className="page wide">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="row" style={{ gap: 14 }}>
+      <div className="toolbar">
+        <div className="row" style={{ gap: 12, minWidth: 0 }}>
           {onCancelEdit ? (
-            <button type="button" className="btn small" onClick={onCancelEdit} aria-label={tx("กลับหน้าผลลัพธ์")}><ArrowLeft /></button>
+            <button type="button" className="icon-only" onClick={onCancelEdit} aria-label={tx("กลับหน้าผลลัพธ์")}><ArrowLeft /></button>
           ) : (
-            <Link href="/jobs" className="btn small" aria-label={tx("กลับหน้างานทั้งหมด")}><ArrowLeft /></Link>
+            <Link href="/jobs" className="icon-only" aria-label={tx("กลับหน้างานทั้งหมด")}><ArrowLeft /></Link>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-            <span style={{ fontSize: 17, fontWeight: 600, wordBreak: "break-all" }}>{job.filename}</span>
+            <span style={{ fontSize: 16, fontWeight: 600, wordBreak: "break-all" }}>{job.filename}</span>
             <span className="dim">
               {langName(job.detected_lang ?? job.source_lang)} → {tx(TARGET_LABEL[job.target_lang])} · {speakers.length}  {tx("ตัวละคร ·")} {sorted.length}  {tx("ประโยค ·")} {fmtDuration(job.duration)}
             </span>
@@ -237,7 +237,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
         <aside className="side card" aria-label={tx("บทพากย์")} style={{ padding: 0, gap: 0, overflow: "hidden" }}>
           <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 16 }}>
+            <h2 style={{ fontSize: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
               {tx("บทพากย์")}
               {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>{tx("ยาวเกินเวลา")} {longCount}</span>}
               {flagged.length > 0 && (
@@ -246,16 +246,13 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                 </span>
               )}
             </h2>
-            <div className="row" style={{ gap: 12 }}>
-              <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}
-                title={tx("โชว์เฉพาะท่อนว่าง / ป้ายควรตรวจ / ไม่ชัด / ยาวเกิน — ท่อนอื่นข้ามได้")}>
-                <input type="checkbox" checked={triageOnly} onChange={(e) => setTriageOnly(e.target.checked)}
-                  style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+            <div className="row" style={{ gap: 8 }}>
+              <label className="chip triage" title={tx("โชว์เฉพาะท่อนว่าง / ป้ายควรตรวจ / ไม่ชัด / ยาวเกิน — ท่อนอื่นข้ามได้")}>
+                <input type="checkbox" checked={triageOnly} onChange={(e) => setTriageOnly(e.target.checked)} />
                 {tx("เฉพาะที่ควรตรวจ")}
               </label>
-              <label className="row" style={{ gap: 8, fontSize: 13, color: "var(--text-2)", cursor: "pointer" }}>
-                <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)}
-                  style={{ width: 18, height: 18, accentColor: "var(--accent)" }} />
+              <label className="chip">
+                <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
                 {tx("เลื่อนตามคลิป")}
               </label>
             </div>

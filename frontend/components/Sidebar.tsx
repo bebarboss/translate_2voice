@@ -9,15 +9,15 @@ import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
 import { BrandLink } from "./Brand";
-import { FolderIcon, GridIcon, ListIcon, MenuIcon, MicIcon, PlusIcon, ScissorsIcon, UserIcon, WaveIcon, XIcon } from "./Icons";
+import { FolderIcon, GridIcon, HomeIcon, MenuIcon, MicIcon, PlusIcon, TimelineIcon, UserIcon, VideoIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
-  { href: "/dashboard", label: "ภาพรวม", icon: <GridIcon size={16} /> },
-  { href: "/", label: "งานใหม่", icon: <PlusIcon size={16} /> },
-  { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <ScissorsIcon size={16} /> },
-  { href: "/jobs", label: "งานทั้งหมด", icon: <ListIcon /> },
-  { href: "/projects", label: "โปรเจกต์", icon: <FolderIcon size={16} /> },
+  { href: "/", label: "หน้าแรก", icon: <HomeIcon /> },
+  { href: "/dashboard", label: "ภาพรวม", icon: <GridIcon /> },
+  { href: "/jobs", label: "งานทั้งหมด", icon: <VideoIcon /> },
+  { href: "/projects", label: "โปรเจกต์", icon: <FolderIcon /> },
   { href: "/voices", label: "คลังเสียง", icon: <WaveIcon /> },
+  { href: "/timeline", label: "นำเข้าไทม์ไลน์", icon: <TimelineIcon /> },
 ];
 const RECENT = 6;
 // หน้าที่ไม่มีเมนูซ้าย (มีโครงของตัวเอง)
@@ -34,13 +34,19 @@ function CreditCard({ path }: { path: string }) {
     return () => { clearInterval(timer); document.removeEventListener("visibilitychange", load); };
   }, [path]);
   const total = (wallet?.credits ?? 0) + (wallet?.subscription?.minutes_left ?? 0);
+  // แถบ: มีแพ็กเกจ = เวลาที่เหลือของแพ็กเกจ, ไม่มี = เต็มเมื่อยังมีเครดิต
+  const sub = wallet?.subscription;
+  const fill = sub && sub.expires_at > sub.started_at
+    ? Math.min(1, Math.max(0, (sub.expires_at - Date.now() / 1000) / (sub.expires_at - sub.started_at)))
+    : total > 0 ? 1 : 0;
   return (
     <Link href="/promotions" className="credit-card">
-      <div>
+      <span className="credit-top">
         <b>{wallet ? tx("{0} เครดิต", { 0: fmtNum(total) }) : "..."}</b>
-        <span>{tx("เติมเครดิตหรือซื้อแพ็กเกจ")}</span>
-      </div>
-      <i aria-hidden="true"><PlusIcon size={16} /></i>
+        <span className="credit-add">{tx("เติม")}</span>
+      </span>
+      <span className="credit-bar" aria-hidden="true"><span style={{ width: `${(wallet ? fill : 0) * 100}%` }} /></span>
+      <span className="credit-note">{tx("เติมเครดิตหรือซื้อแพ็กเกจ")}</span>
     </Link>
   );
 }
@@ -88,6 +94,7 @@ export default function Sidebar() {
             <XIcon size={18} />
           </button>
         </div>
+        <Link href="/" className="side-new"><PlusIcon size={16} />{tx("สร้างงานใหม่")}</Link>
         <div className="side-scroll">
           <nav className="side-nav" aria-label={tx("เมนูหลัก")}>
             {LINKS.map((l) => (

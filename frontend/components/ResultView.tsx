@@ -212,9 +212,10 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
 
   return (
     <main className="page wide">
-      <div className="page-head">
-        <div className="row" style={{ gap: 14, minWidth: 0 }}>
-          <h1 style={{ fontSize: 24, wordBreak: "break-all" }}>{job.filename}</h1>
+      <div className="toolbar">
+        <div className="row" style={{ gap: 12, minWidth: 0 }}>
+          <Link href="/jobs" className="icon-only" aria-label={tx("กลับหน้างานทั้งหมด")}><ArrowLeft /></Link>
+          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, wordBreak: "break-all" }}>{job.filename}</h1>
           <span className="badge done"><CheckIcon size={14} />{tx("พากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("เสร็จแล้ว")}</span>
         </div>
         <div className="row">
