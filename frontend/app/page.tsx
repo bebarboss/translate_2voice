@@ -49,6 +49,8 @@ export default function UploadPage() {
   const [recent, setRecent] = useState<Job[] | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [quote, setQuote] = useState<{ credits: number; remaining: number; enough: boolean; title?: string } | null>(null);
+  const [quoteBusy, setQuoteBusy] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -66,6 +68,29 @@ export default function UploadPage() {
       if (p) { setProjectId(p.id); setTargetLang(p.target_lang); }
     }).catch(() => setProjects([]));
   }, []);
+
+  // ประมาณเครดิตจากลิงก์ (debounce)
+  useEffect(() => {
+    if (mode !== "url") return;
+    const u = url.trim();
+    if (!/^https?:\/\/\S+$/i.test(u)) {
+      setQuote(null);
+      setQuoteBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setQuoteBusy(true);
+    const t = window.setTimeout(() => {
+      api.quoteUrl(u)
+        .then((q) => {
+          if (!cancelled) setQuote({ credits: q.credits, remaining: q.remaining, enough: q.enough, title: q.title });
+        })
+        .catch(() => { if (!cancelled) setQuote(null); })
+        .finally(() => { if (!cancelled) setQuoteBusy(false); });
+    }, 600);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [mode, url]);
+
   const project = projects.find((p) => p.id === projectId);
   const pickProject = (id: string) => {
     setProjectId(id);
@@ -75,6 +100,7 @@ export default function UploadPage() {
 
   const pickFile = (f: File | undefined | null) => {
     setError("");
+    setQuote(null);
     if (!f) return;
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPT.split(",").includes(ext)) {
@@ -82,6 +108,17 @@ export default function UploadPage() {
       return;
     }
     setFile(f);
+    const urlObj = URL.createObjectURL(f);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const sec = video.duration;
+      URL.revokeObjectURL(urlObj);
+      if (!Number.isFinite(sec) || sec <= 0) return;
+      api.quoteJob(sec).then((q) => setQuote({ credits: q.credits, remaining: q.remaining, enough: q.enough }))
+        .catch(() => setQuote(null));
+    };
+    video.src = urlObj;
   };
 
   const ready = mode === "file" ? !!file : /^https?:\/\/\S+$/i.test(url.trim());
@@ -123,10 +160,10 @@ export default function UploadPage() {
 
         <div className="create-box">
           <div className="tabs" role="tablist" aria-label={tx("วิธีส่งคลิป")}>
-            <button type="button" role="tab" className="tab" aria-selected={mode === "file"} onClick={() => setMode("file")}>
+            <button type="button" role="tab" className="tab" aria-selected={mode === "file"} onClick={() => { setMode("file"); setQuote(null); }}>
               <UploadIcon size={15} />{tx("อัปโหลดไฟล์")}
             </button>
-            <button type="button" role="tab" className="tab" aria-selected={mode === "url"} onClick={() => setMode("url")}>
+            <button type="button" role="tab" className="tab" aria-selected={mode === "url"} onClick={() => { setMode("url"); setQuote(null); }}>
               <LinkIcon size={15} />{tx("วางลิงก์")}
             </button>
             <Link href="/timeline" className="tab">
@@ -204,6 +241,21 @@ export default function UploadPage() {
             <span className="dim" style={{ padding: "0 4px" }}>
               {tx("ใช้ตัวละคร {0} ตัว เสียงพากย์ และชื่อเฉพาะของโปรเจกต์นี้ ระบบจับคู่ตัวละครด้วยลายเสียงให้เอง", { 0: project.characters.length })}
             </span>
+          )}
+          {quoteBusy && mode === "url" && (
+            <span className="dim" style={{ padding: "0 4px" }}>{tx("กำลังประมาณเครดิตจากลิงก์...")}</span>
+          )}
+          {quote && (
+            <div className={`alert ${quote.enough ? "info" : "error"}`} role="status" style={{ margin: "0 4px" }}>
+              {quote.title ? `${quote.title} · ` : ""}
+              {tx("งานนี้ใช้ประมาณ {0} เครดิต · หลังเริ่มจะเหลือประมาณ {1} เครดิต", {
+                0: quote.credits.toFixed(2),
+                1: Math.max(0, quote.remaining).toFixed(2),
+              })}
+              {!quote.enough && (
+                <> — <Link href="/promotions">{tx("เติมเครดิตหรืออัปเกรด")}</Link></>
+              )}
+            </div>
           )}
           {progress !== null && (
             <div className="create-progress">

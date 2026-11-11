@@ -80,7 +80,7 @@ def thai_seconds(text: str) -> float:
 
 def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0,
                steps: int = 32, target_lang: str = "th", slot: Optional[float] = None,
-               max_speedup: float = 1.35, max_slowdown: float = 1.2) -> np.ndarray:
+               max_speedup: float = 1.10, max_slowdown: float = 1.2) -> np.ndarray:
     """พากย์ประโยคเดียว ถ้าให้ slot มา โมเดลจะปรับจังหวะพูดให้พอดีเวลาฉากเอง (fix_duration)
     ได้เสียงที่เป็นธรรมชาติกว่าการเร่งความเร็วหรือตัดเสียงทีหลัง"""
     gen_text = _end_punct(gen_text)

@@ -30,7 +30,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [follow, setFollow] = useState(true);
   const [triageOnly, setTriageOnly] = useState(true); // โชว์เฉพาะท่อนที่ควรตรวจ (ลดงานมือ)
   const [picked, setPicked] = useState<number | null>(null); // บล็อกที่คลิกเลือก (ลากขอบได้) ล้างเมื่อเล่นวิดีโอ
-  const [maxSpeedup, setMaxSpeedup] = useState(1.35);
+  const [maxSpeedup, setMaxSpeedup] = useState(1.10);
+  const [redubQuote, setRedubQuote] = useState<{ credits: number; free: boolean; enough: boolean } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const lineRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const autoVoiceKey = useRef("");
@@ -38,6 +39,31 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   useEffect(() => {
     api.getSettings().then((s) => setMaxSpeedup(s.max_speedup)).catch(() => {});
   }, [job.id]);
+
+  // ประมาณเครดิตพากย์ซ้ำเมื่อแก้บทหลังงานเสร็จ
+  useEffect(() => {
+    if (job.status !== "done" || !dirty.length) {
+      setRedubQuote(null);
+      return;
+    }
+    const editSec = dirty.reduce((s, id) => {
+      const u = sorted.find((x) => x.id === id);
+      if (!u) return s;
+      const d = tr.draftOf(u);
+      return s + Math.max(0, d.end - d.start);
+    }, 0);
+    const freeSec = dirty.reduce((s, id) => {
+      const u = sorted.find((x) => x.id === id);
+      if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+      const d = tr.draftOf(u);
+      return s + Math.max(0, d.end - d.start);
+    }, 0);
+    let cancelled = false;
+    api.quoteRedub(editSec, job.duration || 0, freeSec)
+      .then((q) => { if (!cancelled) setRedubQuote({ credits: q.credits, free: q.free, enough: q.enough }); })
+      .catch(() => { if (!cancelled) setRedubQuote(null); });
+    return () => { cancelled = true; };
+  }, [job.status, job.duration, dirty, sorted, tr.drafts]);
 
   // เข้าหน้าแก้บทแล้วเลือกเสียงแนะนำอัตโนมัติ ตามคลังที่แพ็กเกจใช้ได้ (ทดลอง = Standard เท่านั้น)
   useEffect(() => {
@@ -134,11 +160,28 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     try {
       // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยเข้าคิวพากย์
       // บทว่าง: เซิร์ฟเวอร์ให้ AI วิเคราะห์แล้วเติมเองก่อนพากย์ (AI_FILL_EMPTY)
+      const editIds = [...dirty];
       await saveAll();
       if (empty) {
         setMessage({ kind: "info", text: tx("พบบทว่าง {0} ประโยค — AI จะเติมให้อัตโนมัติแล้วพากย์", { 0: empty }) });
       }
-      await api.synthesize(job.id);
+      let body: { edit_seconds?: number; free_flagged_seconds?: number } | undefined;
+      if (job.status === "done" && editIds.length) {
+        const editSec = editIds.reduce((s, id) => {
+          const u = sorted.find((x) => x.id === id);
+          if (!u) return s;
+          const d = tr.draftOf(u);
+          return s + Math.max(0, d.end - d.start);
+        }, 0);
+        const freeSec = editIds.reduce((s, id) => {
+          const u = sorted.find((x) => x.id === id);
+          if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+          const d = tr.draftOf(u);
+          return s + Math.max(0, d.end - d.start);
+        }, 0);
+        body = { edit_seconds: editSec, free_flagged_seconds: freeSec };
+      }
+      await api.synthesize(job.id, body);
       onChanged();
     } catch (e) {
       setMessage({ kind: "error", text: (e as Error).message });
@@ -181,7 +224,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
           <button type="button" className="btn" onClick={onSave} disabled={!!busy || !pending}>
             {busy === "save" ? tx("กำลังบันทึก...") : tx("บันทึก{0}", { 0: pending ? ` (${pending})` : "" })}
           </button>
-          <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length}
+          <button type="button" className="btn primary" onClick={onDub} disabled={!!busy || !lines?.length || (redubQuote != null && !redubQuote.enough)}
             title={tx("บันทึกบทและเสียงที่แก้ทั้งหมด แล้วเริ่มพากย์")}>
             <MicIcon size={17} />{busy === "dub" ? tx("กำลังบันทึกและพากย์...") : onCancelEdit ? tx("บันทึกและพากย์ใหม่") : tx("บันทึกและเริ่มพากย์")}
           </button>
@@ -190,6 +233,14 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
 
       {onCancelEdit && (
         <div className="alert info">{tx("แก้บท เปลี่ยนตัวละคร หรือเปลี่ยนเสียงพากย์ แล้วกดบันทึกและพากย์ใหม่ ระบบบันทึกการแก้ทั้งหมดก่อน แล้วพากย์เฉพาะประโยคที่เปลี่ยน")}</div>
+      )}
+      {redubQuote && (
+        <div className={`alert ${redubQuote.enough ? "info" : "error"}`} role="status">
+          {redubQuote.free
+            ? tx("พากย์ซ้ำครั้งนี้อยู่ในโควตาฟรี (ไม่เกิน 10% หรือบรรทัดที่ AI ติดธง)")
+            : tx("พากย์ซ้ำครั้งนี้ใช้ประมาณ {0} เครดิต", { 0: redubQuote.credits.toFixed(2) })}
+          {!redubQuote.enough && <> — <Link href="/promotions">{tx("เติมเครดิตหรืออัปเกรด")}</Link></>}
+        </div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
 

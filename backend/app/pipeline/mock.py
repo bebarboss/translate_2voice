@@ -71,13 +71,13 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
     _wait()
 
 
-def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35) -> None:
+def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.10) -> None:
     return None
 
 
 def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0,
                steps: int = 32, target_lang: str = "th", slot: Optional[float] = None,
-               max_speedup: float = 1.35, max_slowdown: float = 1.2) -> np.ndarray:
+               max_speedup: float = 1.10, max_slowdown: float = 1.2) -> np.ndarray:
     time.sleep(DELAY / 4)
     seconds = max(0.4, estimate_seconds(gen_text, target_lang))
     if slot:

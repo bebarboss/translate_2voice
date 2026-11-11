@@ -62,6 +62,7 @@ def run_analyze(store: JobStore, job_id: str) -> None:
         processor.run_analyze(store, job_id)
         return
 
+    yt_sub_path = None
     if job.source_url and not (job.input_path and Path(job.input_path).exists()):
         from .download import download
         stage("download", 0.01)
@@ -69,6 +70,23 @@ def run_analyze(store: JobStore, job_id: str) -> None:
                                   lambda f: store.update(job_id, progress=round(0.01 + 0.05 * f, 3)))
         store.update(job_id, input_path=str(path), filename=f"{title}.mp4")
         job = store.get(job_id)
+        try:
+            from . import yt_subs
+            stage("yt_subs", 0.055)
+            yt_sub_path = yt_subs.fetch(job.source_url, d, prefer_lang=job.source_lang)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("youtube subs fetch failed: %s", exc)
+    elif job.source_url:
+        # อัปโหลดแล้วมีลิงก์ หรือ retry — ลองดึงซับถ้ายังไม่มี
+        existing = next(iter(sorted(d.glob("yt_subs*.vtt")) + sorted(d.glob("yt_subs*.srt"))), None)
+        if existing is None:
+            try:
+                from . import yt_subs
+                yt_sub_path = yt_subs.fetch(job.source_url, d, prefer_lang=job.source_lang)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("youtube subs fetch failed: %s", exc)
+        else:
+            yt_sub_path = existing
 
     video = Path(job.input_path)
     duration = round(audio.probe_duration(video), 2)
@@ -90,6 +108,20 @@ def run_analyze(store: JobStore, job_id: str) -> None:
     # แยกเสียงพูด/เพลง → แยกผู้พูด → ถอดเสียง (บนเครื่องนี้หรือ Modal ตาม WORKER)
     res = gpu.analyze(mixed, d, job.source_lang, job.num_speakers, stage, cancel)
     turns, words, lang, utterances = res["turns"], res["words"], res["lang"], res["utterances"]
+    if yt_sub_path is None:
+        yt_sub_path = next(iter(sorted(d.glob("yt_subs*.vtt")) + sorted(d.glob("yt_subs*.srt"))), None)
+    if yt_sub_path and yt_sub_path.exists():
+        try:
+            from . import yt_subs
+            cues = yt_subs.parse_cues(yt_sub_path)
+            n_yt = yt_subs.apply_to_utterances(utterances, cues)
+            if n_yt:
+                log.info("applied youtube subs to %d lines (%s)", n_yt, yt_sub_path.name)
+                if res.get("recheck") is None:
+                    res["recheck"] = {}
+                res["recheck"]["yt_subs"] = {"file": yt_sub_path.name, "replaced": n_yt, "cues": len(cues)}
+        except Exception as exc:  # noqa: BLE001
+            log.warning("apply youtube subs failed: %s", exc)
     if settings.turn_split and settings.typhoon_api_key and not settings.mock_pipeline:
         # สองคนพูดต่อกันแต่ได้ท่อนเดียว → ให้ตัวแปลอ่านบทเสนอจุดเปลี่ยนคน แล้วตรวจด้วยลายเสียงบนการ์ดจอ
         try:
@@ -684,9 +716,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     for i, g in enumerate(groups):
         first, last = g[0], g[-1]
         speaker = _group_speaker(g)
-        # ฉากตื่นเต้นยอมให้พูดเร็วขึ้นได้อีก ฉากเศร้าหรือเนิบยอมให้พูดช้าลงได้อีก (ไม่เกิน 15%)
+        # ฉากเศร้า/เนิบยอมให้พูดช้าลงได้อีกเล็กน้อย — เร่งเสียงไม่เกินเพดาน 10% (ย่อบทแทน)
         excite = tts.mean_arousal(g, ref_arousal)
-        max_speedup = round(rs.max_speedup * (1 + 0.1 * min(max(excite, 0.0), 1.5)), 2)
+        max_speedup = rs.max_speedup
         max_slowdown = round(settings.max_slowdown * (1 + 0.1 * min(max(-excite, 0.0), 1.5)), 2)
         if speaker in library_refs:  # ผู้ใช้เลือกเสียงจากคลังให้ตัวละครนี้
             ref_id, _, ref_text, ref_key = library_refs[speaker][mood_of(max(g, key=lambda u: u.duration))]

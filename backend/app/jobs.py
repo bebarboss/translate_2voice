@@ -122,6 +122,16 @@ class JobStore:
             job = self._jobs.get(job_id)
             return job.model_copy(deep=True) if job else None
 
+    def by_share_token(self, token: str) -> Optional[Job]:
+        token = (token or "").strip()
+        if not token:
+            return None
+        with self._lock:
+            for job in self._jobs.values():
+                if job.share_token == token and job.status == JobStatus.done:
+                    return job.model_copy(deep=True)
+        return None
+
     def all(self) -> list[Job]:
         with self._lock:
             return sorted((j.model_copy(deep=True) for j in self._jobs.values()),
@@ -342,10 +352,21 @@ class Worker:
                     self._cond.notify_all()  # ช่องว่างแล้ว ผู้ใช้ที่ติดเพดานอาจได้คิวต่อ
 
     def _archive_r2(self, job_id: str) -> None:
-        """หลังงาน done: อัปสื่อขึ้น R2 (และ purge ตาม R2_PURGE_LOCAL) — ล้มไม่ทำให้งานล้ม"""
+        """หลังงาน done: อัปสื่อขึ้น R2 (และ purge ตาม R2_PURGE_LOCAL) — ล้มไม่ทำให้งานล้ม
+        โหมดฟรี (watermark) → prefix free/ + ตั้ง expires_at ตาม FREE_RETENTION_DAYS"""
         try:
+            from datetime import timedelta
+
             from . import object_store
-            object_store.archive_after_done(self.store.dir(job_id))
+            from .config import settings
+            from .schemas import now as utc_now
+
+            job = self.store.get(job_id)
+            free = bool(job and job.watermark)
+            object_store.archive_after_done(self.store.dir(job_id), free_tier=free)
+            if free and job and job.expires_at is None:
+                days = max(1, int(settings.free_retention_days))
+                self.store.update(job_id, expires_at=utc_now() + timedelta(days=days))
         except Exception:  # noqa: BLE001
             log.exception("r2 archive after done failed for %s", job_id)
 
@@ -394,7 +415,7 @@ class Worker:
             if job and phase != "voice":
                 self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
                 event = "failed"
-                if phase == "analyze" and job.owner:  # วิเคราะห์ไม่สำเร็จ คืนนาทีที่ตัดไป
+                if job.owner:  # งานล้มเหลวเพราะระบบ → คืนเครดิต (ครั้งเดียวต่องาน)
                     from . import accounts
                     accounts.refund_job(job.owner, job_id)
         finally:

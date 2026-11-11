@@ -49,11 +49,13 @@ def _pitch(seg: np.ndarray, sr: int) -> float:
     return float(12 * np.log2(np.median(f0))) if len(f0) >= 10 else float("nan")
 
 
-def profile(utts: list, orig: np.ndarray, sr: int, min_sec: float = 1.0) -> dict[int, Voice]:
-    """id → ลายเสียงของท่อนนั้น"""
+def profile(utts: list, orig: np.ndarray, sr: int, min_sec: Optional[float] = None) -> dict[int, Voice]:
+    """id → ลายเสียงของท่อนนั้น (วัดเฉพาะช่วงยาวพอ — ค่าเริ่มต้น ≥2 วินาที)"""
     import librosa
     import torch
 
+    if min_sec is None:
+        min_sec = settings.voice_profile_min_sec
     model = _load()
     out = {}
     for u in utts:
@@ -215,7 +217,8 @@ def cluster_lines(utts: list, voices: dict[int, Voice], max_speakers: int = 20) 
     ตั้งใจให้เอียงไปทางแยกเกิน (ไม่น้อยกว่าจำนวนที่ระบบแยกผู้พูดหาได้) เพราะรวมตัวละครในหน้าตรวจบทกดครั้งเดียว
     แต่ถ้ารวมคนผิดต้องไล่เปลี่ยนทีละประโยค แล้วรวมเฉพาะกลุ่มที่ลายเสียงเหมือนกันมากจริง ๆ
     ประโยคสั้นที่วัดไม่ได้ไปอยู่กลุ่มเดียวกับประโยคที่วัดได้ซึ่งอยู่ใกล้ที่สุดตามเวลาและเดิมเป็นผู้พูดคนเดียวกัน"""
-    known = [u for u in utts if u.id in voices and voices[u.id].emb is not None and u.duration >= 1.0]
+    min_dur = settings.voice_profile_min_sec
+    known = [u for u in utts if u.id in voices and voices[u.id].emb is not None and u.duration >= min_dur]
     if len(known) < 4:
         return None
     emb = np.stack([voices[u.id].emb for u in known])
@@ -288,24 +291,32 @@ def split_speakers(utts: list, voices: dict[int, Voice], taken: Optional[set] = 
     taken = {u.speaker for u in utts} | (taken or set())
     renamed: dict[str, str] = {}
     for speaker, lines in sorted(by_speaker.items()):
-        known = [u for u in lines if np.isfinite(voices[u.id].pitch) and u.duration >= 1.0]
+        # แยกด้วยลายนิ้วมือเสียงเป็นหลัก (k-means 2 กลุ่ม) — pitch เป็นเกณฑ์ยืนยันเท่านั้น
+        # เพื่อไม่ให้วรรณยุกต์/อารมณ์ไทยทำให้แยกคนเดียวกันผิด
+        known = [u for u in lines if voices[u.id].emb is not None and u.duration >= settings.voice_profile_min_sec]
         if len(known) < 4:
             continue
-        p = np.array([voices[u.id].pitch for u in known])
-        # สองกลุ่มที่ห่างกันมากที่สุด: ลองทุกจุดตัดของระดับเสียงที่เรียงแล้ว
-        order = np.sort(p)
-        best = None
-        for k in range(2, len(order) - 1):
-            lo, hi = order[:k], order[k:]
-            spread = np.concatenate([lo - lo.mean(), hi - hi.mean()]).std()
-            score = (hi.mean() - lo.mean()) / (spread + 1e-6)
-            if best is None or score > best[0]:
-                best = (score, (order[k - 1] + order[k]) / 2, hi.mean() - lo.mean())
-        if best is None or best[2] < settings.voice_split_pitch:
+        emb = np.stack([voices[u.id].emb for u in known])
+        try:
+            from scipy.cluster.vq import kmeans2
+            x = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-9)
+            best = None
+            for s in range(8):
+                cents, labels = kmeans2(x, 2, minit="++", seed=s)
+                if len(set(labels)) < 2:
+                    continue
+                inertia = float(((x - cents[labels]) ** 2).sum())
+                if best is None or inertia < best[0]:
+                    best = (inertia, labels)
+            if best is None:
+                continue
+            labels = best[1]
+        except Exception:  # noqa: BLE001
             continue
-        cut = best[1]
-        low = [u for u in known if voices[u.id].pitch < cut]
-        high = [u for u in known if voices[u.id].pitch >= cut]
+        if len(set(labels)) < 2:
+            continue
+        low = [u for u, lab in zip(known, labels) if lab == 0]
+        high = [u for u, lab in zip(known, labels) if lab == 1]
         within, across = [], []
         for i, a in enumerate(known):
             for b in known[i + 1:]:
@@ -316,8 +327,17 @@ def split_speakers(utts: list, voices: dict[int, Voice], taken: Optional[set] = 
                     within.append(s)
                 else:
                     across.append(s)
-        if within and across and np.mean(within) - np.mean(across) < 0.05:
-            continue  # ลายเสียงไม่ได้บอกว่าเป็นคนละคน แค่ระดับเสียงต่างตามอารมณ์
+        if not within or not across or np.mean(within) - np.mean(across) < 0.05:
+            continue  # ลายเสียงไม่ได้บอกว่าเป็นคนละคน
+        # pitch ยืนยันเมื่อวัดได้: กลุ่มต้องห่างกันพอ ไม่งั้นอาจเป็นแค่ drift ในคนเดียว
+        pitch_ok = True
+        lo_p = [voices[u.id].pitch for u in low if np.isfinite(voices[u.id].pitch)]
+        hi_p = [voices[u.id].pitch for u in high if np.isfinite(voices[u.id].pitch)]
+        if lo_p and hi_p:
+            gap = abs(float(np.mean(hi_p)) - float(np.mean(lo_p)))
+            pitch_ok = gap >= settings.voice_split_pitch * 0.5
+        if not pitch_ok:
+            continue
         n = len(taken) + 1
         while f"speaker_{n:02d}" in taken:
             n += 1

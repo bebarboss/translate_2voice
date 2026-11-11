@@ -52,6 +52,8 @@ class Utterance(BaseModel):
     heard: str = ""
     heard_score: Optional[float] = None
     unclear: bool = False  # ถอดเสียงสองรอบแล้วยังไม่มั่นใจ (เพลงดังทับ) ควรฟังต้นฉบับ (transcribe.recheck_noisy)
+    # เหตุผลที่ AI ไม่มั่นใจ เช่น ฟังเสียงไม่ชัด / น่าจะเป็นเนื้อเพลง / ชื่อเฉพาะอาจผิด / บทยาวเกินเวลา
+    unclear_reason: str = ""
     check_note: str = ""  # ตรวจหลังแปล (translate.review_translation): เหตุผลที่ควรให้คนตรวจบรรทัดนี้ ("" = ไม่มีป้าย)
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
@@ -123,6 +125,10 @@ class Job(BaseModel):
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
     queue_position: Optional[int] = None  # ลำดับคิว (เฉพาะคำตอบของ API ตอนรอคิว ไม่ได้บันทึกลงไฟล์)
     error: Optional[str] = None
+    # โหมดฟรี: วันหมดอายุไฟล์บน R2 (ISO) — อัปเกรดก่อนครบกำหนดจะย้ายออกจาก free/
+    expires_at: Optional[datetime] = None
+    # ลิงก์แชร์สาธารณะ (token) — คลิปฟรีมีลายน้ำนกแก้วอยู่แล้วจาก watermark
+    share_token: Optional[str] = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
 
@@ -303,7 +309,7 @@ class RuntimeSettings(BaseModel):
     # เสียงพากย์
     voice_gain: float = Field(1.0, ge=0.0, le=2.0)
     bgm_gain: float = Field(1.0, ge=0.0, le=2.0)
-    max_speedup: float = Field(1.35, ge=1.0, le=2.0)
+    max_speedup: float = Field(1.10, ge=1.0, le=2.0)
     f5_steps: int = Field(32, ge=8, le=64)
     # ค่าเริ่มต้นตอนส่งงาน
     default_target_lang: TargetLang = "th"

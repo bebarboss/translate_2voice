@@ -56,9 +56,11 @@ def _client():
     )
 
 
-def object_key(job_id: str, rel: str) -> str:
+def object_key(job_id: str, rel: str, *, free_tier: bool = False) -> str:
+    """คีย์ R2 — โหมดฟรีใช้ prefix free/ เพื่อตั้งกฎ lifecycle ลบอัตโนมัติที่ 7 วัน"""
     rel = rel.replace("\\", "/").lstrip("/")
-    return f"jobs/{job_id}/{rel}"
+    prefix = "free/jobs" if free_tier else "jobs"
+    return f"{prefix}/{job_id}/{rel}"
 
 
 def job_id_from_dir(job_dir: Path) -> str:
@@ -138,26 +140,28 @@ def _content_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
-def upload_file(job_id: str, local: Path, job_dir: Path) -> str:
+def upload_file(job_id: str, local: Path, job_dir: Path, *, free_tier: bool = False) -> str:
     rel = local.relative_to(job_dir).as_posix()
-    key = object_key(job_id, rel)
+    key = object_key(job_id, rel, free_tier=free_tier)
     client = _client()
     extra = {"ContentType": _content_type(local)}
     client.upload_file(str(local), settings.r2_bucket, key, ExtraArgs=extra)
     return key
 
 
-def upload_job_media(job_dir: Path, *, purge: Optional[bool] = None) -> list[str]:
-    """อัปไฟล์สื่อที่ยังไม่อยู่ใน manifest คืนรายการคีย์ที่อัป (รวมของเดิมใน manifest)"""
+def upload_job_media(job_dir: Path, *, purge: Optional[bool] = None, free_tier: bool = False) -> list[str]:
+    """อัปไฟล์สื่อที่ยังไม่อยู่ใน manifest คืนรายการคีย์ที่อัป (รวมของเดิมใน manifest)
+    free_tier=True → คีย์ใต้ free/jobs/… (ตั้งกฎ lifecycle R2 ลบ prefix นี้หลัง 7 วัน)"""
     if not enabled():
         return []
     job_id = job_id_from_dir(job_dir)
     man = load_manifest(job_dir)
     files: dict = man.setdefault("files", {})
+    man["free_tier"] = bool(free_tier)
     uploaded: list[str] = []
     for local in iter_media_files(job_dir):
         rel = local.relative_to(job_dir).as_posix()
-        key = object_key(job_id, rel)
+        key = object_key(job_id, rel, free_tier=free_tier)
         prev = files.get(rel) or {}
         size = local.stat().st_size
         mtime = local.stat().st_mtime
@@ -165,7 +169,7 @@ def upload_job_media(job_dir: Path, *, purge: Optional[bool] = None) -> list[str
             uploaded.append(key)
             continue
         try:
-            upload_file(job_id, local, job_dir)
+            upload_file(job_id, local, job_dir, free_tier=free_tier)
             files[rel] = {"key": key, "size": size, "mtime": mtime}
             uploaded.append(key)
             log.info("r2 uploaded %s (%d bytes)", key, size)
@@ -268,36 +272,37 @@ def hydrate_job(job_dir: Path, rels: Optional[Iterable[str]] = None) -> list[str
 
 
 def delete_prefix(job_id: str) -> int:
-    """ลบทุกอ็อบเจ็กต์ภายใต้ jobs/{job_id}/ คืนจำนวนที่ลบ"""
+    """ลบทุกอ็อบเจ็กต์ภายใต้ jobs/{job_id}/ และ free/jobs/{job_id}/ คืนจำนวนที่ลบ"""
     if not enabled():
         return 0
     client = _client()
-    prefix = f"jobs/{job_id}/"
     n = 0
-    token = None
-    while True:
-        kw = {"Bucket": settings.r2_bucket, "Prefix": prefix}
-        if token:
-            kw["ContinuationToken"] = token
-        resp = client.list_objects_v2(**kw)
-        objs = [{"Key": o["Key"]} for o in resp.get("Contents") or []]
-        if objs:
-            client.delete_objects(Bucket=settings.r2_bucket, Delete={"Objects": objs, "Quiet": True})
-            n += len(objs)
-        if not resp.get("IsTruncated"):
-            break
-        token = resp.get("NextContinuationToken")
+    for prefix in (f"jobs/{job_id}/", f"free/jobs/{job_id}/"):
+        token = None
+        while True:
+            kw = {"Bucket": settings.r2_bucket, "Prefix": prefix}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = client.list_objects_v2(**kw)
+            objs = [{"Key": o["Key"]} for o in resp.get("Contents") or []]
+            if objs:
+                client.delete_objects(Bucket=settings.r2_bucket, Delete={"Objects": objs, "Quiet": True})
+                n += len(objs)
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
     if n:
-        log.info("r2 deleted %d objects under %s", n, prefix)
+        log.info("r2 deleted %d objects for job %s", n, job_id)
     return n
 
 
-def archive_after_done(job_dir: Path) -> None:
-    """เรียกหลังงาน status=done — อัป R2 (และ purge ตามตั้งค่า) ไม่โยน error ให้งานล้ม"""
+def archive_after_done(job_dir: Path, *, free_tier: bool = False) -> None:
+    """เรียกหลังงาน status=done — อัป R2 (และ purge ตามตั้งค่า) ไม่โยน error ให้งานล้ม
+    free_tier → เก็บใต้ free/jobs/ สำหรับกฎ lifecycle ลบอัตโนมัติหลัง FREE_RETENTION_DAYS"""
     if not enabled():
         return
     try:
-        keys = upload_job_media(job_dir)
-        log.info("r2 archive job %s: %d objects", job_dir.name, len(keys))
+        keys = upload_job_media(job_dir, free_tier=free_tier)
+        log.info("r2 archive job %s: %d objects (free=%s)", job_dir.name, len(keys), free_tier)
     except Exception:  # noqa: BLE001
         log.exception("r2 archive failed for job %s", job_dir.name)

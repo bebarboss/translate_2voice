@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
-import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine } from "@/lib/api";
+import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine, type VoiceReport } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
@@ -357,6 +357,72 @@ function FeedbackSection() {
   );
 }
 
+const VOICE_REPORT_REASON: Record<string, string> = {
+  stolen: "ขโมยเสียงคนอื่น",
+  inappropriate: "เนื้อหาไม่เหมาะสม",
+  quality: "คุณภาพเสียงแย่",
+  other: "อื่นๆ",
+};
+
+function VoiceReportsSection() {
+  const [rows, setRows] = useState<VoiceReport[] | null>(null);
+  const [error, setError] = useState("");
+  const { busy, message, run } = useRunner(() =>
+    api.listVoiceReports(true).then(setRows).catch((e) => setError(e.message)));
+  useEffect(() => {
+    api.listVoiceReports(true).then(setRows).catch((e) => setError(e.message));
+  }, []);
+  return (
+    <section className="card" aria-labelledby="voice-reports-title">
+      <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+        <h2 id="voice-reports-title" style={{ margin: 0 }}>
+          {tx("รายงานเสียงนักพากย์")}{rows?.length ? ` (${rows.length})` : ""}
+        </h2>
+        <button type="button" className="btn small" disabled={!!busy}
+          onClick={() => run("vr-reload", () => api.listVoiceReports(true).then(setRows), tx("รีเฟรชแล้ว"))}>
+          {tx("รีเฟรช")}
+        </button>
+      </div>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      <Alert m={message} />
+      {!rows ? <div className="empty">{tx("กำลังโหลด...")}</div> : rows.length === 0 ? (
+        <div className="empty">{tx("ยังไม่มีรายงานเปิดอยู่")}</div>
+      ) : (
+        <ul style={{ listStyle: "none", margin: "12px 0 0", padding: 0 }}>
+          {rows.map((r) => (
+            <li key={r.id} style={{ padding: "12px 0", borderTop: "1px solid var(--border)" }}>
+              <div className="row" style={{ justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <div>
+                  <b>{tx(VOICE_REPORT_REASON[r.reason] || r.reason)}</b>
+                  <div className="dim" style={{ fontSize: 13 }}>
+                    <Link href={`/voices/${r.voice_id}`}>{r.voice_id}</Link>
+                    {" · "}{new Date(r.created_at * 1000).toLocaleString(locale())}
+                    {r.reporter_id ? ` · ${r.reporter_id}` : ""}
+                  </div>
+                </div>
+                <span className="badge warn">{tx("รอดู")}</span>
+              </div>
+              {r.detail && <p style={{ margin: "8px 0", whiteSpace: "pre-wrap", fontSize: 14 }}>{r.detail}</p>}
+              <div className="row" style={{ gap: 8, marginTop: 8 }}>
+                <button type="button" className="btn small primary" disabled={!!busy}
+                  onClick={() => run(`vr-${r.id}`, () => api.resolveVoiceReport(r.id, true).then(() =>
+                    api.listVoiceReports(true).then(setRows)), tx("ปิดรายงานแล้ว (คืนเสียง)"))}>
+                  {busy === `vr-${r.id}` ? "..." : tx("ปิดและคืนเสียง")}
+                </button>
+                <button type="button" className="btn small" disabled={!!busy}
+                  onClick={() => run(`vrh-${r.id}`, () => api.resolveVoiceReport(r.id, false).then(() =>
+                    api.listVoiceReports(true).then(setRows)), tx("ปิดรายงานแล้ว (คงซ่อน)"))}>
+                  {busy === `vrh-${r.id}` ? "..." : tx("ปิดโดยไม่คืนเสียง")}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /** ผู้ดูแลระบบ: ผู้ใช้ทั้งหมด (เครดิต แพ็กเกจ สิทธิ์ผู้ดูแล) คุณภาพงาน และการสำรองข้อมูล */
 export default function AdminPage() {
   const { config, user, loaded } = useAuth();
@@ -377,6 +443,7 @@ export default function AdminPage() {
           <Link href="/settings" className="btn small">{tx("ตั้งค่า")}</Link>
         </div>
       </div>
+      <VoiceReportsSection />
       <FeedbackSection />
       <UsersSection me={user.id} billing={config.billing} />
       {config.billing && <PaymentsSection />}

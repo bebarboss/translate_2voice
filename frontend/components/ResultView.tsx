@@ -42,6 +42,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
+  const [shareUrl, setShareUrl] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const resume = useRef<{ time: number; playing: boolean } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -139,7 +140,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   };
   const tooLong = (u: Utterance) => {
     const { target: text, start, end } = tr.draftOf(u);
-    const limit = Math.max(0.3, end - start) * (settings?.max_speedup ?? 1.35);
+    const limit = Math.max(0.3, end - start) * (settings?.max_speedup ?? 1.10);
     return !!text.trim() && estimateSeconds(text, job.target_lang) > limit;
   };
 
@@ -335,7 +336,28 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
                 {busy === "mp4" ? tx("กำลังเตรียม...") : tx("เฉพาะ MP4")}
               </button>
               <a className="btn" href={fileUrl.subtitles(job.id)} download>{tx("เฉพาะ SRT")}</a>
+              <button type="button" className="btn" disabled={!!busy} onClick={async () => {
+                try {
+                  const r = await api.createShare(job.id);
+                  const full = `${window.location.origin}${r.url}`;
+                  setShareUrl(full);
+                  await navigator.clipboard?.writeText(full).catch(() => {});
+                  setMessage({
+                    kind: "info",
+                    text: r.watermark
+                      ? tx("คัดลอกลิงก์แชร์แล้ว (คลิปฟรีมีลายน้ำนกแก้ว)")
+                      : tx("คัดลอกลิงก์แชร์แล้ว"),
+                  });
+                  onChanged();
+                } catch (e) {
+                  setMessage({ kind: "error", text: (e as Error).message });
+                }
+              }}>{tx("ลิงก์แชร์")}</button>
             </div>
+            {shareUrl && (
+              <input className="input" readOnly value={shareUrl} onFocus={(e) => e.currentTarget.select()}
+                aria-label={tx("ลิงก์แชร์")} />
+            )}
             <span className="dim">
               {burn ? tx("วิดีโอจะมีซับฝังอยู่ในภาพ ถ้าเปลี่ยนรูปแบบซับ ระบบจะสร้างวิดีโอใหม่ก่อนดาวน์โหลด") : tx("วิดีโอไม่มีซับในภาพ ไฟล์ SRT แยกมาให้ใช้กับโปรแกรมตัดต่อหรืออัปโหลดขึ้นแพลตฟอร์ม")}
             </span>

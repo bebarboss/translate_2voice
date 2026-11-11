@@ -1,5 +1,6 @@
 """ถอดเสียงพร้อมตรวจภาษาอัตโนมัติ (faster-whisper) แล้วจับคู่แต่ละคำกับผู้พูด"""
 import logging
+import re
 import unicodedata
 from pathlib import Path
 from typing import Optional
@@ -353,13 +354,51 @@ def recheck_noisy(mixed16k: Path, vocals16k: Path, bgm16k: Optional[Path], words
     return sorted(words, key=lambda w: w.start), unclear, stats
 
 
-def mark_unclear(utterances: list[Utterance], spans: list[tuple[float, float]]) -> int:
+def mark_unclear(utterances: list[Utterance], spans: list[tuple[float, float]],
+                 reason: str = "ฟังเสียงไม่ชัด (เพลงดังหรือถอดซ้ำแล้วยังไม่มั่นใจ)") -> int:
     """ติดป้ายถอดไม่ชัดให้ประโยคที่ทับช่วงนั้นตั้งแต่ครึ่งวินาที หรือตั้งแต่ 30% ของประโยค คืนจำนวนที่ติด"""
     n = 0
     for u in utterances:
         hit = sum(max(0.0, min(u.end, b) - max(u.start, a)) for a, b in spans)
-        u.unclear = hit >= 0.5 or (u.duration > 0 and hit / u.duration >= 0.3)
+        flagged = hit >= 0.5 or (u.duration > 0 and hit / u.duration >= 0.3)
+        u.unclear = flagged
+        if flagged and not u.unclear_reason:
+            u.unclear_reason = reason
         n += u.unclear
+    return n
+
+
+def flag_lyrics_suspects(utterances: list[Utterance], words: list[Word],
+                         turns: list[Turn]) -> int:
+    """ติดธงบรรทัดที่น่าจะเป็นเนื้อเพลง: มีคำนอกช่วงผู้พูด หรือท่อนร้องซ้ำสั้น ๆ ที่ไม่ทับ diarization"""
+    spans = _speech_spans(turns)
+    in_speech = lambda t: any(a - 0.05 <= t <= b + 0.05 for a, b in spans)  # noqa: E731
+    n = 0
+    # ท่อน source สั้นซ้ำ ≥3 ครั้งในคลิป → น่าจะท่อนร้อง
+    counts: dict[str, int] = {}
+    for u in utterances:
+        key = re.sub(r"\s+", "", (u.source or "").lower())
+        if len(key) >= 4:
+            counts[key] = counts.get(key, 0) + 1
+    for u in utterances:
+        mid = (u.start + u.end) / 2
+        outside = not in_speech(mid)
+        key = re.sub(r"\s+", "", (u.source or "").lower())
+        chorus = len(key) >= 4 and counts.get(key, 0) >= 3
+        # คำของท่อนส่วนใหญ่นอกช่วงผู้พูด
+        line_words = [w for w in words if u.start - 0.05 <= (w.start + w.end) / 2 <= u.end + 0.05]
+        if line_words:
+            out_frac = sum(1 for w in line_words if not in_speech((w.start + w.end) / 2)) / len(line_words)
+        else:
+            out_frac = 1.0 if outside else 0.0
+        if outside or chorus or out_frac >= 0.6:
+            u.unclear = True
+            if not u.unclear_reason:
+                if chorus:
+                    u.unclear_reason = "น่าจะเป็นท่อนร้องซ้ำ ไม่ใช่บทพูด"
+                elif outside or out_frac >= 0.6:
+                    u.unclear_reason = "คำอยู่นอกช่วงผู้พูด — อาจเป็นเนื้อเพลง"
+            n += 1
     return n
 
 
