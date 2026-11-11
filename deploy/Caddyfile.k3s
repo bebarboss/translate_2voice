@@ -3,14 +3,18 @@
 # It dials the pinned k3s ClusterIP Services, not Compose api/web.
 #
 # The live file on the VPS is ~/translate_2voice/deploy/Caddyfile.web, edited
-# in place. Do not copy this file over that path, and do not git checkout or
-# git pull in a way that replaces it, until you have compared the two.
-# deploy/Caddyfile.web in git is still the old Compose-network proxy
-# (api:8000 / web:3000). It is not what production is running.
+# in place. That checkout is a2d0f5d9859a5c14673e193dc9d2266fa23e560a, which
+# has no request body limit. Do not copy this file over the live path.
+# Do not git pull, git reset, or git checkout -- deploy/Caddyfile.web on the
+# VPS. Compare the active file with this one and keep the active file.
+# Later commits add a 600MB request_body to git's deploy/Caddyfile.web and
+# still proxy to the Compose names api:8000 and web:3000. That is not live.
 #
-# Security and routes match that Caddyfile: ACME email from the environment,
-# gzip, 600MB API bodies, 30 minute API proxy timeouts, HSTS, nosniff,
-# referrer-policy. API upstream 10.43.204.249:8000. Web upstream 10.43.26.212:3000.
+# This sample has no request_body block. Copying it onto the server does not
+# add the 600MB limit from git main. It is not a byte-for-byte copy of the
+# live file: compare first. It does set the reported upstreams
+# 10.43.204.249:8000 and 10.43.26.212:3000, gzip, 30 minute API timeouts,
+# HSTS, nosniff, and referrer-policy. The API still enforces MAX_UPLOAD_MB.
 
 {
 	email {$ACME_EMAIL}
@@ -18,9 +22,6 @@
 
 {$API_DOMAIN} {
 	encode gzip
-	request_body {
-		max_size 600MB
-	}
 	reverse_proxy 10.43.204.249:8000 {
 		transport http {
 			read_timeout 30m

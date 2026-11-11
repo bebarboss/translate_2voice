@@ -1,7 +1,9 @@
 # Manual rollback to Docker Compose writers.
 # Automatic deploys stay on deploy-k3s.yml and are not affected by this file.
 # This workflow git-pulls on the VPS and starts Compose api/web. That is a
-# second writer and can overwrite the live deploy/Caddyfile.web.
+# second writer. The VPS checkout is a2d0f5d and deploy/Caddyfile.web was
+# edited in place. The script copies that file aside and puts it back if
+# the pull changes it. Do not reset the checkout.
 # It does nothing unless confirm is exactly k3s-data-moved-back, which means
 # the k3s database and media were copied back and the k3s API is scaled to 0.
 # See deploy/k8s/ROLLBACK.md.
@@ -71,9 +73,26 @@ jobs:
             fi
             APP_DIR="${APP_DIR:-$HOME/translate_2voice}"
             cd "$APP_DIR"
+            caddy_src="deploy/Caddyfile.web"
+            caddy_backup=""
+            if [ -f "$caddy_src" ]; then
+              caddy_backup="$HOME/pakdee-Caddyfile.web.$(date -u +%Y%m%dT%H%M%SZ)"
+              cp -a "$caddy_src" "$caddy_backup"
+              echo "Preserved active Caddyfile at $caddy_backup"
+            fi
             git fetch --prune origin
-            git checkout main
-            git pull --ff-only origin main
+            if ! git checkout main; then
+              echo "checkout main stopped. Do not git reset or git checkout -- $caddy_src" >&2
+              exit 1
+            fi
+            if ! git pull --ff-only origin main; then
+              echo "pull stopped. Do not git reset --hard or git checkout -- $caddy_src" >&2
+              exit 1
+            fi
+            if [ -n "$caddy_backup" ] && ! cmp -s "$caddy_src" "$caddy_backup"; then
+              cp -a "$caddy_backup" "$caddy_src"
+              echo "Restored active $caddy_src from $caddy_backup"
+            fi
             chmod +x deploy/remote-update.sh deploy/up.sh
             if [ "$API_ONLY" = "true" ]; then
               CONFIRM_COMPOSE_WRITERS="$CONFIRM_COMPOSE_WRITERS" bash deploy/remote-update.sh --api-only

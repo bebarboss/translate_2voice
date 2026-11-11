@@ -40,7 +40,7 @@ port_busy() {
 
 if port_busy 80 t || port_busy 443 t || port_busy 443 u; then
   echo "port 80 or 443 is still in use. Stop Compose Caddy first:" >&2
-  echo "  docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop caddy" >&2
+  echo "  docker compose -f deploy/docker-compose.yml --env-file deploy/.env stop caddy" >&2
   echo "  sudo ss -lptn 'sport = :80' ; sudo ss -lptn 'sport = :443'" >&2
   exit 1
 fi

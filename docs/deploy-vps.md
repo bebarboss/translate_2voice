@@ -1,7 +1,9 @@
 # Deploy Pakdee บน VPS
 
 > ทาง production คือ **k3s** แล้ว Caddy ของ Compose ถือพอร์ต 80/443 และส่งต่อไป ClusterIP ของ k3s ดู [deploy/k8s/README.md](../deploy/k8s/README.md) และ [deploy/k8s/ROLLBACK.md](../deploy/k8s/ROLLBACK.md)
+> checkout บน VPS คือ `a2d0f5d` และ `deploy/Caddyfile.web` ถูกแก้บนเครื่องแล้ว ห้าม `git pull`, `git reset`, หรือ `git checkout -- deploy/Caddyfile.web` โดยไม่เก็บไฟล์ที่ใช้อยู่ไว้ก่อน
 > `deploy/up.sh` และ workflow **Deploy VPS (compose rollback)** ไม่สตาร์ท API/เว็บของ Compose จนกว่าจะใส่ `CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back` ซึ่งใช้หลังย้ายข้อมูลจาก k3s กลับมาแล้วเท่านั้น เปิดสองทางพร้อมกันจะทิ้งงานที่เขียนหลังตัดรอบ
+> `--profile web` อย่างเดียวใช้ไม่ได้ เพราะ `web` อ้าง `api` ที่อยู่โปรไฟล์ `rollback` ต้องใส่ `--profile rollback --profile web` คู่กัน
 
 รัน API (และถ้าต้องการ หน้าเว็บ) บน VPS ด้วย Docker Compose + Caddy (HTTPS อัตโนมัติ)  
 ขั้น GPU ยังใช้ **Modal** (`WORKER=modal`) — VPS ไม่ต้องมี การ์ดจอ
@@ -125,7 +127,7 @@ curl -sS https://api.yourdomain.com/health
 
 Compose จะ build `frontend/` เป็น container `web` แล้ว Caddy เสิร์ฟโดเมนเว็บ → `web:3000` และโดเมน API → `api:8000`
 
-อัปเดตรหัสหน้าเว็บ: `git pull` แล้ว `bash deploy/up.sh --web` อีกครั้ง
+อัปเดตรหัสหน้าเว็บหลังย้ายข้อมูลกลับแล้วเท่านั้น: เก็บ `deploy/Caddyfile.web` ไว้ก่อน ห้าม `git reset` แล้ว `CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/up.sh --web` (`up.sh` ใส่ทั้ง profile `rollback` และ `web`)
 
 ถ้ายังใช้ Vercel แทน: Root Directory = `frontend`, ตั้ง `BACKEND_URL` / `API_KEY` / `DIRECT_UPLOAD=1` — ไม่ต้องเปิด `--web`
 
@@ -143,14 +145,15 @@ modal deploy modal_app.py
 
 ## อัปเดตเวอร์ชัน
 
+อย่า `git pull` หรือ `git reset` บน VPS โดยไม่เทียบ `deploy/Caddyfile.web` ที่รันอยู่ (checkout `a2d0f5d`, แก้บนเครื่อง, ไม่มี body limit) ทาง production คือ k3s ไม่ใช่คำสั่งด้านล่าง คำสั่ง Compose เปิดตัวเขียนได้หลังย้ายข้อมูลกลับแล้วเท่านั้น และต้องมีทั้ง `--profile rollback` และ `--profile web`
+
 ```bash
 cd pakdee
-git pull
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
-# ถ้าใช้เว็บบน VPS
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d --build
+# เก็บ deploy/Caddyfile.web ไว้ก่อน แล้วค่อยเทียบกับของใน git ห้าม reset ทับ
+# เปิดตัวเขียนหลัง CONFIRM แล้วเท่านั้น ทั้งสองโปรไฟล์
+CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/up.sh --web
 # หรือ
-bash deploy/remote-update.sh
+CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/remote-update.sh
 ```
 
 ข้อมูลงานอยู่ใน `./data` (volume bind) ไม่หายตอน rebuild
@@ -159,7 +162,7 @@ bash deploy/remote-update.sh
 
 push ขึ้น `main` ไม่ได้ rebuild Compose แล้ว — workflow `.github/workflows/deploy-k3s.yml` build image ขึ้น GHCR แล้ว rollout บน k3s ดู [deploy/k8s/README.md](../deploy/k8s/README.md)
 
-`.github/workflows/deploy-vps.yml` เหลือเป็น **workflow_dispatch** สำหรับย้อนกลับ Compose หลัง `sudo systemctl stop k3s` (ปล่อยพอร์ต 80/443) เท่านั้น มันจะ SSH เข้า VPS แล้วรัน `deploy/remote-update.sh`
+`.github/workflows/deploy-vps.yml` เหลือเป็น **workflow_dispatch** และไม่ทำงานถ้าช่อง `confirm` ไม่ใช่ `k3s-data-moved-back` อย่า `systemctl stop k3s` เพื่อเปิด Compose ลำดับย้อนกลับอยู่ใน [deploy/k8s/ROLLBACK.md](../deploy/k8s/ROLLBACK.md)
 
 1. บน VPS ใส่ public key ของ deploy key ใน `~/.ssh/authorized_keys` ของ user ที่รัน Docker ได้
 2. ใน GitHub repo → **Settings → Secrets and variables → Actions** เพิ่ม:

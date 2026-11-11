@@ -9,8 +9,8 @@ production รันบน k3s แล้ว การตัดรอบวัน
 | Piece | Choice |
 | --- | --- |
 | App manifests | Kustomize in `deploy/k8s/` (namespace `pakdee`) |
-| Edge | Compose Caddy on 80/443. Documented config is `deploy/Caddyfile.k3s`. The live file is `~/translate_2voice/deploy/Caddyfile.web` on the VPS; do not replace it with a checkout. API `10.43.204.249:8000`, web `10.43.26.212:3000`. Those ClusterIPs are pinned on the Services. Traefik stays ClusterIP and is not a public listener. |
-| TLS | Caddy ACME, same sites and headers as `deploy/Caddyfile.web` (HSTS, nosniff, referrer-policy, 600MB API body, 30 minute API timeouts). |
+| Edge | Compose Caddy on 80/443. Documented config is `deploy/Caddyfile.k3s` (no body size limit). The live file is `~/translate_2voice/deploy/Caddyfile.web`, edited in place on checkout `a2d0f5d`. Do not `git pull`, `git reset`, or `git checkout --` that file. Compare it and keep it. API `10.43.204.249:8000`, web `10.43.26.212:3000`. Those ClusterIPs are pinned on the Services. Traefik stays ClusterIP and is not a public listener. |
+| TLS | Caddy ACME on the live file: HSTS, nosniff, referrer-policy, 30 minute API timeouts, no request body limit. Git's `deploy/Caddyfile.web` on current `main` adds a 600MB limit and still proxies to Compose names. That is not the file the VPS is running. |
 | Postgres | StatefulSet, `pgvector/pgvector:pg16`, 10Gi `local-path` PVC, init SQL from `deploy/db/init/`. ClusterIP `db:5432` only. |
 | API / web | Deployments, **Recreate** (one replica). The API queue is in-process and the media volume is ReadWriteOnce. Images `ghcr.io/bebarboss/pakdee-api` and `ghcr.io/bebarboss/pakdee-web`, tagged with the git SHA and `latest`. |
 | Config | `config.env` → ConfigMap `pakdee-config`. Secrets from `secret.example.yaml`, applied by you, never committed. |
@@ -220,7 +220,7 @@ This import already ran. Do not run it again. The commands below stop Caddy and 
 kubectl -n pakdee scale deploy/api --replicas=0
 
 # stop writers; keep the Compose database process up
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop api web caddy
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile rollback --profile web stop api web caddy
 
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
   psql -U pakdee -d pakdee -c \
