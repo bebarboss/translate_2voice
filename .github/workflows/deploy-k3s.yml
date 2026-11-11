@@ -56,6 +56,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Timeline tests call ffmpeg and ffprobe. libsndfile is not installed:
+      # soundfile wheels bundle it. The step is capped so a stuck apt mirror
+      # cannot hold the job. The API image still installs ffmpeg itself.
+      - name: ffmpeg
+        timeout-minutes: 3
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
