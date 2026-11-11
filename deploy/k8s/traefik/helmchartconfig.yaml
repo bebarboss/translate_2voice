@@ -3,6 +3,11 @@
 # Do not commit a real mailbox if you do not want it in git; the script reads
 # ACME_EMAIL from the environment or from deploy/.env on the VPS.
 #
+# The Service stays ClusterIP. Caddy owns 80/443. Do not set LoadBalancer or
+# NodePort here. apply-traefik.sh refuses both unless
+# CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy. enable-ingress.sh is not
+# part of normal deploys.
+#
 # HTTP-01 is answered on entrypoint "web" before the HTTPS redirect, which is
 # what Traefik documents as compatible with Let's Encrypt. A redirect that
 # happens at Cloudflare ("Always Use HTTPS") never reaches this process.
@@ -67,12 +72,12 @@ spec:
             writeTimeout: 30m
             idleTimeout: 30m
     # Separate TCP and UDP Services so HTTP/3 does not need MixedProtocolLBService.
-    # Orange-cloud Cloudflare terminates HTTP/3 at the edge; origin UDP 443 is
-    # only used when the DNS record is DNS-only (grey cloud).
+    # Both stay ClusterIP. They are not published on the node, so they cannot
+    # take 80/443 from Caddy or show up as NodePorts.
     service:
       single: false
       spec:
-        type: LoadBalancer
+        type: ClusterIP
     log:
       level: INFO
     accessLog:

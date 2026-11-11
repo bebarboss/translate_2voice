@@ -1,7 +1,8 @@
+# Not the public edge. Compose Caddy owns 80/443 and dials the pinned ClusterIPs.
+# Applying this Ingress does not publish a port while Traefik's Service is ClusterIP.
 # Hosts are replaced from the pakdee-config ConfigMap (API_DOMAIN, WEB_DOMAIN).
 # The values below match production and stay correct if a replacement is skipped.
-# TLS is issued by the Traefik resolver named "letsencrypt" (see traefik/helmchartconfig.yaml).
-# No secretName: the certificate stays in Traefik's ACME storage, not a Kubernetes TLS secret.
+# No secretName: there is no Kubernetes TLS secret on this Ingress.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

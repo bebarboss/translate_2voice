@@ -5,10 +5,9 @@
 #   bash deploy/k8s/scripts/apply-traefik.sh you@example.com
 # If no address is given, ACME_EMAIL is read from deploy/.env when that file exists.
 #
-# Safe before cutover. ServiceLB is off, so this does not bind 80/443.
-# If Traefik is already running (servicelb disabled only), the script waits
-# for the rollout. If Traefik is disabled too, it stores the HelmChartConfig
-# and exits. enable-ingress.sh is what publishes 80/443 after Caddy stops.
+# Applies the committed HelmChartConfig. That Service is ClusterIP, so this
+# does not publish 80/443. A file that says LoadBalancer or NodePort is refused
+# unless CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,17 +31,22 @@ trap 'rm -f "$tmp"' EXIT
 content="$(<"$SRC")"
 printf '%s\n' "${content//__ACME_EMAIL__/$EMAIL}" >"$tmp"
 
+if grep -Eq 'type: (LoadBalancer|NodePort)' "$tmp" && [[ "${CONFIRM_PUBLIC_TRAEFIK:-}" != "take-80-443-from-caddy" ]]; then
+  echo "Refusing to apply Traefik as a LoadBalancer or NodePort." >&2
+  echo "The public edge is Caddy. Keep service.spec.type: ClusterIP." >&2
+  echo "See deploy/k8s/ROLLBACK.md." >&2
+  exit 1
+fi
+
 echo "==> apply Traefik HelmChartConfig (email $EMAIL)"
 "$KUBECTL" apply -f "$tmp"
 
-# Traefik disabled (fresh install): the HelmChartConfig waits until
-# enable-ingress.sh starts the chart. Traefik already running with only
-# ServiceLB disabled: fall through and roll the chart. Neither case binds
-# 80/443. Do not treat a missing Deployment as a failure.
+# Traefik not installed: the HelmChartConfig is stored and Caddy keeps 80/443.
+# Traefik already running: roll the chart. The committed type is ClusterIP.
+# Do not treat a missing Deployment as a failure.
 if ! "$KUBECTL" -n kube-system get deploy/traefik >/dev/null 2>&1; then
   echo "==> HelmChartConfig is stored. Traefik is not running."
-  echo "    80/443 stay with Caddy until you stop Compose and run:"
-  echo "    bash deploy/k8s/scripts/enable-ingress.sh"
+  echo "    Caddy keeps 80/443. Do not run enable-ingress.sh."
   exit 0
 fi
 echo "==> Traefik is already running (ServiceLB still off, so 80/443 stay with Caddy)"

@@ -7,6 +7,9 @@ metadata:
     app.kubernetes.io/part-of: pakdee
 spec:
   type: ClusterIP
+  # Pinned. Compose Caddy on the host dials this address (deploy/Caddyfile.k3s).
+  # clusterIP is immutable: apply keeps it, and a different value is rejected.
+  clusterIP: 10.43.204.249
   selector:
     app.kubernetes.io/name: api
   ports:

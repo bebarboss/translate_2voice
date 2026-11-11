@@ -6,6 +6,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# k3s is the only production writer. This script builds and starts Compose
+# api/web (and would be a second writer). It also rewrites CADDYFILE= in
+# deploy/.env. Refuse until data has been copied back and the k3s API is scaled
+# to 0. See deploy/k8s/ROLLBACK.md.
+if [[ "${CONFIRM_COMPOSE_WRITERS:-}" != "k3s-data-moved-back" ]]; then
+  echo "Refusing to start Compose writers." >&2
+  echo "k3s owns production data. Copy that data back and scale deploy/api to 0 first." >&2
+  echo "Then: CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/up.sh" >&2
+  exit 1
+fi
+
 if [[ ! -f .env ]]; then
   echo "ไม่มี .env ที่รากโปรเจกต์ — คัดลอกจาก .env.example แล้วใส่คีย์" >&2
   exit 1
@@ -15,11 +26,11 @@ if [[ ! -f deploy/.env ]]; then
   exit 1
 fi
 
-PROFILE=()
+PROFILE=(--profile rollback)
 WITH_WEB=0
 if [[ "${1:-}" == "--web" ]] || [[ "${1:-}" == "--frontend" ]]; then
   WITH_WEB=1
-  PROFILE=(--profile web)
+  PROFILE=(--profile rollback --profile web)
 
   if ! grep -qE '^CADDYFILE=' deploy/.env; then
     echo "CADDYFILE=./Caddyfile.web" >> deploy/.env

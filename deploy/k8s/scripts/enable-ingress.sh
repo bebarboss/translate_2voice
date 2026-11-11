@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Publish Traefik on 80/443 by enabling ServiceLB.
-# Run on the VPS only after Compose Caddy has released those ports.
+# DO NOT RUN. Refuses unless CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy.
+# That phrase restarts k3s and can publish Traefik on 80/443, taking the ports
+# from the Compose Caddy that is the production edge. See deploy/k8s/ROLLBACK.md.
 #
-#   bash deploy/k8s/scripts/enable-ingress.sh you@example.com
+#   CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy bash deploy/k8s/scripts/enable-ingress.sh you@example.com
 #
 # Two installs are valid before this runs. Both leave 80/443 with Caddy:
 #   servicelb disabled, Traefik already running (this VPS)
@@ -10,6 +11,15 @@
 # The script removes those names from /etc/rancher/k3s/config.yaml and
 # config.yaml.d, restarts k3s, then applies the HelmChartConfig.
 set -euo pipefail
+
+# Production edge is Compose Caddy. This script restarts k3s and can publish
+# Traefik on 80/443. It is not part of a normal deploy.
+if [[ "${CONFIRM_PUBLIC_TRAEFIK:-}" != "take-80-443-from-caddy" ]]; then
+  echo "Refusing to enable public Traefik." >&2
+  echo "Caddy owns 80/443. Traefik stays ClusterIP (deploy/k8s/traefik/helmchartconfig.yaml)." >&2
+  echo "Do not run this after the k3s cutover. See deploy/k8s/ROLLBACK.md." >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KUBECTL="${KUBECTL:-kubectl}"
@@ -30,7 +40,7 @@ port_busy() {
 
 if port_busy 80 t || port_busy 443 t || port_busy 443 u; then
   echo "port 80 or 443 is still in use. Stop Compose Caddy first:" >&2
-  echo "  docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop caddy" >&2
+  echo "  docker compose -f deploy/docker-compose.yml --env-file deploy/.env stop caddy" >&2
   echo "  sudo ss -lptn 'sport = :80' ; sudo ss -lptn 'sport = :443'" >&2
   exit 1
 fi

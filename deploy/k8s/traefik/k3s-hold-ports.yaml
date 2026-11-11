@@ -2,7 +2,8 @@
 # The VPS that is already running uses k3s-hold-servicelb.yaml instead
 # (Traefik enabled, ServiceLB disabled). Both leave 80/443 to Caddy.
 # Copy to /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml before
-# installing k3s. enable-ingress.sh removes these entries after Caddy stops.
+# installing k3s. Do not remove it to publish Traefik. enable-ingress.sh refuses
+# unless CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy.
 disable:
   - traefik
   - servicelb
