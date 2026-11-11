@@ -1,7 +1,10 @@
-# Manual rollback to Docker Compose.
-# Automatic deploys moved to deploy-k3s.yml (k3s).
-# Run this only after k3s has released ports 80/443 (`sudo systemctl stop k3s`).
-# Compose files are unchanged so this path still works.
+# Manual rollback to Docker Compose writers.
+# Automatic deploys stay on deploy-k3s.yml and are not affected by this file.
+# This workflow git-pulls on the VPS and starts Compose api/web. That is a
+# second writer and can overwrite the live deploy/Caddyfile.web.
+# It does nothing unless confirm is exactly k3s-data-moved-back, which means
+# the k3s database and media were copied back and the k3s API is scaled to 0.
+# See deploy/k8s/ROLLBACK.md.
 #
 # GitHub → Settings → Secrets and variables → Actions:
 #   VPS_HOST     เช่น 119.10.143.47
@@ -15,6 +18,10 @@ name: Deploy VPS (compose rollback)
 on:
   workflow_dispatch:
     inputs:
+      confirm:
+        description: "Type k3s-data-moved-back only after k3s data is restored onto Compose and the k3s API is scaled to 0"
+        required: true
+        type: string
       api_only:
         description: "Rebuild API only (skip frontend)"
         type: boolean
@@ -29,11 +36,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Refuse unless data was moved back
+        env:
+          CONFIRM: ${{ github.event.inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "k3s-data-moved-back" ]; then
+            echo "Refusing to start Compose writers." >&2
+            echo "confirm must be exactly k3s-data-moved-back." >&2
+            echo "Copy k3s Postgres and media back first, then scale deploy/api to 0." >&2
+            echo "See deploy/k8s/ROLLBACK.md." >&2
+            exit 1
+          fi
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.2.0
         env:
           APP_DIR: ${{ secrets.VPS_PATH }}
           API_ONLY: ${{ github.event.inputs.api_only || 'false' }}
+          CONFIRM_COMPOSE_WRITERS: ${{ github.event.inputs.confirm }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -41,9 +62,13 @@ jobs:
           port: ${{ secrets.VPS_PORT || 22 }}
           script_stop: true
           command_timeout: 40m
-          envs: APP_DIR,API_ONLY
+          envs: APP_DIR,API_ONLY,CONFIRM_COMPOSE_WRITERS
           script: |
             set -euo pipefail
+            if [ "${CONFIRM_COMPOSE_WRITERS:-}" != "k3s-data-moved-back" ]; then
+              echo "Refusing to start Compose writers." >&2
+              exit 1
+            fi
             APP_DIR="${APP_DIR:-$HOME/translate_2voice}"
             cd "$APP_DIR"
             git fetch --prune origin
@@ -51,7 +76,7 @@ jobs:
             git pull --ff-only origin main
             chmod +x deploy/remote-update.sh deploy/up.sh
             if [ "$API_ONLY" = "true" ]; then
-              bash deploy/remote-update.sh --api-only
+              CONFIRM_COMPOSE_WRITERS="$CONFIRM_COMPOSE_WRITERS" bash deploy/remote-update.sh --api-only
             else
-              bash deploy/remote-update.sh
+              CONFIRM_COMPOSE_WRITERS="$CONFIRM_COMPOSE_WRITERS" bash deploy/remote-update.sh
             fi

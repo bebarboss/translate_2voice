@@ -1,7 +1,7 @@
 # Deploy Pakdee บน VPS
 
-> ทาง production ใหม่คือ **k3s** — ขั้นตอนติดตั้ง, ย้ายฐานข้อมูล, CI และ Kite อยู่ที่ [deploy/k8s/README.md](../deploy/k8s/README.md)  
-> ไฟล์ Compose ในหน้านี้ยังอยู่ครบ สำหรับย้อนกลับไป Docker Compose ไม่ได้ลบ
+> ทาง production คือ **k3s** แล้ว Caddy ของ Compose ถือพอร์ต 80/443 และส่งต่อไป ClusterIP ของ k3s ดู [deploy/k8s/README.md](../deploy/k8s/README.md) และ [deploy/k8s/ROLLBACK.md](../deploy/k8s/ROLLBACK.md)
+> `deploy/up.sh` และ workflow **Deploy VPS (compose rollback)** ไม่สตาร์ท API/เว็บของ Compose จนกว่าจะใส่ `CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back` ซึ่งใช้หลังย้ายข้อมูลจาก k3s กลับมาแล้วเท่านั้น เปิดสองทางพร้อมกันจะทิ้งงานที่เขียนหลังตัดรอบ
 
 รัน API (และถ้าต้องการ หน้าเว็บ) บน VPS ด้วย Docker Compose + Caddy (HTTPS อัตโนมัติ)  
 ขั้น GPU ยังใช้ **Modal** (`WORKER=modal`) — VPS ไม่ต้องมี การ์ดจอ

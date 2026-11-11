@@ -1,16 +1,16 @@
 # Pakdee on k3s / พากย์ดีบน k3s
 
-Production moves from `deploy/docker-compose.yml` (project `pakdee-vps`) to k3s on the same single VPS (2 vCPU, about 3.8 GB RAM). Compose files stay in the repo so you can roll back. Nothing in this change connects to the live server; you run the steps below yourself.
+Production runs on k3s on the same single VPS (2 vCPU, about 3.8 GB RAM). The cutover on 2026-11-11 is done. Compose Caddy still owns 80/443 and forwards to the pinned ClusterIPs. Compose `api` and `web` stay stopped. Do not follow the old steps that publish Traefik or start those containers. Rollback order is [ROLLBACK.md](ROLLBACK.md).
 
-ย้าย production จาก Docker Compose ไป k3s บน VPS เครื่องเดิม ไฟล์ Compose ยังอยู่ครบเพื่อย้อนกลับ เอกสารนี้ไม่แตะเซิร์ฟเวอร์จริง คุณเป็นคนรันคำสั่งบนเครื่องเอง
+production รันบน k3s แล้ว การตัดรอบวันที่ 11 พ.ย. 2026 เสร็จแล้ว Caddy ของ Compose ยังถือพอร์ต 80/443 และส่งต่อไป ClusterIP ที่ปักไว้ `api` กับ `web` ของ Compose ต้องหยุดอยู่ อย่าทำขั้นตอนเก่าที่เปิด Traefik สู่สาธารณะหรือสตาร์ทสองคอนเทนเนอร์นั้น ลำดับย้อนกลับอยู่ใน [ROLLBACK.md](ROLLBACK.md)
 
 ## Design / แนวทาง
 
 | Piece | Choice |
 | --- | --- |
 | App manifests | Kustomize in `deploy/k8s/` (namespace `pakdee`) |
-| Edge | k3s Traefik, not a second Caddy. Timeouts are 30 minutes, security headers match `deploy/Caddyfile.web`, media is not gzip-compressed. Caddyfiles stay for the Compose rollback. ServiceLB stays **off** until cutover, so nothing binds 80/443 while Caddy is serving. Traefik itself may already be running (this VPS) or stay disabled. |
-| TLS | Traefik Let's Encrypt HTTP-01, certificates stored on a `local-path` volume. Works behind Cloudflare orange-cloud if port 80 is not redirected at Cloudflare. Origin CA is the fallback. |
+| Edge | Compose Caddy on 80/443. Documented config is `deploy/Caddyfile.k3s`. The live file is `~/translate_2voice/deploy/Caddyfile.web` on the VPS; do not replace it with a checkout. API `10.43.204.249:8000`, web `10.43.26.212:3000`. Those ClusterIPs are pinned on the Services. Traefik stays ClusterIP and is not a public listener. |
+| TLS | Caddy ACME, same sites and headers as `deploy/Caddyfile.web` (HSTS, nosniff, referrer-policy, 600MB API body, 30 minute API timeouts). |
 | Postgres | StatefulSet, `pgvector/pgvector:pg16`, 10Gi `local-path` PVC, init SQL from `deploy/db/init/`. ClusterIP `db:5432` only. |
 | API / web | Deployments, **Recreate** (one replica). The API queue is in-process and the media volume is ReadWriteOnce. Images `ghcr.io/bebarboss/pakdee-api` and `ghcr.io/bebarboss/pakdee-web`, tagged with the git SHA and `latest`. |
 | Config | `config.env` → ConfigMap `pakdee-config`. Secrets from `secret.example.yaml`, applied by you, never committed. |
@@ -18,7 +18,7 @@ Production moves from `deploy/docker-compose.yml` (project `pakdee-vps`) to k3s 
 | Dashboard | [Kite](https://kitehq.dev) via Helm `oci://ghcr.io/kite-org/charts/kite` in namespace `kite-system`. |
 | Domains | `pakdee-api.cobie.online`, `pakdee-app.cobie.online`, `kite.cobie.online` (`KITE_HOST` in `config.env`). |
 
-Compose Caddy keeps 80/443 until `enable-ingress.sh` turns ServiceLB on. Two installs both do that. On this VPS Traefik is already running and only ServiceLB is disabled, so the LoadBalancer service has no host ports. A fresh install may disable Traefik as well. The Caddy behaviour that matters (HTTPS, HSTS, nosniff, 30 minute proxy timeouts, large uploads) is reproduced with a HelmChartConfig, Middleware, and ServersTransport. The API still enforces `MAX_UPLOAD_MB`; Traefik streams the body instead of buffering it.
+`enable-ingress.sh` restarts k3s and can bind 80/443. It exits unless `CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy`. Do not set that. `apply-traefik.sh` applies a ClusterIP Service and refuses `type: LoadBalancer` or `type: NodePort` without the same phrase. A push to `main` still tests, builds, and rolls the k3s Deployments. It does not start Compose and it does not change Traefik's Service type.
 
 Render check, from a checkout (no cluster required):
 
@@ -44,7 +44,7 @@ Do these on the VPS **before** merging to `main` (or re-run the workflow after).
 4. Point Cloudflare DNS (orange cloud) and turn off edge HTTPS redirect for the ACME path, or use an Origin certificate.
 5. Add the GitHub Actions secrets listed below.
 6. Merge. CI builds images and starts pods. Caddy still owns 80/443. Nothing in k3s listens there.
-7. Cut over with the dump / restore / rsync steps, stop Compose, then run `enable-ingress.sh`.
+7. Cutover is already done. Leave Compose `api` and `web` stopped. Do not run `enable-ingress.sh`.
 
 Kite is separate. Install it with `install-kite.sh` or Actions → **CI and deploy k3s** → **Run workflow** with **install_kite** checked. That dispatch does not rebuild the app.
 
@@ -64,15 +64,15 @@ Settings → Secrets and variables → Actions. These are the only Actions secre
 
 There is no lint script in the repo. CI runs `pytest` in `backend/` and `npm run typecheck` in `frontend/`.
 
-The old workflow `Deploy VPS (compose rollback)` no longer runs on push. Trigger it by hand only after `sudo systemctl stop k3s`.
+The old workflow `Deploy VPS (compose rollback)` does not run on push. A manual run refuses unless the `confirm` input is `k3s-data-moved-back`. That phrase is only for [ROLLBACK.md](ROLLBACK.md), after k3s data has been copied back and the k3s API is scaled to 0. Do not `systemctl stop k3s` to bring Compose writers back.
 
 ## 1. Install k3s / ติดตั้ง k3s
 
-Compose keeps serving. ServiceLB must stay off so k3s does not bind 80/443. Do not pass `--disable` on the install command line. A config drop-in is the switch `enable-ingress.sh` removes.
+Compose Caddy keeps 80/443. ServiceLB stays off, and Traefik's Service stays ClusterIP, so k3s does not bind those ports. Do not pass `--disable` on the install command line. Leave the drop-in in place. `enable-ingress.sh` would remove it and can publish Traefik; the script now refuses.
 
-Caddy ยังถือพอร์ต 80/443 ได้สองแบบ แบบที่ใช้อยู่บน VPS นี้เปิด Traefik ไว้แต่ปิด ServiceLB อีกแบบปิดทั้งคู่ อย่าใส่ `--disable` ในคำสั่งติดตั้ง
+Caddy ยังถือพอร์ต 80/443 Traefik เป็น ClusterIP และ ServiceLB ปิดอยู่ อย่าใส่ `--disable` ในคำสั่งติดตั้ง และอย่ารัน `enable-ingress.sh`
 
-**This VPS: Traefik on, ServiceLB off.** Traefik's Service stays `LoadBalancer` with no one to publish it, so the node ports stay with Caddy.
+**This VPS: Traefik on, ServiceLB off, Service type ClusterIP.** A LoadBalancer or NodePort on `svc/traefik` is a public listener. Do not put one back.
 
 ```bash
 sudo mkdir -p /etc/rancher/k3s/config.yaml.d
@@ -126,15 +126,13 @@ Traefik redirects HTTP→HTTPS on the origin **after** it answers `/.well-known/
 
 Orange-cloud clients use Cloudflare's HTTP/3. Origin UDP 443 is only for a grey-cloud record. WebSockets (Kite logs and terminal) pass Traefik; Cloudflare's proxy may still idle-timeout long shells on the free plan.
 
-Apply the resolver now (reads `ACME_EMAIL` from `deploy/.env` if you omit it). With ServiceLB off this does not bind 80/443. If Traefik is already running (this VPS) the script waits for the rollout. If Traefik is disabled, it stores the HelmChartConfig and exits.
+Public certificates are Caddy's, not Traefik's. `apply-traefik.sh` only refreshes the internal HelmChartConfig (ClusterIP). It reads `ACME_EMAIL` from `deploy/.env` if you omit it. It refuses the file when the Service type is LoadBalancer or NodePort.
 
 ```bash
 bash deploy/k8s/scripts/apply-traefik.sh you@example.com
 ```
 
-Certificates land in the Traefik PVC (`/data/acme.json`) after cutover, so a later pod restart does not request a new certificate.
-
-The app manifests apply on this cluster immediately. The bundle includes the Traefik CRDs, so Middleware and the Ingress apply even when the Traefik controller is not installed yet. They receive no traffic until `enable-ingress.sh` starts ServiceLB.
+The Ingress in this bundle is not the public edge. Traefik is ClusterIP, so applying it does not open 80/443. Caddy dials the ClusterIP Services directly. The bundle includes the Traefik CRDs, so Middleware and the Ingress apply even when the controller is not installed yet.
 
 ```bash
 bash deploy/k8s/scripts/render.sh > /tmp/pakdee.yaml
@@ -169,6 +167,8 @@ shred -u /tmp/pakdee-secret.yaml
 ```
 
 `DATABASE_URL` must use host `db`, database and user `pakdee` (unless you changed all three together), and the same password as `POSTGRES_PASSWORD`. Copy the real values from the existing root `.env` and `deploy/.env`. Do not commit the filled file.
+
+`pakdee-secrets` must also contain `ADMIN_EMAILS`, `PAYMENT_PROVIDER=stripe`, `R2_ENABLED=1`, `R2_BUCKET`, `R2_ACCOUNT_ID`, and `R2_ENDPOINT`. Those keys are listed as placeholders in `secret.example.yaml`. Do not put a real admin address in `config.env` or the ConfigMap. The Deployment loads the ConfigMap first and the Secret second, so a key present in both is taken from the Secret. Keeping these out of the ConfigMap means an empty ConfigMap value cannot clear them.
 
 The workflow pushes with `GITHUB_TOKEN`. The node pulls with a personal access token that has **read:packages** (classic) or a fine-grained token limited to these packages. Images stay private.
 
@@ -212,7 +212,9 @@ Kite limits are 20m/64Mi request and 300m/256Mi limit. If it OOM-kills, raise th
 
 ## 5. Move Postgres / ย้ายฐานข้อมูล
 
-Do this in the cutover window, not while both APIs are writing. Compose `db` stays up for the dump. k3s Postgres must already be running (init SQL has created the empty schema). Scale the k3s API to 0 so it is not connected.
+This import already ran. Do not run it again. The commands below stop Caddy and `pg_restore --clean` into the k3s database, which replaces live data with the pre-cutover dump. The way back to Compose is [ROLLBACK.md](ROLLBACK.md): copy the new k3s data out first, and never run both writers.
+
+การย้ายนี้ทำไปแล้ว อย่ารันซ้ำ คำสั่งด้านล่างจะหยุด Caddy และ restore ทับฐานของ k3s ด้วยดัมพ์ก่อนตัดรอบ ทางกลับไป Compose อยู่ใน [ROLLBACK.md](ROLLBACK.md)
 
 ```bash
 kubectl -n pakdee scale deploy/api --replicas=0
@@ -251,7 +253,9 @@ The two count listings must match before you send traffic. Jobs that were `runni
 
 ## 6. Move job files / ย้ายไฟล์งาน
 
-Media still lives on disk (`data/jobs/...`), not only in Postgres. With the API scaled to 0 the volume is free.
+This copy already ran. Do not run it again. The rsync below copies the Compose `data/` tree onto the k3s volume and overwrites newer files that exist in both. Reverse direction, after the k3s API is scaled to 0, is in [ROLLBACK.md](ROLLBACK.md).
+
+การคัดลอกนี้ทำไปแล้ว อย่ารันซ้ำ rsync ด้านล่างเขียนทับไฟล์บนวอลุ่ม k3s ทิศทางกลับอยู่ใน [ROLLBACK.md](ROLLBACK.md)
 
 ```bash
 PV="$(kubectl -n pakdee get pvc api-data -o jsonpath='{.spec.volumeName}')"
@@ -264,51 +268,22 @@ sudo rsync -aH "$(pwd)/backups/" "$(kubectl get pv "$PVB" -o jsonpath='{.spec.ho
 
 The API image runs as root, matching today's container, so root-owned files from Compose are readable.
 
-## 7. Cutover / สลับทราฟฟิก
+## 7. Cutover is done / การตัดรอบเสร็จแล้ว
 
-Downtime is the dump, the restore, the rsync, and the minute Let's Encrypt needs after Traefik takes port 443. k3s does not listen on 80/443 until step 6.
+Do not repeat the old cutover. It stopped Caddy and published Traefik on 80/443. That is not the running topology, and doing it now takes the site off the working edge.
 
-1. Scale k3s `deploy/api` to 0 (section 5).
-2. Stop Compose `api`, `web`, and `caddy`. Leave `db` up for the dump:
-   ```bash
-   docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web stop api web caddy
-   ```
-3. Dump, restore, compare counts (section 5). Then stop Compose `db` **without** `-v`:
-   ```bash
-   docker compose -f deploy/docker-compose.yml --env-file deploy/.env stop db
-   ```
-4. Rsync `data/` and `backups/` (section 6).
-5. Confirm nothing is listening:
-   ```bash
-   sudo ss -lptn 'sport = :80'
-   sudo ss -lptn 'sport = :443'
-   ```
-6. **Enable ingress on 80/443.** Caddy is stopped, so the ports are free. This removes `servicelb` from the k3s disable list (and `traefik` too, if that install had disabled it), restarts k3s, and waits for Traefik. On this VPS Traefik is already running, so the restart is what starts ServiceLB and binds the ports:
-   ```bash
-   bash deploy/k8s/scripts/enable-ingress.sh you@example.com
-   ```
-   That is the only step that publishes Traefik. ServiceLB then binds 80/tcp, 443/tcp, and 443/udp. Confirm the listeners are `svclb` or `traefik`, not `caddy` or `docker-proxy`:
-   ```bash
-   sudo ss -lptn 'sport = :80'
-   sudo ss -lptn 'sport = :443'
-   kubectl -n kube-system get svc traefik
-   ```
-7. Bring the API back and wait:
-   ```bash
-   kubectl -n pakdee scale deploy/api --replicas=1
-   kubectl -n pakdee rollout status deploy/api --timeout=300s
-   kubectl -n kube-system rollout status deploy/traefik --timeout=180s
-   ```
-8. Check:
-   ```bash
-   curl -fsS https://pakdee-api.cobie.online/health
-   curl -fsSI https://pakdee-app.cobie.online/ | head
-   kubectl -n pakdee get pods
-   kubectl -n kube-system logs deploy/traefik --tail=40
-   ```
-   Expect `{"status":"ok",...}` and a certificate line such as `Certificate obtained`.
+Caddy stays up. Compose `api` and `web` stay stopped (`restart: "no"`). Traefik stays ClusterIP. New app deploys are the k3s workflow on `main`. Check health with:
 
-Do not `docker compose down -v`. That deletes `pg_data`.
+```bash
+curl -fsS https://pakdee-api.cobie.online/health
+curl -fsSI https://pakdee-app.cobie.online/ | head
+kubectl -n pakdee get pods,svc
+kubectl -n kube-system get svc traefik
+```
+
+`traefik` must be `ClusterIP`. `api` must be `10.43.204.249` and `web` must be `10.43.26.212`. Port 443 must be Caddy, not `svclb`.
+
+Do not `docker compose down -v`. That deletes `pg_data`. Do not `docker compose up` the API or web. `deploy/up.sh` refuses unless `CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back`, and that phrase is only for the rollback in [ROLLBACK.md](ROLLBACK.md) after k3s data has been copied back.
 
 ## 8. Roll back / ย้อนกลับ
 
@@ -332,6 +307,6 @@ In-cluster objects CI does not create: `pakdee-secrets`, `ghcr-pull`, the Traefi
 | `ImagePullBackOff` | `ghcr-pull` and package visibility. `kubectl -n pakdee describe pod` |
 | API not ready | `kubectl -n pakdee logs deploy/api`. `DATABASE_URL` host is `db`. Password matches `POSTGRES_PASSWORD`. |
 | Certificate stuck | Cloudflare Always Use HTTPS, port 80, DNS still pointing at the old Caddy during the challenge. `kubectl -n kube-system logs deploy/traefik` |
-| Traefik not listening | Expected before cutover. With ServiceLB off, `ss` shows Caddy even when `deploy/traefik` is Running. After `enable-ingress.sh`, `sudo ss -lptn 'sport = :443'` should show `svclb` or `traefik`. |
+| Traefik not listening on 443 | Expected. Caddy owns 443. `kubectl -n kube-system get svc traefik` must say ClusterIP. Do not run `enable-ingress.sh`. |
 | Kite asks for a password you never set | Someone else opened the URL first, or you are on a fresh PVC. |
 | Client IP is a Cloudflare address | Optional: set `ports.websecure.forwardedHeaders.trustedIPs` to the current Cloudflare ranges (`https://www.cloudflare.com/ips-v4`). Do not set `insecure: true` while 443 is open to the world. |

@@ -1,0 +1,45 @@
+# Documented production edge after the 2026-11-11 cutover.
+# Caddy (the existing Compose container) owns 80/443 and TLS.
+# It dials the pinned k3s ClusterIP Services, not Compose api/web.
+#
+# The live file on the VPS is ~/translate_2voice/deploy/Caddyfile.web, edited
+# in place. Do not copy this file over that path, and do not git checkout or
+# git pull in a way that replaces it, until you have compared the two.
+# deploy/Caddyfile.web in git is still the old Compose-network proxy
+# (api:8000 / web:3000). It is not what production is running.
+#
+# Security and routes match that Caddyfile: ACME email from the environment,
+# gzip, 600MB API bodies, 30 minute API proxy timeouts, HSTS, nosniff,
+# referrer-policy. API upstream 10.43.204.249:8000. Web upstream 10.43.26.212:3000.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 600MB
+	}
+	reverse_proxy 10.43.204.249:8000 {
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+{$WEB_DOMAIN} {
+	encode gzip
+	reverse_proxy 10.43.26.212:3000
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}

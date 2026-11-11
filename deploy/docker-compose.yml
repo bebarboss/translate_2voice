@@ -1,13 +1,16 @@
-# Pakdee API (+ หน้าเว็บ optional) บน VPS
-# จากโฟลเดอร์รากโปรเจกต์:
-#   cp .env.example .env   # แล้วใส่คีย์จริง
-#   cp deploy/.env.vps.example deploy/.env
-#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
-#
-# ค่าเริ่มต้น: WORKER=modal (ไม่ต้องมี GPU บน VPS) + Caddy ออก HTTPS ให้โดเมน
-# หน้าเว็บ: ใส่ profile web หรือปล่อยไว้ที่ Vercel แล้วชี้ BACKEND_URL มาที่ API_DOMAIN
-# Postgres อยู่ใน Docker network เท่านั้น (ไม่เปิดพอร์ต 5432 สู่สาธารณะ)
+# Production edge on the VPS. Caddy and the old Postgres stay up.
+# api is profile "rollback" and web is profile "web", so
+# `docker compose up -d` does not start a writer.
+# Recreate Caddy only with --no-deps:
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps caddy
+# Postgres is not published on 5432.
 
+# Production writes are the k3s API, not these containers.
+# api and web use restart: "no" and must stay stopped. db and caddy stay up:
+# caddy is the public edge and proxies to the pinned k3s ClusterIPs.
+# Do not `docker compose up` api or web until k3s data has been copied back
+# and the k3s API is scaled to 0. deploy/up.sh refuses without
+# CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back.
 name: pakdee-vps
 
 services:
@@ -30,13 +33,15 @@ services:
     # ไม่ publish 5432 — API เชื่อมที่โฮสต์ db:5432 ในเครือข่าย compose เท่านั้น
 
   api:
+    profiles: [rollback]
     build:
       context: ../backend
       dockerfile: Dockerfile
       args:
         ML: "0"
     image: thai-dubbing-api:vps
-    restart: unless-stopped
+    # Stopped in production. "no" so a daemon reboot cannot start a second writer.
+    restart: "no"
     depends_on:
       db:
         condition: service_healthy
@@ -71,9 +76,11 @@ services:
     image: caddy:2.8-alpine
     restart: unless-stopped
     depends_on:
+      # Production Caddy dials k3s ClusterIPs, not these containers.
+      # required: false so recreating Caddy does not start the Compose API.
       api:
         condition: service_healthy
-      # เมื่อเปิด --profile web จะรอ container หน้าเว็บก่อนรับทราฟฟิก
+        required: false
       web:
         condition: service_started
         required: false
@@ -104,7 +111,8 @@ services:
         API_KEY: ${WEB_API_KEY:-}
         DIRECT_UPLOAD: ${DIRECT_UPLOAD:-0}
     image: thai-dubbing-web:vps
-    restart: unless-stopped
+    # Stopped in production. "no" so a daemon reboot cannot start a second writer.
+    restart: "no"
     depends_on:
       api:
         condition: service_healthy

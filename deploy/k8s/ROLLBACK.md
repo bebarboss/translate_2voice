@@ -1,32 +1,39 @@
 # Rollback / ย้อนกลับ
 
-Concrete commands for the VPS. Run them as `khaimook` from a checkout of this repo. Nothing here uninstalls k3s or deletes a PVC.
+Production after the 2026-11-11 cutover. Writes happen only in k3s. Compose Caddy is the public edge. Starting the Compose API or web while the k3s API is running is a second writer and drops every write made since cutover.
 
-คำสั่งใช้บน VPS ผู้ใช้ `khaimook` จากโฟลเดอร์ของ repo ไม่มีการถอน k3s และไม่มีการลบ PVC
+หลังตัดรอบ 11 พ.ย. 2026 การเขียนเกิดที่ k3s เท่านั้น Caddy ของ Compose เป็นประตูสาธารณะ ถ้าเปิด API หรือเว็บของ Compose ขณะที่ API ของ k3s ยังรัน จะมีคนเขียนสองทาง และงานที่เกิดหลังตัดรอบจะหาย
 
-Related: [README.md](README.md) (install and cutover). The database dump taken before cutover is `./backups/pakdee-cutover.dump`.
+The pre-cutover backup on the VPS is `~/pakdee-cutover-20261111/`. This file does not copy that directory and does not contain secrets.
 
-## 1. Bad app deploy / deploy แอปพัง
+## Current topology / สถานะจริง
 
-CI does this by itself when a new image never becomes ready (`deploy/k8s/scripts/rollout.sh`):
+| Piece | What is running |
+| --- | --- |
+| Ports 80/443 and TLS | Compose Caddy. Live config is `~/translate_2voice/deploy/Caddyfile.web`, edited on the server. The documented copy is `deploy/Caddyfile.k3s`. Do not let `git pull` replace the live file. |
+| API upstream | `10.43.204.249:8000` (Service `api`, clusterIP pinned) |
+| Web upstream | `10.43.26.212:3000` (Service `web`, clusterIP pinned) |
+| App and database | k3s namespace `pakdee`, images from commit `b2efc9476cf4ddcad33e9a264eb99368d1705aec` at cutover. Later SHAs come from the k3s deploy workflow. |
+| Compose `api` and `web` | Stopped, `restart: "no"`. Leave them stopped. |
+| Compose `db` and `caddy` | Still running. The Compose database is the old copy. The app does not use it. |
+| Traefik | ClusterIP only (`deploy/k8s/traefik/helmchartconfig.yaml`). Not on 80/443 and not a NodePort. |
+| k3s deploy | `.github/workflows/deploy-k3s.yml` on push to `main`. Check name `test`. |
 
-- API not ready: `kubectl -n pakdee rollout undo deployment/api`, then the job fails.
-- Web not ready: undo `deployment/web` **and** `deployment/api` (the API was already moved to the same SHA), then the job fails.
-- Database not ready: the job fails and does **not** undo anything. `rollout undo` is never run against `statefulset/db`.
-
-CI ย้อน Deployment เองถ้าพอดใหม่ไม่พร้อม ถ้า API ไม่พร้อมจะ undo เฉพาะ API ถ้าเว็บไม่พร้อมจะ undo ทั้งเว็บและ API ถ้าฐานข้อมูลไม่พร้อม job จะล้มโดยไม่ undo อะไร และจะไม่ undo `statefulset/db` เด็ดขาด
-
-`revisionHistoryLimit` is 3, so undo can reach the previous three ReplicaSets.
-
-See what is running and what you can return to:
+Reload Caddy without starting writers:
 
 ```bash
-kubectl -n pakdee get deploy api web -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.containers[0].image}{"\n"}{end}'
-kubectl -n pakdee rollout history deployment/api
-kubectl -n pakdee rollout history deployment/web
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps caddy
 ```
 
-Undo the last deploy (both, so web and API stay on the same SHA):
+Do not run `deploy/up.sh`, `deploy/remote-update.sh`, or the **Deploy VPS (compose rollback)** workflow unless the section below is finished. Do not run `enable-ingress.sh`.
+
+## 1. Bad app image / อิมเมจแอปพัง
+
+CI does this when a new image never becomes ready (`deploy/k8s/scripts/rollout.sh`). It does not touch Caddy, Traefik, or the database.
+
+- API not ready: `kubectl rollout undo deployment/api`.
+- Web not ready: undo `deployment/web` and `deployment/api`.
+- Database not ready: the job fails and undoes nothing. `rollout undo` is never run on `statefulset/db`.
 
 ```bash
 kubectl -n pakdee rollout undo deployment/web
@@ -35,18 +42,7 @@ kubectl -n pakdee rollout status deployment/api --timeout=300s
 kubectl -n pakdee rollout status deployment/web --timeout=180s
 ```
 
-Undo to a specific revision (the number comes from `rollout history`):
-
-```bash
-kubectl -n pakdee rollout undo deployment/api --to-revision=2
-kubectl -n pakdee rollout undo deployment/web --to-revision=2
-kubectl -n pakdee rollout status deployment/api --timeout=300s
-kubectl -n pakdee rollout status deployment/web --timeout=180s
-```
-
-Pin a git SHA that was already pushed to GHCR. Use the full 40-character SHA from the deploy you want, not `latest`.
-
-ปักภาพด้วย SHA ที่เคย push ขึ้น GHCR แล้ว ใช้ SHA เต็ม 40 ตัวจาก deploy ที่ต้องการ ไม่ใช้แท็ก `latest`
+Pin a git SHA already in GHCR. Use the full 40-character SHA, not `latest`.
 
 ```bash
 SHA=0123456789abcdef0123456789abcdef01234567
@@ -56,124 +52,60 @@ kubectl -n pakdee rollout status deployment/api --timeout=300s
 kubectl -n pakdee rollout status deployment/web --timeout=180s
 ```
 
-Do not `kubectl rollout undo statefulset/db`. That does not restore Postgres data, and a new Pod can come up against the same volume in a bad state.
+Do not `kubectl rollout undo statefulset/db`.
 
-## 2. Failed cutover / สลับทราฟฟิกไม่สำเร็จ
+## 2. Move k3s data back before any Compose writer / ย้ายข้อมูลกลับก่อนเปิด Compose
 
-Goal: Caddy listens on 80/443 again. ServiceLB must be off so Traefik does not bind those ports. Traefik can stay running.
+Do this only when the site must be served by the Compose API again. Order is fixed: stop k3s writes, copy the new data onto the Compose disks, then start Compose. Never the other way around.
 
-เป้าหมายคือให้ Caddy ฟัง 80/443 อีกครั้ง ServiceLB ต้องปิด เพื่อไม่ให้ Traefik จับพอร์ต Traefik เองยังรันต่อได้
-
-If `enable-ingress.sh` has **not** been run, k3s was never on those ports. Start Compose again:
-
-```bash
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d db api web caddy
-curl -fsS https://pakdee-api.cobie.online/health
-```
-
-If `enable-ingress.sh` **has** been run, put ServiceLB back on the disable list and restart k3s. That frees 80/443. App pods and the database disk stay. On this VPS use the servicelb-only file so Traefik keeps running. Use `k3s-hold-ports.yaml` instead when this node was installed with Traefik disabled and you want it to stay down.
-
-ถ้า VPS นี้เปิด Traefik อยู่ ให้ใช้ไฟล์ที่ปิดแค่ ServiceLB ไฟล์ที่ปิดทั้งคู่ใช้เมื่อติดตั้งแบบปิด Traefik ไว้ตั้งแต่แรก
-
-```bash
-sudo cp deploy/k8s/traefik/k3s-hold-servicelb.yaml /etc/rancher/k3s/config.yaml.d/00-pakdee-hold-ports.yaml
-sudo systemctl restart k3s
-
-# wait until the API answers, then until 443 is free
-kubectl get nodes
-sudo ss -lptn 'sport = :80'
-sudo ss -lptn 'sport = :443'
-
-kubectl -n pakdee scale deploy/api --replicas=0
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d db api web caddy
-curl -fsS https://pakdee-api.cobie.online/health
-sudo ss -lptn 'sport = :443'
-```
-
-`ss` should show `caddy` or `docker-proxy`, not `svclb`.
-
-While that drop-in lists `servicelb`, a later `systemctl restart k3s` will not publish 80/443. Run `enable-ingress.sh` again only when you mean to take the ports. `k3s-hold-ports.yaml` also lists `traefik`, so a restart with that file stops Traefik as well.
-
-If you would rather stop the whole cluster (Kite included) and leave the disks:
-
-```bash
-sudo systemctl stop k3s
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web up -d db api web caddy
-curl -fsS https://pakdee-api.cobie.online/health
-```
-
-`systemctl stop` does not uninstall k3s. `sudo systemctl start k3s` brings the pods and PVCs back. Do not `docker compose down -v`.
-
-The Compose workflow **Deploy VPS (compose rollback)** is manual. Run it only while k3s is not listening on 80/443 (`systemctl stop k3s`, or the hold file is in place and Traefik is gone).
-
-## 3. Database / ฐานข้อมูล
-
-CI never rolls the database back. `rollout undo` on the StatefulSet is not a restore. The copy that matters is the `pg_dump` taken in [README.md](README.md) section 5, before traffic moved: `./backups/pakdee-cutover.dump`.
-
-CI ไม่ย้อนฐานข้อมูลให้อัตโนมัติ `rollout undo` ไม่ใช่การกู้ข้อมูล ไฟล์ที่ใช้กู้คือ `./backups/pakdee-cutover.dump` ที่ dump ไว้ก่อนสลับทราฟฟิก
-
-Restore that dump into k3s Postgres. Scale the API to 0 first so nothing is connected. `--clean --if-exists` drops objects that are already there. Ignore benign "does not exist" messages. Do not ignore errors about the `vector` extension.
+ทำเมื่อต้องให้ API ของ Compose รับงานอีกครั้ง ลำดับตายตัว: หยุดการเขียนของ k3s แล้วคัดข้อมูลใหม่ลงดิสก์ของ Compose จากนั้นค่อยเปิด Compose ห้ามสลับลำดับ
 
 ```bash
 kubectl -n pakdee scale deploy/api --replicas=0
-kubectl -n pakdee cp ./backups/pakdee-cutover.dump db-0:/tmp/pakdee-cutover.dump
-kubectl -n pakdee exec -i db-0 -- \
-  pg_restore -U pakdee -d pakdee --no-owner --no-acl --clean --if-exists /tmp/pakdee-cutover.dump
-kubectl -n pakdee exec db-0 -- \
-  psql -U pakdee -d pakdee -c \
-  "select 'studio.users' as t, count(*) from studio.users
-   union all select 'studio.jobs', count(*) from studio.jobs
-   union all select 'voices', count(*) from voices;"
-kubectl -n pakdee scale deploy/api --replicas=1
-kubectl -n pakdee rollout status deploy/api --timeout=300s
-```
+kubectl -n pakdee rollout status deploy/api --timeout=180s
 
-Compare those counts with the listing you saved during the dump. Jobs that were `running` are marked failed when the API process starts. That is existing API behaviour.
-
-The Compose database is a different disk (the Docker volume). It still has the pre-cutover data if you did not `docker compose down -v` and you did not restore a newer dump into it. Starting Compose, as in section 2, serves that copy. It does not read the k3s PVC.
-
-If people already used the site on k3s and you are going back to Compose, copy the k3s database out first:
-
-```bash
-kubectl -n pakdee scale deploy/api --replicas=0
 kubectl -n pakdee exec -T db-0 -- \
   pg_dump -U pakdee -d pakdee --format=custom --no-owner --no-acl -f /tmp/pakdee-back.dump
 kubectl -n pakdee cp db-0:/tmp/pakdee-back.dump ./backups/pakdee-back.dump
 
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d db
+PV="$(kubectl -n pakdee get pvc api-data -o jsonpath='{.spec.volumeName}')"
+sudo rsync -aH "$(kubectl get pv "$PV" -o jsonpath='{.spec.hostPath.path}')/" "$(pwd)/data/"
+
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --no-deps db
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env cp ./backups/pakdee-back.dump db:/tmp/pakdee-back.dump
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T db \
   pg_restore -U pakdee -d pakdee --no-owner --no-acl --clean --if-exists /tmp/pakdee-back.dump
 ```
 
-Do that only after Traefik is off the ports (section 2), then `docker compose ... --profile web up -d api web caddy`.
+Compare row counts with k3s before you start the Compose API. Keep `deploy/api` at 0 replicas until that Compose process is the one you intend to keep. Two APIs must not run.
 
-Deleting the StatefulSet does not delete the PVC (`whenDeleted: Retain`). `kubectl delete pvc` does, and local-path then removes the directory.
+The Compose database volume is not the k3s data. Restoring the cutover dump `~/pakdee-cutover-20261111/` brings back the pre-cutover copy and throws away later writes. Use it only when the k3s copy itself is bad and you have decided to drop those writes.
 
-## 4. Pause automatic deploys / หยุด deploy อัตโนมัติชั่วคราว
+## 3. Start Compose writers / เปิดตัวเขียนของ Compose
 
-Pull-request tests keep running. Pushing to `main` still builds and pushes images, but the SSH deploy is skipped while the Actions variable `K3S_DEPLOY` is `false`. A manual **Run workflow** still deploys.
+Only after section 2. `deploy/up.sh` and `deploy/remote-update.sh` exit before they pull or start containers unless this phrase is set. The GitHub workflow **Deploy VPS (compose rollback)** requires the same phrase in the `confirm` input. A pull checks out `main` and can replace the live `deploy/Caddyfile.web`. Compare that file with `deploy/Caddyfile.k3s` first. Point Caddy at `api:8000` and `web:3000` only after the Compose containers are the writers. Until then leave the ClusterIP upstreams in place.
 
-เทสบน pull request ยังรัน การ push เข้า `main` ยัง build ภาพ แต่จะไม่ SSH ไป deploy ตราบใดที่ตัวแปร `K3S_DEPLOY` เป็น `false` การกด Run workflow เองยัง deploy ได้
+```bash
+CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/up.sh --web
+```
+
+## 4. Traefik stays internal / Traefik ไม่เปิดสู่สาธารณะ
+
+`kubectl apply` of `deploy/k8s/traefik/helmchartconfig.yaml` keeps `service.spec.type: ClusterIP`. `apply-traefik.sh` refuses the file if that type is LoadBalancer or NodePort. `enable-ingress.sh` restarts k3s and can bind 80/443. It exits immediately unless:
+
+```bash
+CONFIRM_PUBLIC_TRAEFIK=take-80-443-from-caddy bash deploy/k8s/scripts/enable-ingress.sh you@example.com
+```
+
+Do not set that variable. Caddy already has the certificates and the ports.
+
+## 5. Pause k3s deploys / หยุด deploy ของ k3s
+
+Pull-request tests keep running. Pushing to `main` still builds images. The SSH apply is skipped while `K3S_DEPLOY` is `false`. A manual **Run workflow** still deploys.
 
 ```bash
 gh variable set K3S_DEPLOY --repo bebarboss/translate_2voice --body false
-gh variable list --repo bebarboss/translate_2voice
-```
-
-Resume (an empty or any other value also deploys; `false` is the only pause):
-
-```bash
 gh variable set K3S_DEPLOY --repo bebarboss/translate_2voice --body true
 ```
 
-Or in the GitHub UI: Settings → Secrets and variables → Actions → Variables.
-
-To stop the workflow entirely, including pull-request tests:
-
-```bash
-gh workflow disable deploy-k3s.yml --repo bebarboss/translate_2voice
-gh workflow enable deploy-k3s.yml --repo bebarboss/translate_2voice
-```
-
-The cluster stays on whatever SHA is already running. New `:latest` tags can still appear in GHCR while deploys are paused. Pin with `kubectl set image` (section 1) if you need a specific SHA. Do not point the Deployment at `:latest` to "roll back".
+Deleting the StatefulSet does not delete the PVC (`whenDeleted: Retain`). `kubectl delete pvc` does.

@@ -8,6 +8,16 @@ cd "$ROOT"
 
 MODE="${1:-}"
 
+# Check before git pull. A pull can overwrite the on-server deploy/Caddyfile.web
+# (the live edge, edited in place) and the next lines start Compose writers.
+if [[ "${CONFIRM_COMPOSE_WRITERS:-}" != "k3s-data-moved-back" ]]; then
+  echo "Refusing to update or start Compose." >&2
+  echo "k3s owns production data. Copy that data back and scale deploy/api to 0 first." >&2
+  echo "See deploy/k8s/ROLLBACK.md." >&2
+  echo "Then: CONFIRM_COMPOSE_WRITERS=k3s-data-moved-back bash deploy/remote-update.sh" >&2
+  exit 1
+fi
+
 echo "==> $(date -Is) git fetch/pull"
 git fetch --prune origin
 git checkout main
@@ -28,5 +38,5 @@ else
 fi
 
 echo "==> status"
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile web ps
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile rollback --profile web ps
 echo "==> done $(date -Is)"
