@@ -42,19 +42,19 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Branch protection on main requires this check context exactly: test
-  # Job id and check run name are both "test". It runs on every pull_request.
-  test:
-    name: test
+  # Branch protection on main requires the check context exactly: test.
+  # pytest and typecheck run in parallel. The job id and check name "test"
+  # only aggregate them. It must exit non-zero unless both results are success,
+  # including when a prerequisite failed, was cancelled, or was skipped.
+  # A skipped step inside a green job would let a required check pass.
+  pytest:
+    name: pytest
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.install_kite != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: System packages
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libsndfile1
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -70,6 +70,15 @@ jobs:
           pip install -r requirements.txt pytest
           python -m pytest -q
 
+  typecheck:
+    name: typecheck
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.install_kite != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -82,6 +91,29 @@ jobs:
         run: |
           npm ci
           npm run typecheck
+
+  test:
+    name: test
+    needs: [pytest, typecheck]
+    # always() so this check is reported when a prerequisite fails or is
+    # cancelled. The install_kite dispatch still skips the whole gate, matching
+    # the previous single test job. On every other event a skipped prerequisite
+    # fails the script below.
+    if: always() && (github.event_name != 'workflow_dispatch' || github.event.inputs.install_kite != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require pytest and typecheck
+        env:
+          PYTEST_RESULT: ${{ needs.pytest.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+        run: |
+          set -euo pipefail
+          echo "pytest=${PYTEST_RESULT} typecheck=${TYPECHECK_RESULT}"
+          if [ "$PYTEST_RESULT" != "success" ] || [ "$TYPECHECK_RESULT" != "success" ]; then
+            echo "pytest and typecheck must both succeed. failure, cancellation, and skip fail this check." >&2
+            exit 1
+          fi
 
   build:
     needs: test
