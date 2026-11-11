@@ -1427,7 +1427,7 @@ def _around(batch: list[Utterance], order: Optional[list[Utterance]]) -> dict[in
     return out
 
 
-def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.35,
+def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 1.10,
                 only: Optional[set[int]] = None) -> None:
     """ปรับความยาวบทให้พอดีเวลาที่ตัวละครพูด
     ย่อบทที่คาดว่ายาวเกินเวลาที่มี ให้พูดได้ด้วยความเร็วปกติ (สองรอบ รอบสองเฉพาะบรรทัดที่ยังยาวเกิน)
@@ -1617,7 +1617,7 @@ def _term_issues(order: list[Utterance], hints: dict, check_cancel: Optional[Cal
     return out
 
 
-def review_translation(utts: list[Utterance], lang: str, target: str = "th", max_speedup: float = 1.35,
+def review_translation(utts: list[Utterance], lang: str, target: str = "th", max_speedup: float = 1.10,
                        title: str = "", hints: Optional[dict] = None,
                        check_cancel: Optional[Callable[[], None]] = None) -> None:
     """ตรวจบทหลังแปล บรรทัดที่ควรให้คนดูติดป้ายไว้ใน check_note
@@ -1649,6 +1649,17 @@ def review_translation(utts: list[Utterance], lang: str, target: str = "th", max
         issues = {uid: f"ความหมายอาจไม่ต่อกับบทข้างเคียง: {note}" for uid, note in issues.items()}
     for u in order:
         u.check_note = issues.get(u.id, "")
+        if u.check_note and "glossary" in u.check_note.lower() and not u.unclear_reason:
+            u.unclear_reason = "ชื่อเฉพาะอาจผิด"
+        elif u.check_note and not u.unclear_reason:
+            u.unclear_reason = u.check_note
+    # บทยาวเกินเวลาแม้เร่งสูงสุด 10% → ติดธงให้ย่อบท
+    for u in order:
+        if u.target.strip() and estimate_seconds(u.target, target) > max(u.duration, 0.3) * min(max_speedup, settings.fit_tolerance):
+            note = "บทยาวเกินเวลา — ควรย่อก่อนพากย์"
+            u.check_note = f"{u.check_note}; {note}".strip("; ") if u.check_note else note
+            if not u.unclear_reason:
+                u.unclear_reason = note
 
 
 def propose_turns(utts: list[Utterance], batch_size: int = 25,

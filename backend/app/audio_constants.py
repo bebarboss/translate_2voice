@@ -20,7 +20,7 @@ MAX_LINE_SEC = 8.0
 THAI_CHARS_PER_SEC = 11.0
 THAI_SYLLABLES_PER_SEC = 5.5
 EN_WORDS_PER_SEC = 2.6
-MAX_SPEEDUP = 1.35
+MAX_SPEEDUP = 1.10  # เร่งได้ไม่เกิน 10%; ยาวเกินให้ย่อบทแทน
 MAX_SLOWDOWN = 1.05
 
 # --- หยุดกลางประโยค ---
@@ -37,11 +37,12 @@ BREATH_KEEP = True
 
 # --- จับคู่เสียงตัวละคร ---
 VOICE_MATCH = True
-VOICE_MIN_SIM = 0.2
-VOICE_MAX_PITCH_DIFF = 6.0
-VOICE_SPLIT_PITCH = 7.0
+VOICE_MIN_SIM = 0.75  # ลายนิ้วมือเสียงเหมือนกันประมาณ 75% ขึ้นไปถือเป็นคนเดียวกัน
+VOICE_MAX_PITCH_DIFF = 8.0  # วรรณยุกต์/อารมณ์ไทยทำให้ F0 แกว่ง — ไม่ตัดด้วย pitch ง่ายเกิน
+VOICE_SPLIT_PITCH = 10.0  # แยกผู้พูดด้วย pitch เฉพาะเมื่อห่างชัด (ลดผลวรรณยุกต์)
 VOICE_DRIFT = 4.0
 VOICE_RETRIES = 1
+VOICE_PROFILE_MIN_SEC = 2.0  # วัดลายนิ้วมือเฉพาะช่วงสะอาด ≥2 วินาที
 
 # --- อารมณ์ / ความดัง / ห้อง ---
 EMOTION_MATCH = True
@@ -51,10 +52,10 @@ LOUDNESS_MAX_CUT = 10.0    # dB
 ROOM_REVERB = 0.2          # 0 = แห้ง
 ROOM_RT60 = 0.4            # วินาที
 
-# --- Prosody (ปิดไว้: PSOLA มักทำให้เสียงแตก) ---
+# --- Prosody (ปิดไว้: PSOLA มักทำให้เสียงแตก + วรรณยุกต์ไทยเพี้ยน) ---
 PROSODY_MATCH = False
-PROSODY_MAX_SHIFT = 4.0    # เซมิโทน
-PROSODY_MAX_RANGE = 1.6
+PROSODY_MAX_SHIFT = 2.0    # เซมิโทน — ลดความแรงถ้าเปิดใช้
+PROSODY_MAX_RANGE = 1.3
 
 # --- ระดับผสมสุดท้าย (ค่าเริ่มต้นหน้าตั้งค่า) ---
 VOICE_GAIN = 1.0

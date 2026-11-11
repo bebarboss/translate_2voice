@@ -735,7 +735,7 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
 
 
 def refund_job(uid: str, job_id: str) -> None:
-    """คืนเครดิตของงานที่วิเคราะห์ไม่สำเร็จ (ครั้งเดียวต่องาน) เครดิตแพ็กเกจคืนเฉพาะถ้าแพ็กเกจยังไม่หมดอายุ"""
+    """คืนเครดิตเมื่องานล้มเหลวเพราะระบบ (ครั้งเดียวต่องาน) เครดิตแพ็กเกจคืนเฉพาะถ้าแพ็กเกจยังไม่หมดอายุ"""
     with _tx() as db:
         charge = db.execute("SELECT credits, minutes FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref = ?",
                             (uid, job_id)).fetchone()
@@ -746,7 +746,73 @@ def refund_job(uid: str, job_id: str) -> None:
         if minutes:
             db.execute("UPDATE subscriptions SET minutes_left = minutes_left + ? WHERE user_id = ?", (minutes, uid))
         db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (-charge["credits"], uid))
-        _log(db, uid, "refund", credits=-charge["credits"], minutes=minutes, ref=job_id, note="คืนเครดิต งานไม่สำเร็จ")
+        _log(db, uid, "refund", credits=-charge["credits"], minutes=minutes, ref=job_id, note="คืนเครดิต งานล้มเหลวเพราะระบบ")
+
+
+def quote_job(seconds: float) -> dict:
+    """ประมาณเครดิตก่อนเริ่มงาน จากความยาวคลิป (วินาที)"""
+    need = job_credits(max(0.0, seconds))
+    return {
+        "seconds": round(seconds, 2),
+        "credits": need / UNIT,
+        "credits_units": need,
+        "note": "1 เครดิต ≈ 1 นาที (ปัดขึ้นที่ 0.01)",
+    }
+
+
+def quote_redub(edit_seconds: float, clip_seconds: float, free_flagged_seconds: float = 0.0) -> dict:
+    """ประมาณเครดิตพากย์ซ้ำ: 0.1 เครดิตต่อวินาทีของบรรทัดที่แก้
+    ฟรีได้ไม่เกิน 10% ของความยาวคลิป และบรรทัดที่ AI ติดธงฟรีเสมอ"""
+    billable = max(0.0, edit_seconds - max(0.0, free_flagged_seconds))
+    free_quota = max(0.0, clip_seconds) * 0.10
+    charged_sec = max(0.0, billable - free_quota)
+    # 0.1 เครดิตต่อวินาที → หน่วยย่อย = ceil(sec * 0.1 * UNIT)
+    need = max(0, math.ceil(round(charged_sec * 0.1 * UNIT, 6))) if charged_sec > 0 else 0
+    return {
+        "edit_seconds": round(edit_seconds, 2),
+        "free_flagged_seconds": round(free_flagged_seconds, 2),
+        "free_quota_seconds": round(free_quota, 2),
+        "charged_seconds": round(charged_sec, 2),
+        "credits": need / UNIT,
+        "credits_units": need,
+        "free": need == 0,
+    }
+
+
+def charge_redub(uid: str, job_id: str, edit_seconds: float, clip_seconds: float,
+                 free_flagged_seconds: float = 0.0) -> dict:
+    """ตัดเครดิตพากย์ซ้ำ (ref = job_id:redub:<n>) คืนผล quote ที่ตัดจริง"""
+    q = quote_redub(edit_seconds, clip_seconds, free_flagged_seconds)
+    need = int(q["credits_units"])
+    if not billing_enabled() or need <= 0:
+        return q
+    with _tx() as db:
+        if _exempt(db, uid):
+            return {**q, "charged": False, "exempt": True}
+        # นับรอบพากย์ซ้ำจาก ledger เพื่อไม่ชน ref ของ charge งานหลัก
+        n = db.execute(
+            "SELECT COUNT(*) AS c FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref LIKE ?",
+            (uid, f"{job_id}:redub:%"),
+        ).fetchone()["c"]
+        ref = f"{job_id}:redub:{int(n) + 1}"
+        sub = _subscription(db, uid)
+        from_plan = min(need, sub["minutes_left"]) if sub else 0
+        rest = need - from_plan
+        have = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()["credits"]
+        if rest > have:
+            raise AccountError(
+                402,
+                f"พากย์ซ้ำครั้งนี้ใช้ {fmt_credits(need)} เครดิต แต่มีเพียง "
+                f"{fmt_credits(from_plan + have)} เครดิต (ขาด {fmt_credits(rest - have)} เครดิต)",
+            )
+        if from_plan:
+            db.execute("UPDATE subscriptions SET minutes_left = minutes_left - ? WHERE user_id = ?",
+                       (from_plan, uid))
+        if rest:
+            db.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (rest, uid))
+        _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=ref,
+             note=f"พากย์ซ้ำ {q['charged_seconds']:.1f} วินาที")
+    return {**q, "charged": True, "ref": ref}
 
 
 # ---------------------------------------------------------------- ชำระเงิน (ซื้อเครดิตเติม หรือแพ็กเกจ)

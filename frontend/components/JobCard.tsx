@@ -38,6 +38,11 @@ export default function JobCard({ job, busy, onRetry, onCancel, onDelete }: {
         <div>
           <b title={job.filename}>{job.filename}</b>
           <span>{langName(job.detected_lang ?? job.source_lang)} → {tx(TARGET_LABEL[job.target_lang])} · {tx("แก้ไขเมื่อ {0}", { 0: fmtWhen(job.updated_at) })}</span>
+          {job.expires_at && (
+            <span className="dim" style={{ color: "var(--warn, #b45309)" }}>
+              {tx("ไฟล์จะถูกลบ {0} — ดาวน์โหลดหรืออัปเกรดก่อน", { 0: fmtWhen(job.expires_at) })}
+            </span>
+          )}
         </div>
       </div>
     </Link>

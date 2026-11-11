@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -117,7 +117,7 @@ def require_key_or_upload_token(x_api_key: Optional[str] = Header(default=None),
 
 
 OPEN_PATHS = ("/health", "/auth/", "/legal", "/billing/plans", "/billing/webhooks/",
-              "/docs", "/openapi.json", "/redoc")
+              "/share/", "/docs", "/openapi.json", "/redoc")
 ADMIN_WRITES = ("/settings", "/voices")  # เปิดระบบบัญชีแล้ว คลังเสียงและค่าตั้งระบบแก้ได้เฉพาะผู้ดูแล
 
 
@@ -912,15 +912,28 @@ def retranslate(job_id: str, body: Retranslate):
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
+class SynthesizeBody(BaseModel):
+    edit_seconds: Optional[float] = Field(None, ge=0, description="วินาทีรวมของบรรทัดที่แก้ (พากย์ซ้ำ)")
+    free_flagged_seconds: Optional[float] = Field(None, ge=0, description="วินาทีบรรทัดที่ AI ติดธง (ฟรี)")
+
+
 @app.post("/jobs/{job_id}/synthesize", response_model=JobCreated, status_code=202,
           dependencies=[Depends(require_key)])
-def synthesize(job_id: str):
+def synthesize(job_id: str, body: Optional[SynthesizeBody] = Body(None)):
     """พากย์ต่อหลังตรวจบท หรือพากย์ใหม่หลังแก้บท (พากย์ใหม่เฉพาะประโยคที่เปลี่ยน)"""
     job = get_job_or_404(job_id)
     if job.status in ACTIVE:
         raise HTTPException(409, "งานกำลังทำงานอยู่")
     if not store.load_transcript(job_id):
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแปลเสร็จก่อน")
+    # พากย์ซ้ำหลังงานเสร็จแล้ว: คิดเครดิตจากวินาทีที่แก้ (โควตาฟรี 10% + บรรทัดติดธง)
+    if job.owner and job.status == JobStatus.done and body and (body.edit_seconds or 0) > 0:
+        try:
+            accounts.charge_redub(
+                job.owner, job_id, body.edit_seconds or 0.0,
+                job.duration or 0.0, body.free_flagged_seconds or 0.0)
+        except accounts.AccountError as e:
+            raise HTTPException(e.status, str(e))
     try:
         from . import object_store
         object_store.hydrate_job(store.dir(job_id))
@@ -971,8 +984,10 @@ def get_job_voices(job_id: str, request: Request):
         if p is not None:
             suggestions = sorted((VoiceSuggestion(voice_id=v.id, score=library.closeness(p, v.pitch_hz, embs[v.id]))
                                   for v in ready), key=lambda s: s.score + mood_bonus.get(s.voice_id, 0), reverse=True)
+        emb = p.emb if p is not None else None
         out.append(SpeakerVoice(speaker=speaker, voice_id=job.voice_map.get(speaker), pitch_hz=hz,
-                                gender=library.guess_gender(hz), suggestions=suggestions))
+                                gender=library.guess_gender(hz, emb=emb, store=voice_store),
+                                suggestions=suggestions))
     return out
 
 
@@ -1088,6 +1103,38 @@ def get_voice(voice_id: str, request: Request):
     info = actors.voice_actors().get(voice_id)
     return with_actor(get_voice_or_404(voice_id), info, sees_pending(request, info),
                       viewer_id=current_user_id(request))
+
+
+class VoiceReportBody(BaseModel):
+    reason: str = Field(..., description="stolen | inappropriate | quality | other")
+    detail: str = Field("", max_length=2000)
+
+
+@app.post("/voices/{voice_id}/report", dependencies=[Depends(require_key)])
+def report_voice(voice_id: str, body: VoiceReportBody, request: Request):
+    """รายงานเสียงนักพากย์ — ขโมยเสียง / ไม่เหมาะสม / คุณภาพแย่ / อื่นๆ
+    ถ้าเป็นขโมยเสียง ระบบซ่อนเสียงชั่วคราวระหว่างแอดมินตรวจ และแจ้งนักพากย์เจ้าของ"""
+    get_voice_or_404(voice_id)
+    uid = current_user_id(request) or ""
+    try:
+        out = actors.report_voice(voice_id, uid, body.reason, body.detail)
+    except accounts.AccountError as e:
+        raise HTTPException(e.status, str(e))
+    # บันทึกเข้าคิว feedback ให้แอดมินเห็น (นักพากย์เจ้าของดูได้จาก note ใน review)
+    try:
+        accounts.submit_feedback(
+            uid or None, category="quality",
+            subject=f"รายงานเสียงนักพากย์ ({body.reason})",
+            body=(f"voice_id={voice_id} actor_id={out.get('actor_id')}\n"
+                  f"reason={body.reason}\n"
+                  f"{(body.detail or '').strip() or '(ไม่มีรายละเอียด)'}\n"
+                  f"report_id={out['id']}"
+                  + ("\nซ่อนชั่วคราวระหว่างตรวจ" if out.get("hidden") else "")),
+            job_id="",
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("log voice report to feedback failed")
+    return out
 
 
 @app.patch("/voices/{voice_id}", response_model=LibraryVoice, dependencies=[Depends(require_key)])
@@ -2063,6 +2110,25 @@ def admin_actor_voices(_=Depends(require_admin)):
     return sorted(out, key=lambda v: not pending(v))
 
 
+@app.get("/admin/voice-reports", dependencies=[Depends(require_key)])
+def admin_voice_reports(open_only: bool = True, _=Depends(require_admin)):
+    """คิวรายงานเสียงนักพากย์ให้แอดมินตรวจ"""
+    return actors.list_voice_reports(open_only=open_only)
+
+
+class ResolveVoiceReport(BaseModel):
+    restore: bool = True  # คืนเสียงที่ถูกซ่อนเพราะ stolen
+    note: str = Field("", max_length=500)
+
+
+@app.post("/admin/voice-reports/{report_id}/resolve", dependencies=[Depends(require_key)])
+def admin_resolve_voice_report(report_id: str, body: ResolveVoiceReport, admin=Depends(require_admin)):
+    try:
+        return actors.resolve_voice_report(report_id, restore=body.restore, by=admin["email"], note=body.note)
+    except accounts.AccountError as e:
+        raise HTTPException(e.status, str(e))
+
+
 @app.post("/admin/actor-voices/{voice_id}/review", status_code=204, dependencies=[Depends(require_key)])
 def admin_review_voice(voice_id: str, body: Review, admin=Depends(require_admin)):
     """อนุมัติให้เสียงขึ้นคลัง (ทุกคนเลือกใช้ได้) หรือให้นักพากย์อัดใหม่พร้อมเหตุผล
@@ -2167,6 +2233,63 @@ def admin_payout(user_id: str, body: Payout, admin=Depends(require_admin)):
         raise _actor_fail(e)
     notify.actor_paid(user_id, body.month, out["amount"], out["wht"])
     return out
+
+
+# ---------------------------------------------------------------- ลิงก์แชร์
+@app.post("/jobs/{job_id}/share", dependencies=[Depends(require_key)])
+def create_share(job_id: str, request: Request):
+    """สร้างลิงก์แชร์สาธารณะของคลิปที่พากย์เสร็จ (โหมดฟรีมีลายน้ำนกแก้วอยู่แล้ว)"""
+    import secrets
+    job = get_job_or_404(job_id)
+    if job.status != JobStatus.done:
+        raise HTTPException(409, "แชร์ได้เฉพาะงานที่พากย์เสร็จแล้ว")
+    uid = current_user_id(request)
+    if uid and job.owner and job.owner != uid and not accounts.is_admin(request.state.user):
+        raise HTTPException(403, "ไม่มีสิทธิ์แชร์งานนี้")
+    token = job.share_token or secrets.token_urlsafe(16)
+    if not job.share_token:
+        store.update(job_id, share_token=token)
+    return {
+        "token": token,
+        "url": f"/share/{token}",
+        "watermark": bool(job.watermark),
+        "expires_at": job.expires_at.isoformat() if job.expires_at else None,
+    }
+
+
+@app.delete("/jobs/{job_id}/share", status_code=204, dependencies=[Depends(require_key)])
+def revoke_share(job_id: str, request: Request):
+    job = get_job_or_404(job_id)
+    uid = current_user_id(request)
+    if uid and job.owner and job.owner != uid and not accounts.is_admin(request.state.user):
+        raise HTTPException(403, "ไม่มีสิทธิ์")
+    store.update(job_id, share_token=None)
+
+
+@app.get("/share/{token}")
+def get_share(token: str):
+    """เมตาข้อมูลลิงก์แชร์ (สาธารณะ)"""
+    job = store.by_share_token(token)
+    if job is None:
+        raise HTTPException(404, "ไม่พบลิงก์นี้ หรือหมดอายุแล้ว")
+    return {
+        "token": token,
+        "filename": job.filename,
+        "duration": job.duration,
+        "target_lang": job.target_lang,
+        "watermark": bool(job.watermark),
+        "expires_at": job.expires_at.isoformat() if job.expires_at else None,
+        "video_url": f"/share/{token}/video",
+    }
+
+
+@app.get("/share/{token}/video")
+def get_share_video(token: str):
+    """วิดีโอจากลิงก์แชร์ (สาธารณะ) — คลิปฟรีมีลายน้ำ"""
+    job = store.by_share_token(token)
+    if job is None:
+        raise HTTPException(404, "ไม่พบลิงก์นี้ หรือหมดอายุแล้ว")
+    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"), job_id=job.id)
 
 
 # ---------------------------------------------------------------- ไฟล์

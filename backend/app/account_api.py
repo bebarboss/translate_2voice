@@ -205,6 +205,75 @@ def wallet(user=Depends(require_user)):
     return accounts.wallet(user["id"])
 
 
+class QuoteJobBody(BaseModel):
+    seconds: float = Field(..., ge=0, le=60 * 60 * 12, description="ความยาวคลิป (วินาที)")
+
+
+class QuoteUrlBody(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000, description="ลิงก์คลิป YouTube ฯลฯ")
+
+
+class QuoteRedubBody(BaseModel):
+    edit_seconds: float = Field(..., ge=0, description="วินาทีรวมของบรรทัดที่แก้")
+    clip_seconds: float = Field(..., ge=0, description="ความยาวคลิปทั้งหมด")
+    free_flagged_seconds: float = Field(0, ge=0, description="วินาทีของบรรทัดที่ AI ติดธง (ฟรี)")
+
+
+def _balance(uid: str) -> float:
+    w = accounts.wallet(uid)
+    plan = float((w.get("subscription") or {}).get("minutes_left") or 0)
+    return float(w.get("credits") or 0) + plan
+
+
+@router.post("/billing/quote", dependencies=[Depends(_need_billing)])
+def quote_job(body: QuoteJobBody, user=Depends(require_user)):
+    """ประมาณเครดิตก่อนเริ่มงาน + เครดิตที่เหลือหลังหัก"""
+    q = accounts.quote_job(body.seconds)
+    have = _balance(user["id"])
+    need = float(q["credits"])
+    return {**q, "balance": have, "remaining": round(have - need, 2), "enough": have >= need or accounts.is_admin(user)}
+
+
+@router.post("/billing/quote-url", dependencies=[Depends(_need_billing)])
+def quote_url(body: QuoteUrlBody, user=Depends(require_user)):
+    """ประมาณเครดิตจากลิงก์ — อ่านความยาวด้วย yt-dlp โดยไม่ดาวน์โหลดคลิป"""
+    from urllib.parse import urlparse
+
+    url = (body.url or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(400, "ลิงก์ไม่ถูกต้อง")
+    try:
+        from .pipeline.download import fetch_info
+        info = fetch_info(url)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"อ่านความยาวคลิปไม่ได้: {str(exc)[:200]}") from exc
+    if info.get("_type") == "playlist":
+        raise HTTPException(400, "ลิงก์นี้เป็นเพลย์ลิสต์ กรุณาใส่ลิงก์คลิปเดียว")
+    seconds = float(info.get("duration") or 0)
+    if seconds <= 0:
+        raise HTTPException(400, "ลิงก์นี้ไม่บอกความยาวคลิป ประมาณเครดิตไม่ได้ก่อนดาวน์โหลด")
+    q = accounts.quote_job(seconds)
+    have = _balance(user["id"])
+    need = float(q["credits"])
+    return {
+        **q,
+        "title": str(info.get("title") or "")[:200],
+        "balance": have,
+        "remaining": round(have - need, 2),
+        "enough": have >= need or accounts.is_admin(user),
+    }
+
+
+@router.post("/billing/quote-redub", dependencies=[Depends(_need_billing)])
+def quote_redub(body: QuoteRedubBody, user=Depends(require_user)):
+    """ประมาณเครดิตพากย์ซ้ำก่อนกด (0.1/วิ ของบรรทัดที่แก้; ฟรี 10% + บรรทัดติดธง)"""
+    q = accounts.quote_redub(body.edit_seconds, body.clip_seconds, body.free_flagged_seconds)
+    have = _balance(user["id"])
+    need = float(q["credits"])
+    return {**q, "balance": have, "remaining": round(have - need, 2), "enough": have >= need or accounts.is_admin(user)}
+
+
 @router.post("/billing/subscribe", dependencies=[Depends(_need_billing)])
 def subscribe(body: Subscribe, user=Depends(require_user)):
     try:

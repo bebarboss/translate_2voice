@@ -154,6 +154,10 @@ export default function VoiceDetail({ v, preview, onChanged, known, canEdit }: {
   const [text, setText] = useState(v.text);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState<"stolen" | "inappropriate" | "quality" | "other">("quality");
+  const [reportDetail, setReportDetail] = useState("");
+  const [reportDone, setReportDone] = useState("");
 
   useEffect(() => {
     if (editing) return;
@@ -342,6 +346,34 @@ export default function VoiceDetail({ v, preview, onChanged, known, canEdit }: {
             )}
             {canEdit && !(v.status === "processing" && v.stage !== "queued") && (
               <button type="button" className="btn small danger" style={{ width: "100%" }} onClick={remove} disabled={busy}>{tx("ลบเสียงนี้")}</button>
+            )}
+            {!canEdit && !!v.actor && !reportDone && (
+              <button type="button" className="btn small" style={{ width: "100%" }}
+                onClick={() => setReportOpen((o) => !o)} disabled={busy}>{tx("รายงานเสียงนี้")}</button>
+            )}
+            {reportDone && <div className="alert info">{reportDone}</div>}
+            {reportOpen && !reportDone && (
+              <div className="field" style={{ gap: 8 }}>
+                <label className="label" htmlFor={`vr-${v.id}`}>{tx("เหตุผล")}</label>
+                <select id={`vr-${v.id}`} className="spk-select" value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value as typeof reportReason)}>
+                  <option value="stolen">{tx("ขโมยเสียงคนอื่น")}</option>
+                  <option value="inappropriate">{tx("เนื้อหาไม่เหมาะสม")}</option>
+                  <option value="quality">{tx("คุณภาพเสียงแย่")}</option>
+                  <option value="other">{tx("อื่นๆ")}</option>
+                </select>
+                <textarea className="textarea" rows={3} value={reportDetail}
+                  placeholder={tx("รายละเอียดเพิ่มเติม (ถ้ามี)")}
+                  onChange={(e) => setReportDetail(e.target.value)} />
+                <button type="button" className="btn small primary" disabled={busy}
+                  onClick={async () => {
+                    const ok = await run(() => api.reportVoice(v.id, reportReason, reportDetail.trim()));
+                    if (ok) {
+                      setReportDone(tx("ส่งรายงานแล้ว แอดมินจะตรวจเร็วๆ นี้"));
+                      setReportOpen(false);
+                    }
+                  }}>{tx("ส่งรายงาน")}</button>
+              </div>
             )}
           </div>
         </aside>

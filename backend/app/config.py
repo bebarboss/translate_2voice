@@ -141,6 +141,7 @@ class Settings:
     r2_bucket: str = _env("R2_BUCKET")
     r2_endpoint: str = _env("R2_ENDPOINT")
     r2_purge_local: bool = _bool("R2_PURGE_LOCAL", d.R2_PURGE_LOCAL)
+    free_retention_days: int = d.FREE_RETENTION_DAYS
 
     # ----- จาก defaults.py / audio_constants.py -----
     backup_hours: int = d.BACKUP_HOURS
@@ -229,6 +230,7 @@ class Settings:
     voice_min_sim: float = audio.VOICE_MIN_SIM
     voice_max_pitch_diff: float = audio.VOICE_MAX_PITCH_DIFF
     voice_split_pitch: float = audio.VOICE_SPLIT_PITCH
+    voice_profile_min_sec: float = audio.VOICE_PROFILE_MIN_SEC
     diar_refine: bool = d.DIAR_REFINE
     diar_exclusive: bool = d.DIAR_EXCLUSIVE
     overlap_recover: bool = d.OVERLAP_RECOVER
@@ -237,6 +239,7 @@ class Settings:
     turn_split: bool = d.TURN_SPLIT
     turn_split_sim: float = d.TURN_SPLIT_SIM
     voice_max_input_min: int = d.VOICE_MAX_INPUT_MIN
+    second_denoise: bool = d.SECOND_DENOISE
     diar_merge_sim: float = d.DIAR_MERGE_SIM
     voice_drift: float = audio.VOICE_DRIFT
     voice_retries: int = audio.VOICE_RETRIES

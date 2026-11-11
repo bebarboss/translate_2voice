@@ -42,9 +42,9 @@ REMOTE_FIELDS = (
     "whisper_vad_threshold", "whisper_vad_min_speech_ms", "whisper_vad_min_silence_ms",
     "whisper_vad_speech_pad_ms", "whisper_fill_gap_sec",
     "ref_min_sec", "ref_max_sec", "ref_min_quality", "max_line_sec",
-    "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch",
+    "voice_match", "voice_min_sim", "voice_max_pitch_diff", "voice_split_pitch", "voice_profile_min_sec",
     "diar_refine", "diar_exclusive", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
-    "retranscribe_noisy", "auto_heal_asr",
+    "retranscribe_noisy", "auto_heal_asr", "second_denoise",
     "dub_check", "dub_check_min", "dub_check_retries",
 )
 
@@ -213,6 +213,9 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
     if unclear:
         from .transcribe import mark_unclear
         recheck["unclear_lines"] = mark_unclear(utterances, unclear)
+    if turns and utterances:
+        from .transcribe import flag_lyrics_suspects
+        recheck["lyrics_flags"] = flag_lyrics_suspects(utterances, words or [], turns)
     # ซ่อมท่อนพัง + ถอดช่วงน่าสงสัยใหม่ก่อนส่งไปแปล (รันบนเครื่องที่มี Whisper)
     if settings.transcript_gate and not settings.mock_pipeline and words:
         from . import repair as repair_mod

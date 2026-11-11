@@ -112,8 +112,19 @@ CREATE TABLE IF NOT EXISTS actor_moods (
 CREATE TABLE IF NOT EXISTS actor_payment (
   user_id TEXT PRIMARY KEY, payee_name TEXT NOT NULL, tax_id TEXT NOT NULL, address TEXT NOT NULL,
   bank TEXT NOT NULL, account_no TEXT NOT NULL, account_name TEXT NOT NULL, updated_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS voice_reports (
+  id TEXT PRIMARY KEY, voice_id TEXT NOT NULL, reporter_id TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open',
+  created_at REAL NOT NULL, resolved_at REAL, resolved_by TEXT NOT NULL DEFAULT '',
+  admin_note TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS voice_reports_voice ON voice_reports(voice_id, status);
+CREATE INDEX IF NOT EXISTS voice_reports_status ON voice_reports(status, created_at);
 """
 _ready = False
+
+# stolen = ขโมยเสียงคนอื่น → ซ่อนชั่วคราวระหว่างตรวจ
+# inappropriate = เนื้อหาไม่เหมาะสม, quality = คุณภาพเสียงแย่, other = อื่นๆ
+VOICE_REPORT_REASONS = ("stolen", "inappropriate", "quality", "other")
 
 
 def _init() -> None:
@@ -516,6 +527,77 @@ def review_voice(voice_id: str, approve: bool, note: str, by: str) -> dict:
         "user_id": row["user_id"],
         "newly_approved": bool(approve and prev != "approved"),
     }
+
+
+def report_voice(voice_id: str, reporter_id: str, reason: str, detail: str = "") -> dict:
+    """ผู้ใช้รายงานเสียงนักพากย์ — ถ้าเหตุผลเป็น stolen จะซ่อนเสียงชั่วคราวระหว่างตรวจ"""
+    import secrets
+    _init()
+    reason = (reason or "").strip()
+    if reason not in VOICE_REPORT_REASONS:
+        raise AccountError(400, "เลือกเหตุผลการรายงานไม่ถูกต้อง")
+    detail = (detail or "").strip()[:2000]
+    if reason == "other" and len(detail) < 5:
+        raise AccountError(400, "กรุณาอธิบายเหตุผลอย่างน้อย 5 ตัวอักษ")
+    info = voice_actors().get(voice_id)
+    if info is None:
+        raise AccountError(404, "รายงานได้เฉพาะเสียงนักพากย์")
+    rid = secrets.token_urlsafe(12)
+    now = time.time()
+    with _tx() as db:
+        db.execute(
+            "INSERT INTO voice_reports (id, voice_id, reporter_id, reason, detail, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'open', ?)",
+            (rid, voice_id, reporter_id or "", reason, detail, now),
+        )
+        if reason == "stolen":
+            # ซ่อนชั่วคราว: ตั้ง review = pending พร้อมโน้ต (แอดมินตรวจคิวรายงาน)
+            db.execute(
+                "UPDATE actor_voices SET review = 'pending', note = ?, reviewed_at = NULL, reviewed_by = NULL "
+                "WHERE voice_id = ? AND review = 'approved'",
+                (f"ซ่อนชั่วคราว: ถูกรายงานขโมยเสียง (report {rid})", voice_id),
+            )
+    invalidate_voice_cache()
+    log.info("voice report %s voice=%s reason=%s by=%s", rid, voice_id, reason, reporter_id)
+    return {"id": rid, "voice_id": voice_id, "reason": reason, "status": "open",
+            "hidden": reason == "stolen", "actor_id": info["user_id"]}
+
+
+def hidden_reported_voices() -> set[str]:
+    """เสียงที่ถูกรายงานขโมยแล้วยัง open — ซ่อนจากคลังสาธารณะ"""
+    _init()
+    return {r["voice_id"] for r in _read(
+        "SELECT DISTINCT voice_id FROM voice_reports WHERE reason = 'stolen' AND status = 'open'")}
+
+
+def list_voice_reports(*, open_only: bool = True) -> list[dict]:
+    _init()
+    q = "SELECT * FROM voice_reports"
+    if open_only:
+        q += " WHERE status = 'open'"
+    q += " ORDER BY created_at DESC LIMIT 200"
+    return [dict(r) for r in _read(q)]
+
+
+def resolve_voice_report(report_id: str, *, restore: bool, by: str, note: str = "") -> dict:
+    """แอดมินปิดรายงาน — restore=True คืนสถานะ approved ถ้าเคยซ่อนเพราะ stolen"""
+    _init()
+    with _tx() as db:
+        row = db.execute("SELECT * FROM voice_reports WHERE id = ?", (report_id,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบรายงานนี้")
+        db.execute(
+            "UPDATE voice_reports SET status = 'done', resolved_at = ?, resolved_by = ?, admin_note = ? WHERE id = ?",
+            (time.time(), by, (note or "").strip()[:500], report_id),
+        )
+        if restore and row["reason"] == "stolen":
+            db.execute(
+                "UPDATE actor_voices SET review = 'approved', note = '', reviewed_at = ?, reviewed_by = ? "
+                "WHERE voice_id = ?",
+                (time.time(), by, row["voice_id"]),
+            )
+    invalidate_voice_cache()
+    return {"id": report_id, "status": "done", "restored": bool(restore)}
 
 
 # ---------------------------------------------------------------- บันทึกการใช้เสียงและค่าตอบแทน

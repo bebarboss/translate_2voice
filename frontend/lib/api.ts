@@ -40,10 +40,14 @@ export interface Job {
   library?: boolean; // งานเก็บเสียงเข้าคลัง: แยกผู้พูดและถอดเสียงอย่างเดียว
   saved_voices?: Record<string, string>; // ตัวละคร → id เสียงในคลังที่บันทึกจากงานนี้
   timeline?: boolean; // งานไทม์ไลน์จากโปรแกรมตัดต่อ (ไม่มีวิดีโอ ผลลัพธ์ส่งออกเป็น XML + เสียงแยกแทร็ก)
+  watermark?: boolean; // แพ็กฟรี: มีลายน้ำ
   story?: StoryAnalysis | null; // ผลวิเคราะห์บททั้งเรื่องก่อนแปล
   project_id?: string | null;
   project_matches?: Record<string, ProjectMatch>; // ผู้พูด → ตัวละครของโปรเจกต์ที่จับคู่ด้วยลายเสียง
   error: string | null;
+  /** โหมดฟรี: วันหมดอายุไฟล์บน R2 */
+  expires_at?: string | null;
+  share_token?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -312,6 +316,8 @@ export interface Utterance {
   heard?: string;
   heard_score?: number | null;
   unclear?: boolean;
+  /** เหตุผลที่ AI ไม่มั่นใจ เช่น ฟังเสียงไม่ชัด / เนื้อเพลง / ชื่อเฉพาะ / บทยาวเกิน */
+  unclear_reason?: string;
   /** ตรวจหลังแปลแล้วควรให้คนดู: เหตุผล */
   check_note?: string;
   ref_reading: string;
@@ -450,6 +456,24 @@ export const api = {
     request<QualityLine[]>(`/admin/quality/lines?days=${days}&kind=${kind}&limit=${limit}`),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
   wallet: () => request<Wallet>("/billing/wallet"),
+  /** ประมาณเครดิตก่อนเริ่มงานจากความยาวคลิป (วินาที) */
+  quoteJob: (seconds: number) =>
+    request<{ seconds: number; credits: number; balance: number; remaining: number; enough: boolean }>(
+      "/billing/quote", json("POST", { seconds })),
+  /** ประมาณเครดิตจากลิงก์ (yt-dlp อ่านความยาว) */
+  quoteUrl: (url: string) =>
+    request<{ seconds: number; credits: number; balance: number; remaining: number; enough: boolean; title?: string }>(
+      "/billing/quote-url", json("POST", { url })),
+  /** ประมาณเครดิตพากย์ซ้ำ */
+  quoteRedub: (edit_seconds: number, clip_seconds: number, free_flagged_seconds = 0) =>
+    request<{ edit_seconds: number; credits: number; free: boolean; balance: number; remaining: number; enough: boolean }>(
+      "/billing/quote-redub", json("POST", { edit_seconds, clip_seconds, free_flagged_seconds })),
+  getShare: (token: string) => request<ShareInfo>(`/share/${encodeURIComponent(token)}`),
+  listVoiceReports: (openOnly = true) =>
+    request<VoiceReport[]>(`/admin/voice-reports?open_only=${openOnly ? "true" : "false"}`),
+  resolveVoiceReport: (id: string, restore = true, note = "") =>
+    request<{ id: string; status: string; restored: boolean }>(
+      `/admin/voice-reports/${encodeURIComponent(id)}/resolve`, json("POST", { restore, note })),
   subscribe: (planId: string) => request<PaymentOrder>("/billing/subscribe", json("POST", { plan_id: planId })),
   /** รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี */
   claimTrial: () => request<{ plan: Plan; subscription: Subscription | null; entitlements: Entitlements }>("/billing/trial", { method: "POST" }),
@@ -559,7 +583,12 @@ export const api = {
   lineQuality: (id: string) => request<Record<string, number | null>>(`/jobs/${id}/lines/quality`),
   retranslate: (id: string, body: { genre?: string; glossary?: string }) =>
     request<{ id: string }>(`/jobs/${id}/retranslate`, json("POST", body)),
-  synthesize: (id: string) => request<{ id: string }>(`/jobs/${id}/synthesize`, { method: "POST" }),
+  synthesize: (id: string, body?: { edit_seconds?: number; free_flagged_seconds?: number }) =>
+    request<{ id: string }>(`/jobs/${id}/synthesize`, body ? json("POST", body) : { method: "POST" }),
+  createShare: (id: string) =>
+    request<{ token: string; url: string; watermark: boolean; expires_at: string | null }>(
+      `/jobs/${id}/share`, { method: "POST" }),
+  revokeShare: (id: string) => request<void>(`/jobs/${id}/share`, { method: "DELETE" }),
   listStems: (id: string) => request<string[]>(`/jobs/${id}/stems`),
   jobVoices: (id: string) => request<SpeakerVoice[]>(`/jobs/${id}/voices`),
   setJobVoices: (id: string, choice: Record<string, string | null>) =>
@@ -567,6 +596,9 @@ export const api = {
 
   listVoices: () => request<LibraryVoice[]>("/voices"),
   getVoice: (id: string) => request<LibraryVoice>(`/voices/${id}`),
+  /** รายงานเสียงนักพากย์: stolen | inappropriate | quality | other */
+  reportVoice: (id: string, reason: "stolen" | "inappropriate" | "quality" | "other", detail = "") =>
+    request<{ id: string; hidden: boolean }>(`/voices/${id}/report`, json("POST", { reason, detail })),
 
   listProjects: () => request<Project[]>("/projects"),
   createProject: (body: ProjectInput) => request<Project>("/projects", json("POST", body)),
@@ -635,6 +667,29 @@ export type Backups = {
   backups: { name: string; bytes: number; created_at: number }[];
 };
 
+export type ShareInfo = {
+  token: string;
+  filename: string;
+  duration: number | null;
+  target_lang: TargetLang | string;
+  watermark: boolean;
+  expires_at: string | null;
+  video_url: string;
+};
+
+export type VoiceReport = {
+  id: string;
+  voice_id: string;
+  reporter_id: string;
+  reason: string;
+  detail: string;
+  status: string;
+  created_at: number;
+  resolved_at?: number | null;
+  resolved_by?: string;
+  admin_note?: string;
+};
+
 export const fileUrl = {
   myData: () => `${BASE}/auth/export`,
   slip: (id: string) => `${BASE}/billing/topups/${id}/slip`,
@@ -645,6 +700,7 @@ export const fileUrl = {
   result: (id: string, subs = false) => `${BASE}/jobs/${id}/result${subs ? "?subs=true" : ""}`,
   export: (id: string, subs = false) => `${BASE}/jobs/${id}/export${subs ? "?subs=true" : ""}`,
   subtitles: (id: string) => `${BASE}/jobs/${id}/subtitles`,
+  shareVideo: (token: string) => `${BASE}/share/${encodeURIComponent(token)}/video`,
   actorUsageCsv: (month: string) => `${BASE}/admin/actor-usage-csv?month=${month}`,
   actorWhtCsv: (month: string) => `${BASE}/admin/actor-wht-csv?month=${month}`,
   qualityCsv: (days: number, kind = "") => `${BASE}/admin/quality/lines.csv?days=${days}&kind=${kind}`,

@@ -68,9 +68,12 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           {changed && <span className="badge awaiting_review">{tx("แก้แล้ว")}</span>}
           {tooLong && <span className="badge warn">{tx("ยาวเกินเวลา")}</span>}
           {u.unclear && (
-            <span className="badge warn" title={tx("เพลงดังทับเสียงพูด ถอดเสียงสองรอบแล้วยังไม่มั่นใจ ฟังต้นฉบับแล้วแก้ข้อความถ้าผิด")}>{tx("ถอดไม่ชัด ควรฟัง")}</span>
+            <span className="badge warn" title={u.unclear_reason || tx("เพลงดังทับเสียงพูด ถอดเสียงสองรอบแล้วยังไม่มั่นใจ ฟังต้นฉบับแล้วแก้ข้อความถ้าผิด")}>{tx("ถอดไม่ชัด ควรฟัง")}</span>
           )}
           {!!u.check_note && !changed && <span className="badge warn" title={u.check_note}>{tx("ควรตรวจ")}</span>}
+          {!!u.unclear_reason && !u.unclear && !u.check_note && (
+            <span className="badge warn" title={u.unclear_reason}>{tx("ควรตรวจ")}</span>
+          )}
           {!!u.heard && !changed && (
             <span className="badge warn" title={tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })}>{tx("ควรฟัง")}</span>
           )}

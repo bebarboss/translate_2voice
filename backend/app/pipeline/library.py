@@ -28,8 +28,8 @@ log = logging.getLogger("dubbing.library")
 
 MIN_SEC = 3.0  # เสียงตัวอย่างสั้นกว่านี้ F5-TTS เก็บน้ำเสียงได้ไม่ดี
 MAX_WINDOWS = 400  # ประเมินไม่เกินเท่านี้ท่อน (ไฟล์ยาวมากเลือกท่อนกระจายทั้งไฟล์)
-SAME_VOICE = 0.5  # ลายเสียงคล้ายเสียงหลักอย่างน้อยเท่านี้ถือเป็นคนเดียวกัน
-MALE_BELOW_HZ = 165.0  # เส้นแบ่งคร่าว ๆ ระหว่างเสียงผู้ชายกับผู้หญิง
+SAME_VOICE = 0.75  # ลายนิ้วมือเสียงคล้ายเสียงหลักประมาณ 75% ขึ้นไปถือเป็นคนเดียวกัน
+MALE_BELOW_HZ = 165.0  # fallback เมื่อยังไม่มีลายนิ้วมือเทียบเพศจากคลัง
 
 _embedder = None
 _embed_lock = threading.Lock()
@@ -65,7 +65,34 @@ def _hz(st: float) -> Optional[float]:
     return round(float(2 ** (st / 12)), 1) if np.isfinite(st) else None
 
 
-def guess_gender(pitch_hz: Optional[float]) -> str:
+def guess_gender(pitch_hz: Optional[float] = None, emb: Optional[np.ndarray] = None,
+                 store: Optional[VoiceStore] = None) -> str:
+    """เดาเพศจากลายนิ้วมือเสียงก่อน (เทียบคลังที่มีเพศแล้ว) ใช้ pitch เป็นทางเลือกสุดท้าย"""
+    if emb is not None and store is not None:
+        scored: list[tuple[float, str]] = []
+        for v in store.all():
+            if v.gender not in ("male", "female"):
+                continue
+            other = store.embedding(v.id)
+            if other is None:
+                continue
+            a = np.asarray(emb, dtype=np.float32).reshape(-1)
+            b = np.asarray(other, dtype=np.float32).reshape(-1)
+            if a.shape != b.shape:
+                continue
+            na, nb = float(np.linalg.norm(a)), float(np.linalg.norm(b))
+            if na <= 0 or nb <= 0:
+                continue
+            sim = float((a / na) @ (b / nb))
+            if sim >= SAME_VOICE * 0.85:  # ใกล้พอถึงจะเชื่อเพศจากคลัง
+                scored.append((sim, v.gender))
+        if scored:
+            scored.sort(reverse=True)
+            # โหวตเพศจากเสียงใกล้สุด 3 อัน
+            votes = {"male": 0.0, "female": 0.0}
+            for sim, g in scored[:3]:
+                votes[g] += sim
+            return max(votes, key=votes.get) if max(votes.values()) > 0 else ""
     if not pitch_hz:
         return ""
     return "male" if pitch_hz < MALE_BELOW_HZ else "female"
@@ -273,7 +300,8 @@ def prepare(store: VoiceStore, voice_id: str, mood: Optional[str] = None) -> Non
             v = store.get(voice_id)
             if v is None:
                 return
-            update(**done, pitch_hz=r["pitch_hz"], gender=v.gender or guess_gender(r["pitch_hz"]))
+            update(**done, pitch_hz=r["pitch_hz"],
+                   gender=v.gender or guess_gender(r["pitch_hz"], emb=r.get("emb"), store=store))
         log.info("voice %s%s ready: %.1fs pitch=%s quality=%s text=%r", voice_id, f" ({mood})" if mood else "",
                  len(wav) / rsr, r["pitch_hz"], r["quality"], r["text"])
     except Exception as exc:  # noqa: BLE001

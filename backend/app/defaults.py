@@ -75,13 +75,14 @@ AI_SPEAK_LATIN = True
 # ---------- ผู้พูด / overlap / dub check ----------
 DIAR_REFINE = True
 DIAR_EXCLUSIVE = True
-DIAR_MERGE_SIM = 0.65
+DIAR_MERGE_SIM = 0.75  # รวมกลุ่มผู้พูดเมื่อลายนิ้วมือเหมือนกันประมาณ 75% ขึ้นไป
 OVERLAP_RECOVER = True
 RETRANSCRIBE_NOISY = True
 MIN_COVERAGE_SYNTHESIZE = 0.70
 TURN_SPLIT = True
 TURN_SPLIT_SIM = 0.4
 VOICE_MAX_INPUT_MIN = 60
+SECOND_DENOISE = False  # ทดลองปิด denoise รอบสองบนงานพากย์ (คลังยังเลือก denoise ได้ทีละเสียง)
 DUB_CHECK = True
 DUB_CHECK_MIN = 0.6
 DUB_CHECK_RETRIES = 2
@@ -100,3 +101,5 @@ SLIP_MAX_AGE_HOURS = 72
 
 # ---------- R2 (เปิด/ปิดและชื่อ bucket ตั้งใน .env; พฤติกรรมเริ่มต้น) ----------
 R2_PURGE_LOCAL = False
+# ไฟล์ผู้ใช้โหมดฟรี (watermark) เก็บใน prefix free/ แล้วตั้งกฎ lifecycle R2 ลบอัตโนมัติ
+FREE_RETENTION_DAYS = 7
