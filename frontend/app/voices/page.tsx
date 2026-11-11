@@ -147,7 +147,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
             onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
             onDragLeave={() => setDrag(false)}
             onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files[0]); }}>
-            <span className="icon"><UploadIcon color="#FF8A4C" /></span>
+            <span className="icon"><UploadIcon size={26} /></span>
             {file ? (
               <>
                 <span style={{ fontSize: 16, fontWeight: 500, wordBreak: "break-all" }}>{file.name}</span>
@@ -156,7 +156,7 @@ function UploadCard({ onUploaded, known }: { onUploaded: () => void; known: stri
             ) : (
               <>
                 <span style={{ fontSize: 17, fontWeight: 500 }}>{tx("ลากคลิปเสียงภาษาไทยมาวาง")}</span>
-                <span className="muted">{tx("หรือ")} <span style={{ color: "var(--accent)", textDecoration: "underline" }}>{tx("เลือกไฟล์")}</span></span>
+                <span className="muted">{tx("หรือ")} <span className="u">{tx("เลือกไฟล์")}</span></span>
                 <span className="dim">
                   {multi
                     ? tx("คลิปที่มีหลายคนพูด เช่น ละคร รายการ · ระบบแยกเสียงของแต่ละคนให้")
@@ -343,7 +343,7 @@ export default function VoicesPage() {
   return (
     <main className="page" style={{ maxWidth: 1080 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 600 }}>{tx("คลังเสียง")}</h1>
+        <h1 style={{ margin: 0, fontSize: 30, fontWeight: 700 }}>{tx("คลังเสียง")}</h1>
         <p className="muted" style={{ margin: 0 }}>
           {tx("เก็บเสียงพากย์ภาษาไทยไว้ใช้ซ้ำ แล้วเลือกให้ตัวละครแต่ละตัวในหน้าตรวจบท แทนการเลียนเสียงนักแสดงต้นฉบับ")}
         </p>
@@ -366,9 +366,9 @@ export default function VoicesPage() {
         </h2>
         {known.length > 0 && (
           <div className="chips" role="group" aria-label={tx("กรองตามหมวดหมู่")}>
-            <button type="button" className="chip" aria-pressed={!filter} onClick={() => setFilter("")}>{tx("ทั้งหมด")}</button>
+            <button type="button" className="chip filter" aria-pressed={!filter} onClick={() => setFilter("")}>{tx("ทั้งหมด")}</button>
             {known.map((c) => (
-              <button key={c} type="button" className="chip" aria-pressed={filter === c} onClick={() => setFilter(c)}>{c}</button>
+              <button key={c} type="button" className="chip filter" aria-pressed={filter === c} onClick={() => setFilter(c)}>{c}</button>
             ))}
           </div>
         )}

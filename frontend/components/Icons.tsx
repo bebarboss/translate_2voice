@@ -91,3 +91,17 @@ export const FolderIcon = ({ size = 18, color = "currentColor" }: P) =>
 
 export const FlagIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M4 21V4" /><path d="M4 4h10l-1.5 4L14 12H4" /></>);
+
+export const HomeIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" />);
+
+export const VideoIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M10 9.5l5 2.5-5 2.5z" /></>);
+
+export const TimelineIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M3 6h18" /><path d="M3 12h12" /><path d="M3 18h7" /><circle cx="18" cy="17" r="3" /></>);
+
+export const BoltIcon = ({ size = 14, color = "currentColor" }: P) =>
+  svg(size, color, <path d="M13 2L4 14h7l-1 8 9-12h-7z" />);
+
+export const ChevronDown = ({ size = 14, color = "currentColor" }: P) => svg(size, color, <path d="M6 9l6 6 6-6" />);

@@ -163,7 +163,7 @@ export default function DashboardPage() {
           <span>{tx("เสร็จแล้ว")}{dubbed > 0 ? ` · ${tx("รวม {0}", { 0: fmtDuration(dubbed) })}` : ""}</span>
         </Link>
         {config?.billing && user && (
-          <Link href={user.admin ? "/account" : "/promotions"} className="card dash-stat">
+          <Link href={user.admin ? "/account" : "/promotions"} className="card dash-stat credit">
             <b>{user.admin ? tx("ไม่จำกัด") : credits == null ? "…" : fmtNum(credits)}</b>
             <span>{user.admin ? tx("บัญชีผู้ดูแล") : tx("เครดิตคงเหลือ")}</span>
           </Link>
