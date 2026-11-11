@@ -56,12 +56,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Timeline tests call ffmpeg and ffprobe. libsndfile is not installed:
-      # soundfile wheels bundle it. The step is capped so a stuck apt mirror
-      # cannot hold the job. The API image still installs ffmpeg itself.
+      # Timeline tests call ffmpeg and ffprobe. ubuntu-latest does not ship
+      # them, and apt-get update did not finish within 3 minutes (the Ubuntu
+      # archive did not resolve). These are pinned static 6.1.1 binaries.
+      # libsndfile is not installed; soundfile wheels bundle it. The API
+      # image still installs its own ffmpeg.
       - name: ffmpeg
         timeout-minutes: 3
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+        run: |
+          set -euo pipefail
+          base="https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1"
+          tmp="${RUNNER_TEMP}/ffmpeg-static"
+          mkdir -p "$tmp"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/ffmpeg" "$base/ffmpeg-linux-x64"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/ffprobe" "$base/ffprobe-linux-x64"
+          sudo install -m 755 "$tmp/ffmpeg" "$tmp/ffprobe" /usr/local/bin/
+          ffmpeg -version
+          ffprobe -version
 
       - name: Setup Python
         uses: actions/setup-python@v5
