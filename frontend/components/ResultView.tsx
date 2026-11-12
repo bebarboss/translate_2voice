@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import {
   api, checkFile, fileUrl, type Fonts, type Job, type RuntimeSettings, type SubtitleStyle, type Utterance,
 } from "@/lib/api";
@@ -44,6 +44,11 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [shareUrl, setShareUrl] = useState("");
   const [redubQuote, setRedubQuote] = useState<{ credits: number; free: boolean; enough: boolean } | null>(null);
+  const [videoAttempt, setVideoAttempt] = useState(0);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [poster, setPoster] = useState<string | undefined>();
+  const playToken = useRef(0);
+  const seenJob = useRef(job.id);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resume = useRef<{ time: number; playing: boolean } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -182,6 +187,29 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   };
 
   useEffect(() => {
+    if (seenJob.current === job.id) return;
+    seenJob.current = job.id;
+    playToken.current += 1;
+    setVideoFailed(false);
+    setVideoAttempt(0);
+  }, [job.id]);
+
+  // ภาพปกมีเฉพาะงานที่เป็นวิดีโอ — โหลดก่อน ถ้าไม่มีไม่ใส่ poster (404 ไม่ใช่ความผิดของคลิป)
+  useEffect(() => {
+    if (!job.input_path) {
+      setPoster(undefined);
+      return;
+    }
+    const url = fileUrl.thumb(job.id, "1");
+    const img = new Image();
+    let cancelled = false;
+    img.onload = () => { if (!cancelled) setPoster(url); };
+    img.onerror = () => { if (!cancelled) setPoster(undefined); };
+    img.src = url;
+    return () => { cancelled = true; };
+  }, [job.id, job.input_path]);
+
+  useEffect(() => {
     api.getSettings().then(setSettings).catch(() => {});
     api.fonts().then(setFonts).catch(() => setFonts({ thai: [], english: [] }));
     api.listStems(job.id).then(setStems).catch(() => {});
@@ -194,7 +222,20 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     if (to === audio) return;
     const v = videoRef.current;
     if (v) resume.current = { time: v.currentTime, playing: !v.paused };
+    playToken.current += 1;
+    setVideoFailed(false);
     setAudio(to);
+  };
+  const retryVideo = () => {
+    playToken.current += 1;
+    setVideoFailed(false);
+    setVideoAttempt((n) => n + 1);
+  };
+  const onVideoError = (e: SyntheticEvent<HTMLVideoElement>) => {
+    const v = e.currentTarget;
+    if (Number(v.dataset.token) !== playToken.current) return;
+    if (v.error?.code === MediaError.MEDIA_ERR_ABORTED) return;
+    setVideoFailed(true);
   };
   const onLoaded = () => {
     const v = videoRef.current;
@@ -222,7 +263,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
 
   const download = async (kind: "mp4" | "zip") => {
     setMessage(null);
-    const url = kind === "zip" ? fileUrl.export(job.id, burn) : fileUrl.result(job.id, burn);
+    const url = kind === "zip" ? fileUrl.export(job.id, burn) : fileUrl.result(job.id, burn, true);
     setBusy(kind);
     try {
       const res = await checkFile(url);
@@ -300,11 +341,21 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       <div className="split">
         <section className="main" aria-label={tx("วิดีโอที่พากย์แล้ว")}>
           <div className="video-box">
-            <video ref={videoRef} key={audio} src={audio === "dub" ? fileUrl.result(job.id) : fileUrl.source(job.id)}
-              controls preload="metadata" playsInline
-              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); onLoaded(); }}
-              onTimeUpdate={(e) => onTime(e.currentTarget)} onSeeked={(e) => setT(e.currentTarget.currentTime)}
-              onPlay={() => { if (stopAt.current === null) setPicked(null); }} />
+            {videoFailed ? (
+              <div className="video-error" role="alert">
+                <p>{tx("เล่นวิดีโอไม่ได้")}</p>
+                <button type="button" className="btn" onClick={retryVideo}>{tx("ลองอีกครั้ง")}</button>
+              </div>
+            ) : (
+              <video ref={videoRef} key={`${audio}-${videoAttempt}`} data-token={playToken.current}
+                src={audio === "dub" ? fileUrl.result(job.id) : fileUrl.source(job.id)}
+                poster={poster}
+                controls preload="metadata" playsInline
+                onError={onVideoError}
+                onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); onLoaded(); }}
+                onTimeUpdate={(e) => onTime(e.currentTarget)} onSeeked={(e) => setT(e.currentTarget.currentTime)}
+                onPlay={() => { if (stopAt.current === null) setPicked(null); }} />
+            )}
           </div>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div className="seg" role="group" aria-label={tx("เสียงที่เล่น")}>

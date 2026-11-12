@@ -23,8 +23,8 @@ def probe(path: Path) -> list[str]:
 def convert(path: Path) -> None:
     tmp = path.with_suffix(".h264.tmp.mp4")
     proc = subprocess.run(["ffmpeg", "-y", "-i", str(path), "-map", "0:v:0", "-map", "0:a?",
-                           "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-                           "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
+                           "-c:v", "libx264", "-profile:v", "main", "-preset", "veryfast", "-crf", "20",
+                           "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
                           capture_output=True, text=True)
     if proc.returncode != 0:
         tmp.unlink(missing_ok=True)

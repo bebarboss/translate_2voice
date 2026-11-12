@@ -17,6 +17,17 @@ def run(cmd: list, cwd=None) -> str:
     return proc.stdout
 
 
+def h264_video_args(crf: str = "20") -> list[str]:
+    """H.264 Main + yuv420p ที่ iOS Safari และ Android Chrome ถอดได้
+
+    ไม่ปัก -level: libx264 เลือกเองตามขนาดภาพ (4K ต้องระดับ 5.x ถ้าปัก 4.0 ไฟล์จะเล่นไม่ได้)
+    """
+    return [
+        "-c:v", "libx264", "-profile:v", "main", "-preset", "veryfast",
+        "-crf", crf, "-pix_fmt", "yuv420p",
+    ]
+
+
 def probe_duration(path: Path) -> float:
     out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                "-of", "default=nw=1:nk=1", path])
@@ -177,7 +188,7 @@ def crop_media(src: Path, start: float, end: float, out: Path) -> Path:
                  "-vn", "-ac", "2", "-ar", 44100, "-c:a", "pcm_s16le" if ext == ".wav" else "aac", out])
         else:
             run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-t", t,
-                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 *h264_video_args("18"),
                  "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
     return out
 

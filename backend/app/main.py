@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import fastapi_docs_kwargs, settings
+from .media_file import media_file_response
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineAdd, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
@@ -237,12 +238,12 @@ def ensure_job_file(job_id: str, path: Path) -> Path:
         return path
 
 
-def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None) -> FileResponse:
+def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None,
+                inline: bool = False) -> FileResponse:
+    """inline=True เมื่อเบราว์เซอร์ต้องเล่นใน <video>/<audio> ไม่ใช่ดาวน์โหลด"""
     if job_id:
         path = ensure_job_file(job_id, path)
-    if not path.exists():
-        raise HTTPException(404, "ยังไม่มีไฟล์นี้ งานอาจยังไม่เสร็จ")
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return media_file_response(path, media_type, filename, inline=inline)
 
 
 async def save_upload(file: UploadFile, dest: Path, owner_dir: Path) -> None:
@@ -2323,15 +2324,21 @@ def get_share_video(token: str):
     job = store.by_share_token(token)
     if job is None:
         raise HTTPException(404, "ไม่พบลิงก์นี้ หรือหมดอายุแล้ว")
-    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"), job_id=job.id)
+    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job.id, inline=True)
 
 
 # ---------------------------------------------------------------- ไฟล์
 @app.get("/jobs/{job_id}/result", dependencies=[Depends(require_key)])
-def get_result(job_id: str, subs: bool = False):
-    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ"""
+def get_result(job_id: str, subs: bool = False, download: bool = False):
+    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ
+
+    เล่นใน <video> ส่งแบบ inline (มือถือไม่เล่นไฟล์ attachment)
+    ปุ่มดาวน์โหลดส่ง download=1 เพื่อให้เบราว์เซอร์บันทึกไฟล์
+    """
     job = get_job_or_404(job_id)
-    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"), job_id=job_id)
+    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job_id, inline=not download)
 
 
 @app.get("/jobs/{job_id}/export", dependencies=[Depends(require_key)])
@@ -2383,7 +2390,7 @@ def get_source(job_id: str):
         raise HTTPException(404, "ยังดาวน์โหลดคลิปไม่เสร็จ")
     path = Path(job.input_path)
     media_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
-    return file_or_404(path, media_type, job.filename, job_id=job_id)
+    return file_or_404(path, media_type, job.filename, job_id=job_id, inline=True)
 
 
 @app.get("/jobs/{job_id}/subtitles", dependencies=[Depends(require_key)])

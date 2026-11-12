@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ..config import settings
 from ..schemas import SubtitleStyle, Utterance
-from .audio import run
+from .audio import h264_video_args, run
 from .pauses import strip_marks
 
 THAI_CHAR = 0x0E01  # ก
@@ -102,8 +102,8 @@ def burn(video: Path, utts: list[Utterance], style: SubtitleStyle, out_mp4: Path
     tmp = out_mp4.with_suffix(".tmp.mp4")
     # รันในโฟลเดอร์งาน จะได้ไม่ต้อง escape path ของ Windows ในตัวกรอง ass
     proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(video), "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
-         "-crf", "20", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
+        ["ffmpeg", "-y", "-i", str(video), "-vf", vf, *h264_video_args(),
+         "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
         capture_output=True, text=True, cwd=work)
     if proc.returncode != 0:
         raise RuntimeError(f"ฝังซับไม่สำเร็จ: {proc.stderr[-1200:]}")
