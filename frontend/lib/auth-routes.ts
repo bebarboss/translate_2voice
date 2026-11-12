@@ -62,13 +62,22 @@ export type Gate =
   | { action: "next" }
   | { action: "redirect"; location: string };
 
-/** ตัดสินใจก่อนเรนเดอร์: ไม่มีคุกกี้ → /login?next= , ไม่ใช่ผู้ดูแลที่ /admin → /dashboard */
+/**
+ * ตัดสินใจก่อนเรนเดอร์.
+ * ไม่มีคุกกี้ที่ `/` → `/welcome` (ผู้เยี่ยมชมและบอทที่ไม่มี session เหมือนกัน)
+ * หน้าแอปอื่นที่ไม่มีคุกกี้ → `/login?next=`
+ * คุกกี้ถูกปฏิเสธหรือไม่ใช่ผู้ดูแลที่ `/admin` → `/login?next=` หรือ `/dashboard`
+ */
 export function authGate(
   pathname: string,
   search: string,
   opts: { authOn: boolean; hasSession: boolean; admin?: AdminState },
 ): Gate {
   if (!opts.authOn || !isProtectedPath(pathname)) return { action: "next" };
+  // `/` เป็นสตูดิโอสำหรับคนที่ล็อกอินแล้ว แต่คนที่ยังไม่มี session (รวม Googlebot) ต้องเห็นแลนดิ้ง
+  if (!opts.hasSession && pathname === "/") {
+    return { action: "redirect", location: "/welcome" };
+  }
   if (!opts.hasSession || (isAdminPath(pathname) && opts.admin === "anon")) {
     return { action: "redirect", location: signInPath(pathname, search) };
   }
