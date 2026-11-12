@@ -48,7 +48,7 @@ _DEFAULT_BILLING_PLANS: list[dict[str, Any]] = [
         "max_clip_minutes": 2, "voices": "standard", "timeline": False, "watermark": True,
         "free_once": True,
         "features": [
-            "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี",
+            "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี Google",
             "คลิปยาวสุด 2 นาที",
             "เสียง Standard (ที่แอดมินเพิ่ม)",
             "ดาวน์โหลดมีลายน้ำ",
@@ -118,6 +118,8 @@ class Settings:
     # เปิดเฉพาะเครื่องพัฒนา: API_DOCS_ENABLED=1
     api_docs_enabled: bool = _bool("API_DOCS_ENABLED", False)
     google_client_id: str = _env("GOOGLE_CLIENT_ID")
+    # เครื่องเทศของแฮชการรับแพ็กทดลอง (ไม่เก็บในฐานข้อมูล) ตั้งครั้งเดียว อย่าหมุนเวียน
+    trial_claim_pepper: str = _env("TRIAL_CLAIM_PEPPER")
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
     payment_provider: str = _env("PAYMENT_PROVIDER").lower()
     payee_name: str = _env("PAYEE_NAME")

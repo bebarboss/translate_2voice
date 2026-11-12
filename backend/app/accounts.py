@@ -3,8 +3,10 @@ DB_BACKEND=postgres เก็บใน schema studio บน Postgres (pgstore.py
 ไม่งั้นเก็บใน data/accounts.db (SQLite)
 
 AUTH_ENABLED=1 เปิดระบบล็อกอิน (ทุกคำขอต้องล็อกอิน เห็นเฉพาะงานของตัวเอง) สมัครและเข้าสู่ระบบด้วยบัญชี Google
-(GOOGLE_CLIENT_ID) เท่านั้น ไม่มีรหัสผ่าน
+(GOOGLE_CLIENT_ID) เท่านั้น ไม่มีรหัสผ่าน จับคู่ด้วย Google sub ก่อน แล้วจึงอีเมล
 BILLING_ENABLED=1 เปิดเครดิตและแพ็กเกจ (ตัดเครดิตเมื่อเริ่มวิเคราะห์งาน) ต้องเปิดคู่กับ AUTH_ENABLED
+ล็อกอินให้แพ็กทดลองอัตโนมัติครั้งเดียวต่อตัวตน Google และไม่ทับแพ็กเสียเงินที่ยังไม่หมดอายุ
+แม้ปิดบัญชีแล้วสมัครอีเมลเดิมหรือเปลี่ยนอีเมลก็ไม่ได้ซ้ำ หลังปิดบัญชีไม่เก็บอีเมลหรือ sub ดิบ เหลือแค่ HMAC ใน trial_claims
 ผู้ดูแลระบบ (ADMIN_EMAILS) พากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต
 PAYMENT_PROVIDER=slip ให้ผู้ใช้โอนตามยอดแล้วแนบสลิป Typhoon OCR อ่านยอด (slip_ocr.py) ตรงจึงเติมให้
 ไม่ตรงหรืออ่านไม่ได้เข้าคิวผู้ดูแล  PAYMENT_PROVIDER=mock เติมทันทีสำหรับทดสอบ
@@ -18,6 +20,7 @@ PAYMENT_PROVIDER=stripe เปิด Stripe Checkout (stripe_pay.py) แล้�
 ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน กันตัดซ้ำ
 """
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -128,14 +131,17 @@ def _feature_plan(plan_id: Optional[str]) -> Optional[Plan]:
 
 
 def trial_claimed(uid: str) -> bool:
-    """เคยรับแพ็กทดลองแล้วหรือยัง (ledger kind=trial หรือเคยเป็น trial)"""
+    """เคยรับแพ็กทดลองแล้วหรือยัง (ledger / แพ็ก trial / แฮชตัวตนที่อยู่ต่อหลังปิดบัญชี)"""
     rows = _read(
         "SELECT 1 AS ok FROM ledger WHERE user_id = ? AND (kind = 'trial' OR (kind IN ('subscribe','adjust') AND ref = 'trial')) LIMIT 1",
         uid)
     if rows:
         return True
     rows = _read("SELECT 1 AS ok FROM subscriptions WHERE user_id = ? AND plan_id = 'trial' LIMIT 1", uid)
-    return bool(rows)
+    if rows:
+        return True
+    found = _read("SELECT email, google_sub FROM users WHERE id = ?", uid)
+    return bool(found) and _trial_identity_claimed_read(found[0])
 
 
 def entitlements(uid: Optional[str]) -> dict:
@@ -162,6 +168,8 @@ def entitlements(uid: Optional[str]) -> dict:
         claimed = bool(db.execute(
             "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
             (uid,)).fetchone())
+        if not claimed:
+            claimed = _trial_identity_claimed(db, u)
     if sub is None:
         return {**base, "trial_available": not claimed}
     fp = _feature_plan(sub["plan_id"]) or Plan(
@@ -231,7 +239,7 @@ _conn: Optional[sqlite3.Connection] = None
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL, pw_hash TEXT NOT NULL,
-  balance INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL);
+  balance INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, google_sub TEXT);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -250,13 +258,35 @@ CREATE TABLE IF NOT EXISTS cards (
   last4 TEXT NOT NULL, exp_month INTEGER NOT NULL, exp_year INTEGER NOT NULL, fingerprint TEXT NOT NULL,
   created_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS cards_user ON cards(user_id);
+CREATE TABLE IF NOT EXISTS trial_claims (
+  id_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at REAL NOT NULL);
 """
+
+
+_trial_schema_ready = False
+
+
+def _ensure_trial_identity_schema(db) -> None:
+    """ฐาน Postgres ที่ init ไปแล้วไม่ได้รันไฟล์ init ซ้ำ — ใส่คอลัมน์และตารางแบบ idempotent ครั้งแรกที่ใช้"""
+    global _trial_schema_ready
+    if _trial_schema_ready:
+        return
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
+    if "google_sub" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub ON users(google_sub) "
+               "WHERE google_sub IS NOT NULL")
+    db.execute("CREATE TABLE IF NOT EXISTS trial_claims ("
+               "id_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL)")
+    _trial_schema_ready = True
 
 
 def _db():
     if using_postgres():
         from . import pgstore
-        return pgstore.connect()
+        db = pgstore.connect()
+        _ensure_trial_identity_schema(db)
+        return db
     global _conn
     if _conn is None:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -274,7 +304,8 @@ def _migrate(db: sqlite3.Connection) -> None:
     """ฐานข้อมูลรุ่นก่อนเก็บยอดเป็นเงินบาท (users.balance): แปลงเป็นเครดิตเติมตามราคาเครดิต"""
     from .pgstore import is_pg
     if is_pg(db):
-        # schema studio สร้างจาก init/migration — ที่นี่เพิ่มเฉพาะดัชนีแพ็กทดลองครั้งเดียว
+        # schema studio สร้างจาก init/migration — ที่นี่เพิ่มดัชนีแพ็กทดลองและแฮชตัวตน
+        _ensure_trial_identity_schema(db)
         _ensure_trial_once_index(db)
         return
     cols = lambda t: {r["name"] for r in db.execute(f"PRAGMA table_info({t})")}
@@ -326,6 +357,13 @@ def _migrate(db: sqlite3.Connection) -> None:
         "created_at REAL NOT NULL, resolved_at REAL)"
     )
     db.execute("CREATE INDEX IF NOT EXISTS feedback_status_created ON feedback(status, created_at)")
+    # Google sub ผูกบัญชีที่ยังเปิดอยู่ และแฮชการรับแพ็กทดลองที่อยู่ต่อหลังปิดบัญชี
+    if "google_sub" not in cols("users"):
+        db.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_google_sub ON users(google_sub) "
+               "WHERE google_sub IS NOT NULL")
+    db.execute("CREATE TABLE IF NOT EXISTS trial_claims ("
+               "id_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at REAL NOT NULL)")
     _ensure_trial_once_index(db)
 
 
@@ -408,6 +446,158 @@ GOOGLE_ISSUERS = ("accounts.google.com", "https://accounts.google.com")
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+# เกลือคงที่กันเอาแฮชไปใช้ข้ามระบบ ส่วนความลับคือ TRIAL_CLAIM_PEPPER (ไม่อยู่ในฐานข้อมูล)
+_TRIAL_HASH_SALT = "pakdee-trial-claim-v1"
+_pepper_warned = False
+
+
+def _trial_pepper() -> bytes:
+    """เครื่องเทศของแฮชตัวตน ตั้งครั้งเดียว อย่าหมุนเวียน ไม่งั้นแฮชเก่าจะไม่ตรง"""
+    global _pepper_warned
+    pepper = (settings.trial_claim_pepper or "").strip()
+    if pepper:
+        return pepper.encode()
+    if not _pepper_warned:
+        _pepper_warned = True
+        log.warning("ยังไม่ได้ตั้ง TRIAL_CLAIM_PEPPER แฮชแพ็กทดลองใช้ค่าสำรองในโปรเซส ตั้งค่านี้ในโปรดักชันแล้วอย่าเปลี่ยน")
+    fallback = (settings.google_client_id or "").strip() or "pakdee-trial-claim-pepper"
+    return fallback.encode()
+
+
+def _normalize_email(email: str) -> str:
+    """อีเมลตัวพิมพ์เล็ก และยุบจุดกับ +tag ของ Gmail ให้เป็นกล่องเดียวกัน"""
+    email = (email or "").strip().lower()
+    if not email or email.endswith("@deleted.invalid"):
+        return ""
+    local, sep, domain = email.partition("@")
+    if not sep or not local or not domain:
+        return ""
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.split("+", 1)[0].replace(".", "")
+        domain = "gmail.com"
+        if not local:
+            return ""
+    return f"{local}@{domain}"
+
+
+def _cell(row, key: str) -> str:
+    if row is None:
+        return ""
+    try:
+        keys = row.keys()
+    except AttributeError:
+        return ""
+    if key not in keys or row[key] is None:
+        return ""
+    return str(row[key])
+
+
+def _identity_hash(kind: str, value: str) -> Optional[str]:
+    """HMAC-SHA256 ของอีเมลที่ปรับรูปแล้ว หรือ Google sub ไม่มีข้อมูลดิบในผลลัพธ์"""
+    if kind == "email":
+        value = _normalize_email(value)
+    else:
+        value = (value or "").strip()
+    if not value:
+        return None
+    msg = f"{_TRIAL_HASH_SALT}|{kind}|{value}".encode()
+    return hmac.new(_trial_pepper(), msg, hashlib.sha256).hexdigest()
+
+
+def _trial_identity_pairs(email: str, sub: str) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for kind, value in (("email", email), ("sub", sub)):
+        digest = _identity_hash(kind, value)
+        if digest:
+            pairs.append((kind, digest))
+    return pairs
+
+
+def _trial_hash_list(user) -> list[str]:
+    return [digest for _, digest in _trial_identity_pairs(_cell(user, "email"), _cell(user, "google_sub"))]
+
+
+def _trial_identity_claimed(db, user) -> bool:
+    hashes = _trial_hash_list(user)
+    if not hashes:
+        return False
+    marks = ",".join("?" * len(hashes))
+    return db.execute(
+        f"SELECT 1 FROM trial_claims WHERE id_hash IN ({marks}) LIMIT 1",
+        tuple(hashes),
+    ).fetchone() is not None
+
+
+def _trial_identity_claimed_read(user) -> bool:
+    hashes = _trial_hash_list(user)
+    if not hashes:
+        return False
+    marks = ",".join("?" * len(hashes))
+    return bool(_read(f"SELECT 1 AS ok FROM trial_claims WHERE id_hash IN ({marks}) LIMIT 1", *hashes))
+
+
+def _record_trial_claim(db, user) -> None:
+    """จดแฮชอีเมลและ sub ตอนรับทดลองหรือตอนปิดบัญชี ไม่เก็บค่าดิบ"""
+    now = time.time()
+    for kind, digest in _trial_identity_pairs(_cell(user, "email"), _cell(user, "google_sub")):
+        db.execute(
+            "INSERT OR IGNORE INTO trial_claims (id_hash, kind, created_at) VALUES (?, ?, ?)",
+            (digest, kind, now),
+        )
+
+
+def _account_used_trial(db, uid: str) -> bool:
+    if db.execute(
+        "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
+        (uid,),
+    ).fetchone():
+        return True
+    return db.execute(
+        "SELECT 1 FROM subscriptions WHERE user_id = ? AND plan_id = 'trial' LIMIT 1",
+        (uid,),
+    ).fetchone() is not None
+
+
+def _upsert_google_user(db, email: str, name: str, sub: str):
+    """หาผู้ใช้จาก sub ก่อน แล้วจึงอีเมล บัญชีเก่ายังไม่มี sub จะได้ค่านี้ตอนล็อกอินครั้งถัดไป"""
+    row = db.execute("SELECT * FROM users WHERE google_sub = ?", (sub,)).fetchone()
+    if row is not None and row["deleted_at"]:
+        if _account_used_trial(db, row["id"]):
+            _record_trial_claim(db, row)
+        db.execute("UPDATE users SET google_sub = NULL WHERE id = ?", (row["id"],))
+        row = None
+    if row is None:
+        by_email = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        if by_email is not None and not by_email["deleted_at"]:
+            existing = _cell(by_email, "google_sub")
+            if existing and existing != sub:
+                raise AccountError(409, "อีเมลนี้ผูกกับบัญชี Google อื่นแล้ว")
+            if not existing:
+                db.execute("UPDATE users SET google_sub = ? WHERE id = ?", (sub, by_email["id"]))
+            row = by_email
+    elif row["email"] != email:
+        taken = db.execute(
+            "SELECT id FROM users WHERE email = ? AND id != ?",
+            (email, row["id"]),
+        ).fetchone()
+        if taken is None:
+            db.execute("UPDATE users SET email = ? WHERE id = ?", (email, row["id"]))
+        else:
+            log.warning("google login kept user %s; email belongs to user %s", row["id"], taken["id"])
+    if row is None:
+        uid = secrets.token_hex(8)
+        db.execute(
+            "INSERT INTO users (id, email, name, pw_hash, created_at, google_sub) VALUES (?, ?, ?, '', ?, ?)",
+            (uid, email, name, time.time(), sub),
+        )
+    else:
+        uid = row["id"]
+    fresh = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    if _account_used_trial(db, uid):
+        _record_trial_claim(db, fresh)
+    return fresh
 
 
 def credits_out(units: int) -> float:
@@ -505,27 +695,29 @@ def _verify_google(credential: str) -> dict:
 def google_login(credential: str) -> dict:
     """เข้าสู่ระบบด้วย Google ครั้งแรกสร้างบัญชีให้เลย (สมัครกับล็อกอินคือขั้นเดียวกัน)
     คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)
-    เมื่อเปิด billing: ให้แพ็กทดลองฟรีอัตโนมัติครั้งเดียว ถ้ายังไม่เคยรับและไม่มีแพ็กที่ยังไม่หมดอายุ
+    จับคู่ด้วย Google sub ก่อนอีเมล บัญชีเก่าได้ sub ตอนล็อกอินครั้งถัดไป
+    เมื่อเปิด billing: ให้แพ็กทดลองฟรีอัตโนมัติครั้งเดียวต่อตัวตน Google
+    ถ้ายังไม่เคยรับและไม่มีแพ็กที่ยังไม่หมดอายุ
     แพ็กเสียเงินที่ยังใช้งานอยู่จะไม่ถูกทับ และไม่เขียนแถวทดลอง"""
     info = _verify_google(credential)
     email = info["email"].strip().lower()
+    sub = str(info.get("sub") or "").strip()
+    if not sub:
+        raise AccountError(401, "ยืนยันบัญชี Google ไม่สำเร็จ ลองใหม่อีกครั้ง")
     token = secrets.token_urlsafe(32)
+    name = (info.get("name") or email.split("@")[0])[:80]
     with _tx() as db:
-        row = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-        if row is None:
-            uid = secrets.token_hex(8)
-            db.execute("INSERT INTO users (id, email, name, pw_hash, created_at) VALUES (?, ?, ?, '', ?)",
-                       (uid, email, (info.get("name") or email.split("@")[0])[:80], time.time()))
-            row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        row = _upsert_google_user(db, email, name, sub)
         db.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
         db.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                    (_token_hash(token), row["id"], time.time() + SESSION_DAYS * 86400))
     uid = row["id"]
+    _drop_session_cache(user_id=uid)
     if billing_enabled():
         try:
             claim_trial(uid)
         except AccountError as e:
-            # 409 = รับไปแล้ว หรือมีแพ็กที่ยังไม่หมดอายุ, 400 = แอดมิน, 404 = ไม่มีแพ็กทดลอง
+            # 409 = รับไปแล้ว ตัวตนนี้เคยรับ หรือมีแพ็กที่ยังไม่หมดอายุ, 400 = แอดมิน, 404 = ไม่มีแพ็กทดลอง
             # ไม่บล็อกการล็อกอิน
             if e.status not in (400, 404, 409):
                 log.warning("auto claim_trial for %s failed: %s", uid, e)
@@ -633,8 +825,9 @@ def export_data(uid: str) -> dict:
 
 def close_account(uid: str) -> float:
     """ปิดบัญชี: ลบข้อมูลส่วนตัว เซสชัน แพ็กเกจ และบัตร เครดิตที่เหลือถูกยกเลิก (ไม่คืนเป็นเงิน)
-    แถวผู้ใช้กับสมุดบัญชีและรายการชำระเงินยังเก็บไว้ตามกฎหมายบัญชีและภาษี แต่ไม่มีชื่อ อีเมล หรือเบอร์โทรแล้ว
-    ล็อกอินด้วย Google อีเมลเดิมอีกครั้งจะได้บัญชีใหม่ คืนเครดิตที่ยกเลิก"""
+    แถวผู้ใช้กับสมุดบัญชีและรายการชำระเงินยังเก็บไว้ตามกฎหมายบัญชีและภาษี แต่ไม่มีชื่อ อีเมล เบอร์โทร หรือ Google sub แล้ว
+    ถ้าเคยรับแพ็กทดลอง จะจดเฉพาะแฮชของอีเมลกับ sub ไว้กันรับซ้ำ แล้วลบค่าดิบ
+    ล็อกอินด้วย Google อีกครั้งจะได้บัญชีใหม่ แต่ไม่ได้แพ็กทดลองซ้ำ คืนเครดิตที่ยกเลิก"""
     with _tx() as db:
         u = db.execute("SELECT * FROM users WHERE id = ? AND deleted_at IS NULL", (uid,)).fetchone()
         if u is None:
@@ -642,13 +835,16 @@ def close_account(uid: str) -> float:
         if is_owner(u["email"]):
             raise AccountError(409, "บัญชีผู้ดูแลหลัก (ADMIN_EMAILS) ปิดไม่ได้ เอาอีเมลออกจาก ADMIN_EMAILS ก่อน")
         cards = db.execute("SELECT provider, ref FROM cards WHERE user_id = ?", (uid,)).fetchall()
+        if _account_used_trial(db, uid):
+            _record_trial_claim(db, u)
         if u["credits"]:
             _log(db, uid, "closed", credits=-u["credits"], note="ปิดบัญชี เครดิตที่เหลือถูกยกเลิก")
         for t in ("sessions", "subscriptions", "cards"):
             db.execute(f"DELETE FROM {t} WHERE user_id = ?", (uid,))
         db.execute("UPDATE users SET email = ?, name = 'บัญชีที่ปิดแล้ว', pw_hash = '', credits = 0, admin = 0, "
-                   "full_name = '', phone = '', account_type = '', company = '', use_case = '', deleted_at = ? "
-                   "WHERE id = ?", (f"closed-{uid}@deleted.invalid", time.time(), uid))
+                   "full_name = '', phone = '', account_type = '', company = '', use_case = '', "
+                   "google_sub = NULL, deleted_at = ? WHERE id = ?",
+                   (f"closed-{uid}@deleted.invalid", time.time(), uid))
     _drop_session_cache(user_id=uid)
     for c in cards:
         _detach_card(c["provider"], c["ref"])
@@ -771,11 +967,14 @@ def grant_plan(uid: str, plan_id: str, admin_email: str, *, force: bool = False)
     if p is None:
         raise AccountError(404, "ไม่พบแพ็กเกจนี้")
     with _tx() as db:
-        if _lock_user(db, uid) is None:
+        u = _lock_user(db, uid)
+        if u is None:
             raise AccountError(404, "ไม่พบผู้ใช้นี้")
-        if p.id == "trial" and not force and _trial_taken(db, uid):
+        if p.id == "trial" and not force and (_trial_taken(db, uid) or _trial_identity_claimed(db, u)):
             raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
         _activate(db, uid, p, "adjust", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิต ให้โดย {admin_email}")
+        if p.id == "trial":
+            _record_trial_claim(db, u)
     if not p.watermark:
         promote_owner_media(uid)
 
@@ -1208,7 +1407,7 @@ def buy_credits(uid: str, credits: int) -> dict:
 
 
 def claim_trial(uid: str) -> dict:
-    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี
+    """รับแพ็กทดลองฟรี ครั้งเดียวต่อตัวตน Google (อีเมลที่ปรับรูปแล้ว และ sub)
     ไม่ทับแพ็กที่ยังไม่หมดอายุและไม่ใช่ trial และไม่เขียนแถว ledger ในกรณีนั้น
     (แถว kind=trial จะกินโควต้าครั้งเดียว แล้วรับทดลองไม่ได้อีกหลังแพ็กเสียเงินหมดอายุ)"""
     p = plan("trial")
@@ -1216,9 +1415,10 @@ def claim_trial(uid: str) -> dict:
         raise AccountError(404, "ไม่มีแพ็กเกจทดลอง")
     try:
         with _tx() as db:
-            if _lock_user(db, uid) is None:
+            u = _lock_user(db, uid)
+            if u is None:
                 raise AccountError(404, "ไม่พบผู้ใช้นี้")
-            if _trial_taken(db, uid):
+            if _trial_taken(db, uid) or _trial_identity_claimed(db, u):
                 raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
             if _exempt(db, uid):
                 raise AccountError(400, "บัญชีผู้ดูแลไม่ต้องใช้แพ็กทดลอง")
@@ -1226,6 +1426,7 @@ def claim_trial(uid: str) -> dict:
             if active is not None and active["plan_id"] != "trial":
                 raise AccountError(409, "มีแพ็กเกจที่ยังไม่หมดอายุ จึงไม่ให้แพ็กทดลองทับ")
             _activate(db, uid, p, "trial", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิตฟรี")
+            _record_trial_claim(db, u)
             sub = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
     except AccountError:
         raise
