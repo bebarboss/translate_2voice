@@ -41,15 +41,38 @@ describe("authGate", () => {
       action: "redirect",
       location: "/login?next=%2Fdashboard",
     });
+    assert.deepEqual(authGate("/jobs", "?q=1", { authOn: true, hasSession: false }), {
+      action: "redirect",
+      location: "/login?next=%2Fjobs%3Fq%3D1",
+    });
     assert.deepEqual(authGate("/actor", "", { authOn: true, hasSession: false }), {
       action: "redirect",
       location: "/login?mode=signup&next=%2Factor",
     });
+    assert.deepEqual(authGate("/admin", "", { authOn: true, hasSession: false }), {
+      action: "redirect",
+      location: "/login?next=%2Fadmin",
+    });
+  });
+
+  it("sends anonymous visitors and crawlers from / to the public landing page", () => {
+    // ไม่มีคุกกี้ session คือทั้งผู้เยี่ยมชมและ Googlebot — ไม่ดู User-Agent
+    assert.deepEqual(authGate("/", "", { authOn: true, hasSession: false }), {
+      action: "redirect",
+      location: "/welcome",
+    });
+    assert.deepEqual(authGate("/", "?utm=google", { authOn: true, hasSession: false }), {
+      action: "redirect",
+      location: "/welcome",
+    });
   });
 
   it("lets signed-in users through and skips the gate when auth is off", () => {
+    assert.deepEqual(authGate("/", "", { authOn: true, hasSession: true }), { action: "next" });
+    assert.deepEqual(authGate("/", "?project=p1", { authOn: true, hasSession: true }), { action: "next" });
     assert.deepEqual(authGate("/jobs", "", { authOn: true, hasSession: true }), { action: "next" });
     assert.deepEqual(authGate("/dashboard", "", { authOn: false, hasSession: false }), { action: "next" });
+    assert.deepEqual(authGate("/", "", { authOn: false, hasSession: false }), { action: "next" });
   });
 
   it("does not send unknown or public routes to login", () => {
