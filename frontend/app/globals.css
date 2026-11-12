@@ -434,6 +434,18 @@ input[type="color"] { width: 44px; height: 36px; border: 1px solid var(--border-
 .table-wrap > a.row { transition: background .15s; }
 .table-wrap > a.row:hover { background: var(--surface-2); }
 table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 14px; }
+/* มุมมองรายการบนจอแคบ: ใบงานแทนตารางที่กว้างกว่าจอ (เดสก์ท็อปยังเป็นตาราง) */
+.job-list-cards { display: none; margin: 0; padding: 0; list-style: none; }
+.job-list-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); }
+.job-list-main { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.job-list-title { color: var(--text); font-size: 16px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.job-list-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.job-list-actions a { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; }
+.job-list-actions .btn { height: 44px; }
+@media (max-width: 900px) {
+  .jobs-table-wrap:has(table) { display: none; }
+  .job-list-cards { display: flex; flex-direction: column; gap: 10px; }
+}
 th { text-align: left; color: var(--dim); font-weight: 600; font-size: 12.5px; padding: 12px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 tbody tr { transition: background .12s; }
 tbody tr:hover { background: var(--surface-2); }

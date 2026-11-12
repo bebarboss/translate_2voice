@@ -26,6 +26,37 @@ function actionFor(job: Job): { href: string; label: string } {
   return { href: `/jobs/${job.id}`, label: tx("ดูรายละเอียด") };
 }
 
+/** ปุ่มจัดการของหนึ่งงาน ใช้ทั้งแถวในตารางและใบงานบนจอแคบ */
+function JobActions({ job, busy, onAct, className }: {
+  job: Job;
+  busy: boolean;
+  onAct: (id: string, fn: () => Promise<unknown>) => void;
+  className?: string;
+}) {
+  const a = actionFor(job);
+  return (
+    <div className={className ?? "row"} style={className ? undefined : { justifyContent: "flex-end", gap: 14 }}>
+      <Link href={a.href} aria-label={`${a.label} ${job.filename}`}>{a.label}</Link>
+      {(job.status === "failed" || job.status === "cancelled") && (
+        <button type="button" className="btn small" disabled={busy}
+          aria-label={`${tx("ลองใหม่")} ${job.filename}`}
+          onClick={() => onAct(job.id, () => api.retry(job.id))}>{tx("ลองใหม่")}</button>
+      )}
+      {isActive(job) ? (
+        <button type="button" className="btn small danger" disabled={busy}
+          aria-label={`${tx("ยกเลิก")} ${job.filename}`}
+          onClick={() => onAct(job.id, () => api.cancel(job.id))}>{tx("ยกเลิก")}</button>
+      ) : (
+        <button type="button" className="btn small danger" disabled={busy}
+          aria-label={`${tx("ลบ")} ${job.filename}`}
+          onClick={() => {
+            if (window.confirm(tx("ลบงาน {0} และไฟล์ทั้งหมด?", { 0: job.filename }))) onAct(job.id, () => api.deleteJob(job.id));
+          }}>{tx("ลบ")}</button>
+      )}
+    </div>
+  );
+}
+
 type View = "grid" | "list";
 const VIEW_KEY = "jobs-view";
 
@@ -111,7 +142,8 @@ export default function JobsPage() {
           ))}
         </div>
       ) : (
-      <div className="table-wrap">
+      <>
+      <div className="table-wrap jobs-table-wrap">
         {jobs === null ? (
           <div className="empty">{tx("กำลังโหลด...")}</div>
         ) : shown.length === 0 ? (
@@ -130,54 +162,57 @@ export default function JobsPage() {
               </tr>
             </thead>
             <tbody>
-              {shown.map((j) => {
-                const a = actionFor(j);
-                return (
-                  <tr key={j.id}>
-                    <td style={{ maxWidth: 320 }}>
-                      <Link href={`/jobs/${j.id}`} style={{ color: "var(--text)", textDecoration: "none", fontSize: 15 }}>{j.filename}</Link>
-                      {j.source_url && <div className="dim" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.source_url}</div>}
-                    </td>
-                    <td>{langName(j.detected_lang ?? j.source_lang)} → {tx(TARGET_LABEL[j.target_lang])}</td>
-                    <td className="mono">{fmtDuration(j.duration)}</td>
-                    <td>{j.speakers.length || "—"}</td>
-                    <td>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-                        <StatusBadge job={j} detail />
-                        {j.status === "running" && (
-                          <div className="progress" style={{ width: 120, height: 4 }}><div style={{ width: `${j.progress * 100}%` }} /></div>
-                        )}
-                        {j.status === "failed" && j.error && (
-                          <span className="dim" style={{ maxWidth: 260 }}>{j.error.slice(0, 120)}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="muted">{fmtWhen(j.created_at)}</td>
-                    <td>
-                      <div className="row" style={{ justifyContent: "flex-end", gap: 14 }}>
-                        <Link href={a.href}>{a.label}</Link>
-                        {(j.status === "failed" || j.status === "cancelled") && (
-                          <button type="button" className="btn small" disabled={busyId === j.id}
-                            onClick={() => act(j.id, () => api.retry(j.id))}>{tx("ลองใหม่")}</button>
-                        )}
-                        {isActive(j) ? (
-                          <button type="button" className="btn small danger" disabled={busyId === j.id}
-                            onClick={() => act(j.id, () => api.cancel(j.id))}>{tx("ยกเลิก")}</button>
-                        ) : (
-                          <button type="button" className="btn small danger" disabled={busyId === j.id}
-                            onClick={() => {
-                              if (window.confirm(tx("ลบงาน {0} และไฟล์ทั้งหมด?", { 0: j.filename }))) act(j.id, () => api.deleteJob(j.id));
-                            }}>{tx("ลบ")}</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              {shown.map((j) => (
+                <tr key={j.id}>
+                  <td style={{ maxWidth: 320 }}>
+                    <Link href={`/jobs/${j.id}`} style={{ color: "var(--text)", textDecoration: "none", fontSize: 15 }}>{j.filename}</Link>
+                    {j.source_url && <div className="dim" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{j.source_url}</div>}
+                  </td>
+                  <td>{langName(j.detected_lang ?? j.source_lang)} → {tx(TARGET_LABEL[j.target_lang])}</td>
+                  <td className="mono">{fmtDuration(j.duration)}</td>
+                  <td>{j.speakers.length || "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                      <StatusBadge job={j} detail />
+                      {j.status === "running" && (
+                        <div className="progress" style={{ width: 120, height: 4 }}><div style={{ width: `${j.progress * 100}%` }} /></div>
+                      )}
+                      {j.status === "failed" && j.error && (
+                        <span className="dim" style={{ maxWidth: 260 }}>{j.error.slice(0, 120)}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="muted">{fmtWhen(j.created_at)}</td>
+                  <td>
+                    <JobActions job={j} busy={busyId === j.id} onAct={act} />
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
       </div>
+      {jobs !== null && shown.length > 0 && (
+        <ul className="job-list-cards">
+          {shown.map((j) => (
+            <li key={j.id} className="job-list-card">
+              <div className="job-list-main">
+                <Link href={`/jobs/${j.id}`} className="job-list-title">{j.filename}</Link>
+                <span className="muted">{fmtWhen(j.created_at)}</span>
+                <StatusBadge job={j} detail />
+                {j.status === "running" && (
+                  <div className="progress" style={{ width: "100%", height: 4 }}><div style={{ width: `${j.progress * 100}%` }} /></div>
+                )}
+                {j.status === "failed" && j.error && (
+                  <span className="dim">{j.error.slice(0, 120)}</span>
+                )}
+              </div>
+              <JobActions job={j} busy={busyId === j.id} onAct={act} className="job-list-actions" />
+            </li>
+          ))}
+        </ul>
+      )}
+      </>
       )}
     </main>
   );
