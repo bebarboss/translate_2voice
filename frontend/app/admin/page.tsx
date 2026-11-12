@@ -6,6 +6,7 @@ import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
 import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine, type VoiceReport } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
+import { redirectToSignIn } from "@/lib/auth-routes";
 import { useAuth } from "@/lib/useAuth";
 
 const TYPE_LABEL: Record<AccountType, string> = { personal: "บุคคลทั่วไป", creator: "ครีเอเตอร์", business: "บริษัท / หน่วยงาน" };
@@ -427,7 +428,7 @@ function VoiceReportsSection() {
 export default function AdminPage() {
   const { config, user, loaded } = useAuth();
   useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/admin";
+    if (loaded && config?.auth && !user) redirectToSignIn();
   }, [loaded, config, user]);
 
   if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;

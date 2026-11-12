@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { FlagIcon } from "@/components/Icons";
 import { api, type FeedbackItem } from "@/lib/api";
 import { locale, tx } from "@/lib/i18n";
+import { redirectToSignIn } from "@/lib/auth-routes";
 import { useAuth } from "@/lib/useAuth";
 
 const CATEGORIES: { id: FeedbackItem["category"]; label: string }[] = [
@@ -30,7 +31,7 @@ export default function SupportPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/support";
+    if (loaded && config?.auth && !user) redirectToSignIn();
   }, [loaded, config, user]);
 
   const reload = () => api.myFeedback().then(setMine).catch(() => setMine([]));

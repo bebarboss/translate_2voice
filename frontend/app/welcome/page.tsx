@@ -7,6 +7,7 @@ import "@fontsource/ibm-plex-sans-thai/700.css";
 import { BrandLink, BRAND_NAME } from "@/components/Brand";
 import { MicIcon } from "@/components/Icons";
 import { useAuth } from "@/lib/useAuth";
+import { signInPath } from "@/lib/auth-routes";
 import { chooseLang, getLang, tx } from "@/lib/i18n";
 /** หน้าแรกก่อนเข้าสู่ระบบ: บอกว่าระบบทำอะไร แล้วพาไปสมัครหรือเข้าสู่ระบบ */
 
@@ -75,8 +76,10 @@ export default function WelcomePage() {
   }, []);
   const authOn = !!config?.auth;
   const signedIn = !!user;
-  const start = !authOn || signedIn ? next : `/login?mode=signup&next=${encodeURIComponent(next)}`;
-  const login = `/login?next=${encodeURIComponent(next)}`;
+  const start = !authOn || signedIn ? next : signInPath(next.startsWith("/") ? next : "/dashboard", "", { signup: true });
+  const login = signInPath(next.startsWith("/") ? next : "/dashboard");
+  // ปุ่มสมัครนักพากย์ต้องไปหน้าสมัครโดยตรง ถ้าชี้ไป /actor ผู้ที่ยังไม่ล็อกอินจะถูกเด้งแล้วกลับมาหน้านี้เงียบ ๆ
+  const actorHref = !authOn || signedIn ? "/actor" : signInPath("/actor");
 
   return (
     <div className="landing">
@@ -145,7 +148,7 @@ export default function WelcomePage() {
               {tx("สมัครส่งเสียงเข้าคลัง ได้ค่าตอบแทนเมื่อมีคนใช้เสียงของคุณพากย์ — นกแก้วพากย์ดีพร้อมต้อนรับ")}
             </p>
             <div className="lp-cta">
-              <Link href="/actor" className="lp-pill lp-pill-dark lp-pill-lg">
+              <Link href={actorHref} className="lp-pill lp-pill-dark lp-pill-lg">
                 <MicIcon size={18} color="#fff" /> {tx("สมัครเป็นนักพากย์")}
               </Link>
             </div>
