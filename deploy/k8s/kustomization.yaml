@@ -36,6 +36,7 @@ configMapGenerator:
       - 06_translation_memory.sql=../db/init/06_translation_memory.sql
       - 07_quality.sql=../db/init/07_quality.sql
       - 08_job_metrics.sql=../db/init/08_job_metrics.sql
+      - 09_trial_identity.sql=../db/init/09_trial_identity.sql
 
 images:
   - name: ghcr.io/bebarboss/pakdee-api

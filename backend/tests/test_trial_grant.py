@@ -28,8 +28,10 @@ def book(tmp_path, monkeypatch):
         accounts._conn = None
 
 
-def _google(book, email="a@b.c", name="Ann"):
-    book._verify_google = lambda _cred: {"email": email, "name": name, "email_verified": True}
+def _google(book, email="a@b.c", name="Ann", sub=None):
+    book._verify_google = lambda _cred: {
+        "email": email, "name": name, "email_verified": True, "sub": sub or f"sub-{email}",
+    }
 
 
 def _sub_row(book, uid="u1"):

@@ -285,7 +285,7 @@ def subscribe(body: Subscribe, user=Depends(require_user)):
 
 @router.post("/billing/trial", dependencies=[Depends(_need_billing)])
 def claim_trial(user=Depends(require_user)):
-    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี"""
+    """รับแพ็กทดลองฟรี ครั้งเดียวต่อตัวตน Google ไม่ทับแพ็กที่ยังไม่หมดอายุ"""
     try:
         return accounts.claim_trial(user["id"])
     except AccountError as e:

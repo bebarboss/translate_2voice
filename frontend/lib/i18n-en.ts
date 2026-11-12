@@ -122,7 +122,7 @@ export const EN: Record<string, string> = {
   "ทดลอง": "Trial",
   "เริ่มต้น": "Starter",
   "มือโปร": "Pro",
-  "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี": "2 free credits, once per account",
+  "ฟรี 2 เครดิต ครั้งเดียวต่อบัญชี Google": "2 free credits, once per Google account",
   "คลิปยาวสุด 2 นาที": "Clips up to 2 minutes",
   "เสียง Standard (ที่แอดมินเพิ่ม)": "Standard voices (added by admin)",
   "60 เครดิต / 30 วัน": "60 credits / 30 days",
