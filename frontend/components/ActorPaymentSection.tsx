@@ -4,6 +4,7 @@ import { useState } from "react";
 import { api, type ActorMe, type ActorPayment } from "@/lib/api";
 import { fmtBaht } from "@/lib/format";
 import { tx } from "@/lib/i18n";
+import { accountNoError, normalizePaymentDigits, taxIdError } from "@/lib/payment-digits";
 
 const EMPTY: ActorPayment = { payee_name: "", tax_id: "", address: "", bank: "", account_no: "", account_name: "" };
 
@@ -13,12 +14,31 @@ export default function ActorPaymentSection({ me, onSaved }: { me: ActorMe; onSa
   const [form, setForm] = useState<ActorPayment>(me.payment ? { ...me.payment, tax_id: "", account_no: "" } : EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [digitsError, setDigitsError] = useState({ tax_id: "", account_no: "" });
   const set = (k: keyof ActorPayment) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+  const setDigits = (k: "tax_id" | "account_no") => (e: { target: { value: string } }) => {
+    setForm({ ...form, [k]: e.target.value });
+    if (digitsError[k]) setDigitsError({ ...digitsError, [k]: "" });
+  };
+  const checkedDigits = (k: "tax_id" | "account_no", raw: string) => {
+    const value = normalizePaymentDigits(raw);
+    return { value, message: k === "tax_id" ? taxIdError(value) : accountNoError(value) };
+  };
+  const blurDigits = (k: "tax_id" | "account_no") => () => {
+    const { value, message } = checkedDigits(k, form[k]);
+    setForm({ ...form, [k]: value });
+    setDigitsError({ ...digitsError, [k]: message });
+  };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    const tax = checkedDigits("tax_id", form.tax_id);
+    const acc = checkedDigits("account_no", form.account_no);
+    setForm({ ...form, tax_id: tax.value, account_no: acc.value });
+    setDigitsError({ tax_id: tax.message, account_no: acc.message });
+    if (tax.message || acc.message) return;
     setBusy(true); setError("");
     try {
-      await api.actorSavePayment(form);
+      await api.actorSavePayment({ ...form, tax_id: tax.value, account_no: acc.value });
       setEdit(false);
       onSaved();
     } catch (err) { setError((err as Error).message); }
@@ -69,8 +89,11 @@ export default function ActorPaymentSection({ me, onSaved }: { me: ActorMe; onSa
           <div className="set-row block">
             <div className="field" style={{ width: "100%" }}>
               <label htmlFor="pp-tax">{tx("เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก")}</label>
-              <input id="pp-tax" className="input" value={form.tax_id} onChange={set("tax_id")} required inputMode="numeric"
-                autoComplete="off" placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.tax_id }) : ""} />
+              <input id="pp-tax" className="input" value={form.tax_id} onChange={setDigits("tax_id")} onBlur={blurDigits("tax_id")}
+                required inputMode="numeric" autoComplete="off" aria-invalid={digitsError.tax_id ? true : undefined}
+                aria-describedby={digitsError.tax_id ? "pp-tax-err" : undefined}
+                placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.tax_id }) : ""} />
+              {digitsError.tax_id && <span id="pp-tax-err" role="alert" style={{ color: "var(--danger)", fontSize: 13 }}>{tx(digitsError.tax_id)}</span>}
             </div>
           </div>
           <div className="set-row block">
@@ -91,8 +114,11 @@ export default function ActorPaymentSection({ me, onSaved }: { me: ActorMe; onSa
           <div className="set-row block">
             <div className="field" style={{ width: "100%" }}>
               <label htmlFor="pp-acc">{tx("เลขบัญชี")}{form.bank === "พร้อมเพย์" ? tx(" (เบอร์โทรหรือเลขบัตรประชาชน)") : ""}</label>
-              <input id="pp-acc" className="input" value={form.account_no} onChange={set("account_no")} required inputMode="numeric"
-                autoComplete="off" placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.account_no }) : ""} />
+              <input id="pp-acc" className="input" value={form.account_no} onChange={setDigits("account_no")} onBlur={blurDigits("account_no")}
+                required inputMode="numeric" autoComplete="off" aria-invalid={digitsError.account_no ? true : undefined}
+                aria-describedby={digitsError.account_no ? "pp-acc-err" : undefined}
+                placeholder={p ? tx("เดิม {0} (กรอกใหม่ทั้งหมด)", { 0: p.account_no }) : ""} />
+              {digitsError.account_no && <span id="pp-acc-err" role="alert" style={{ color: "var(--danger)", fontSize: 13 }}>{tx(digitsError.account_no)}</span>}
             </div>
           </div>
           <div className="set-row block">
@@ -105,7 +131,7 @@ export default function ActorPaymentSection({ me, onSaved }: { me: ActorMe; onSa
           <div className="set-row">
             <div className="row" style={{ gap: 10 }}>
               <button type="submit" className="btn primary small" disabled={busy}>{busy ? tx("กำลังบันทึก...") : tx("บันทึกข้อมูลรับเงิน")}</button>
-              {p && <button type="button" className="btn small" onClick={() => { setEdit(false); setError(""); }}>{tx("ยกเลิก")}</button>}
+              {p && <button type="button" className="btn small" onClick={() => { setEdit(false); setError(""); setDigitsError({ tax_id: "", account_no: "" }); }}>{tx("ยกเลิก")}</button>}
             </div>
           </div>
         </form>
