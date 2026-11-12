@@ -1842,7 +1842,7 @@ def actor_me(user=Depends(require_user)):
         f_consent = pool.submit(actors.consent, uid)
         f_payment = pool.submit(actors.payment_out, uid)
         f_usage = pool.submit(actors.summary, uid)
-        f_payouts = pool.submit(actors.payouts, uid)
+        f_payouts = pool.submit(actors.payout_history, uid)
         f_mood_usage = pool.submit(actors.mood_usage, uid)
         info, moods = f_info.result(), f_moods.result()
         a, c = f_actor.result(), f_consent.result()
@@ -2199,8 +2199,9 @@ def admin_review_mood(voice_id: str, mood: Mood, body: Review, admin=Depends(req
 @app.get("/admin/actor-usage", dependencies=[Depends(require_key)])
 def admin_actor_usage(month: Optional[str] = None, _=Depends(require_admin)):
     """ยอดใช้เสียงและค่าตอบแทนต่อนักพากย์ต่อเดือน (ไม่ส่ง month = ทุกเดือน) จำนวนเงินเป็นสตางค์
-    wht = ภาษีหัก ณ ที่จ่ายถ้าจ่ายยอดค้างตอนนี้, payee = นักพากย์กรอกข้อมูลรับเงินแล้ว"""
-    return {"rate": settings.actor_rate, "rows": actors.report(month), "payouts": actors.payouts(),
+    wht = ภาษีหัก ณ ที่จ่ายถ้าจ่ายยอดค้างตอนนี้, payee = นักพากย์กรอกข้อมูลรับเงินแล้ว
+    payouts = ประวัติการจ่ายเฉพาะคอลัมน์ที่ตารางแสดง ไม่มีเลขผู้เสียภาษีหรือที่อยู่"""
+    return {"rate": settings.actor_rate, "rows": actors.report(month), "payouts": actors.payout_history(admin=True),
             "wht": {"percent": settings.actor_wht_percent, "min": settings.actor_wht_min}}
 
 
