@@ -453,8 +453,7 @@ def _verify_google(credential: str) -> dict:
 
 def google_login(credential: str) -> dict:
     """เข้าสู่ระบบด้วย Google ครั้งแรกสร้างบัญชีให้เลย (สมัครกับล็อกอินคือขั้นเดียวกัน)
-    คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)
-    เมื่อเปิด billing: ให้แพ็กทดลองฟรีอัตโนมัติถ้ายังไม่เคยรับ (บัญชีใหม่และบัญชีเก่าที่ยังไม่กดรับ)"""
+    คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)"""
     info = _verify_google(credential)
     email = info["email"].strip().lower()
     token = secrets.token_urlsafe(32)
@@ -468,14 +467,6 @@ def google_login(credential: str) -> dict:
         db.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
         db.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                    (_token_hash(token), row["id"], time.time() + SESSION_DAYS * 86400))
-    uid = row["id"]
-    if billing_enabled():
-        try:
-            claim_trial(uid)
-        except AccountError as e:
-            # 409 = รับไปแล้ว, 400 = แอดมิน, 404 = ไม่มีแพ็กทดลอง — ไม่บล็อกการล็อกอิน
-            if e.status not in (400, 404, 409):
-                log.warning("auto claim_trial for %s failed: %s", uid, e)
     return {"token": token, "user": public_user(row)}
 
 
