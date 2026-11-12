@@ -725,6 +725,18 @@ def wht_rows(paid_month: str) -> list[dict]:
     return [dict(r) for r in _read("SELECT * FROM actor_payouts ORDER BY paid_at") if month_of(r["paid_at"]) == paid_month]
 
 
+# ตัวอักษรที่สเปรดชีตตีความเป็นสูตรเมื่ออยู่ต้นเซลล์
+_CSV_FORMULA_PREFIX = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_text(value: object) -> str:
+    """ข้อความอิสระใน CSV: ถ้าขึ้นต้นด้วย = + - @ แท็บ หรือ CR ให้เติม ' กันสูตร"""
+    text = "" if value is None else str(value)
+    if text.startswith(_CSV_FORMULA_PREFIX):
+        return "'" + text
+    return text
+
+
 def payouts(uid: Optional[str] = None) -> list[dict]:
     _init()
     if uid:
