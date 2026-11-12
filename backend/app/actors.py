@@ -726,7 +726,26 @@ def wht_rows(paid_month: str) -> list[dict]:
 
 
 def payouts(uid: Optional[str] = None) -> list[dict]:
+    """แถวเต็ม รวมเลขผู้เสียภาษีและที่อยู่ ณ วันจ่าย ใช้กับสำเนา PDPA (/auth/export) และงานภายในเท่านั้น"""
     _init()
     if uid:
         return [dict(r) for r in _read("SELECT * FROM actor_payouts WHERE actor_id = ? ORDER BY id DESC", uid)]
     return [dict(r) for r in _read("SELECT * FROM actor_payouts ORDER BY id DESC")]
+
+
+# คอลัมน์ที่ตารางประวัติบนหน้าเว็บแสดงจริง ไม่มีเลขผู้เสียภาษี ที่อยู่ หรือเลขบัญชี
+_ACTOR_PAYOUT_PUBLIC = "id, month, amount, wht, paid_at"
+_ADMIN_PAYOUT_PUBLIC = "id, month, amount, wht, payee_name, note, paid_by, paid_at"
+
+
+def payout_history(uid: Optional[str] = None, *, admin: bool = False) -> list[dict]:
+    """ประวัติการจ่ายสำหรับหน้าเว็บ เลือกเฉพาะคอลัมน์ที่ตารางแสดง
+    หน้านักพากย์ใช้ยอดและเดือน หน้าผู้ดูแลใช้ชื่อผู้รับเงิน หมายเหตุ และผู้บันทึกเพิ่ม
+    ไม่ส่งเลขผู้เสียภาษีหรือที่อยู่ (ค่าเต็มอยู่ที่ payouts(), CSV ภาษี และ GET /admin/actors/{id}/payment)"""
+    _init()
+    cols = _ADMIN_PAYOUT_PUBLIC if admin else _ACTOR_PAYOUT_PUBLIC
+    if uid:
+        rows = _read(f"SELECT {cols} FROM actor_payouts WHERE actor_id = ? ORDER BY id DESC", uid)
+    else:
+        rows = _read(f"SELECT {cols} FROM actor_payouts ORDER BY id DESC")
+    return [dict(r) for r in rows]

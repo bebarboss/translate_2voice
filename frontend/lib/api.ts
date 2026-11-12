@@ -244,10 +244,14 @@ export interface UsageRow {
   job_id: string; voice_id: string; user_id: string; job_name: string; seconds: number; lines: number;
   month: string; created_at: number; updated_at: number; payable: boolean; amount: number;
 }
-/** amount = ยอดก่อนหักภาษี, wht = ภาษีหัก ณ ที่จ่าย (โอนจริง = amount − wht) */
+/** ประวัติรับเงินของนักพากย์ amount = ยอดก่อนหักภาษี, wht = ภาษีหัก ณ ที่จ่าย (โอนจริง = amount − wht)
+ *  ไม่มีเลขผู้เสียภาษีหรือที่อยู่ */
 export interface ActorPayout {
-  id: number; actor_id: string; month: string; amount: number; wht: number; payee_name: string; tax_id: string;
-  note: string; paid_by: string; paid_at: number;
+  id: number; month: string; amount: number; wht: number; paid_at: number;
+}
+/** ประวัติการจ่ายในหน้าผู้ดูแล ไม่มีเลขผู้เสียภาษีหรือที่อยู่ */
+export interface AdminActorPayout {
+  id: number; month: string; amount: number; wht: number; payee_name: string; note: string; paid_by: string; paid_at: number;
 }
 /** ข้อมูลรับค่าตอบแทน (หน้าบัญชี · เลขผู้เสียภาษีและเลขบัญชีปิดเหลือ 4 ตัวท้าย) */
 export interface ActorPayment {
@@ -542,7 +546,7 @@ export const api = {
   adminReviewVoice: (voiceId: string, approve: boolean, note = "") =>
     request<void>(`/admin/actor-voices/${voiceId}/review`, json("POST", { approve, note })),
   adminActorUsage: (month = "") =>
-    request<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[]; wht: WhtRule }>(`/admin/actor-usage${month ? `?month=${month}` : ""}`),
+    request<{ rate: number; rows: UsageSummary[]; payouts: AdminActorPayout[]; wht: WhtRule }>(`/admin/actor-usage${month ? `?month=${month}` : ""}`),
   adminActorUsageRows: (userId: string, month: string) => request<UsageRow[]>(`/admin/actor-usage/${userId}?month=${month}`),
   adminPayout: (userId: string, month: string, note = "") =>
     request<{ amount: number; wht: number; net: number }>(`/admin/actor-payouts/${userId}`, json("POST", { month, note })),

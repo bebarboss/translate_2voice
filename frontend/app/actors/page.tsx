@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { PreviewButton, usePreview } from "@/components/VoicePreview";
-import { api, fileUrl, type ActorConsentRecord, type ActorPayment, type ActorPayout, type AdminActor, type LibraryVoice, type Mood,
+import { api, fileUrl, type ActorConsentRecord, type ActorPayment, type AdminActor, type AdminActorPayout, type LibraryVoice, type Mood,
   type UsageRow, type UsageSummary, type WhtRule } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, VOICE_STAGE_LABEL } from "@/lib/format";
 import { useAuth } from "@/lib/useAuth";
@@ -195,7 +195,7 @@ function VoiceReview() {
 
 function Compensation() {
   const [month, setMonth] = useState(thisMonth());
-  const [data, setData] = useState<{ rate: number; rows: UsageSummary[]; payouts: ActorPayout[]; wht: WhtRule } | null>(null);
+  const [data, setData] = useState<{ rate: number; rows: UsageSummary[]; payouts: AdminActorPayout[]; wht: WhtRule } | null>(null);
   const [open, setOpen] = useState("");
   const [rows, setRows] = useState<UsageRow[]>([]);
   const load = useCallback(() => { api.adminActorUsage(month).then(setData).catch(() => setData(null)); }, [month]);
