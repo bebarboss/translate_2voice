@@ -17,7 +17,8 @@ PAYMENT_PROVIDER=stripe เปิด Stripe Checkout (stripe_pay.py) แล้�
 - เครดิตเติม (users.credits) ซื้อเพิ่มหรือผู้ดูแลให้ ไม่หมดอายุ
 เงินเก็บเป็นสตางค์ (จำนวนเต็ม) ใช้แค่ตอนชำระเงิน
 ในฐานข้อมูลเก็บเครดิตเป็นหน่วยย่อย (1 เครดิต = UNIT = 100 หน่วย) เป็นจำนวนเต็ม แปลงเป็นทศนิยมตอนส่งออกเท่านั้น
-ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน กันตัดซ้ำ
+ทุกการเปลี่ยนยอดลงสมุดบัญชี (ledger) ref ของการตัดและคืนเครดิตเป็น id งาน
+(หรือ id งาน:redub:N สำหรับพากย์ซ้ำ) กันตัดซ้ำและกันคืนคนละรายการ
 """
 import hashlib
 import hmac
@@ -1033,19 +1034,42 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
         _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=job_id, note=f"งานพากย์ {length} นาที")
 
 
-def refund_job(uid: str, job_id: str) -> None:
-    """คืนเครดิตเมื่องานล้มเหลวเพราะระบบ (ครั้งเดียวต่องาน) เครดิตแพ็กเกจคืนเฉพาะถ้าแพ็กเกจยังไม่หมดอายุ"""
+def refund_job(uid: str, ref: str) -> None:
+    """คืนเครดิตของรายการตัดที่ ref ตรงเป๊ะ ครั้งเดียวต่อ ref
+
+    ref คือ job_id ของงานวิเคราะห์ครั้งแรก หรือ job_id:redub:N ของพากย์ซ้ำที่ล้ม
+    รายการตัดเก็บส่วนเครดิตเติมไว้ที่คอลัมน์ credits (ค่าติดลบ) และส่วนแพ็กเกจไว้ที่ minutes (ค่าติดลบ)
+    คืนแต่ละส่วนเข้าถังเดิม ไม่เกินจำนวนที่ตัดไปจากถังนั้น และไม่ย้ายข้ามถัง
+
+    users.credits เพิ่มได้เฉพาะ -credits ของรายการตัด (ส่วนที่หักจากเครดิตเติม)
+    ไม่นำ minutes ของแพ็กเกจมาบวกเข้า users.credits — นั่นคือทางที่ค่าพากย์จากแพ็กทดลอง
+    ไปโผล่ในถังเครดิตเติมได้ ถ้ารายการที่คืนมี credits ติดลบ หรือถ้านำส่วน minutes ไปบวกที่ถังนั้น
+
+    แพ็กเกจหมดอายุแล้ว (ไม่มี subscriptions ที่ expires_at ยังไม่ถึง): ไม่บวก minutes_left คืน
+    และไม่โอนส่วนนั้นเป็นเครดิตเติม ส่วนแพ็กเกจหมดไปกับแพ็กเพราะเครดิตแพ็กเกจหมดอายุพร้อมแพ็ก
+    ส่วนเครดิตเติมคืนให้เสมอ เพราะไม่หมดอายุ ยังเขียนแถว refund ของ ref นี้เพื่อไม่ให้คืนซ้ำ
+    แม้ภายหลังจะมีแพ็กใหม่"""
+    if not ref:
+        return
     with _tx() as db:
-        charge = db.execute("SELECT credits, minutes FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref = ?",
-                            (uid, job_id)).fetchone()
-        if charge is None or db.execute("SELECT 1 FROM ledger WHERE user_id = ? AND kind = 'refund' AND ref = ?",
-                                        (uid, job_id)).fetchone():
+        charge = db.execute(
+            "SELECT credits, minutes FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref = ?",
+            (uid, ref)).fetchone()
+        if charge is None or db.execute(
+                "SELECT 1 FROM ledger WHERE user_id = ? AND kind = 'refund' AND ref = ?",
+                (uid, ref)).fetchone():
             return
-        minutes = -charge["minutes"] if charge["minutes"] and _subscription(db, uid) else 0
-        if minutes:
-            db.execute("UPDATE subscriptions SET minutes_left = minutes_left + ? WHERE user_id = ?", (minutes, uid))
-        db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (-charge["credits"], uid))
-        _log(db, uid, "refund", credits=-charge["credits"], minutes=minutes, ref=job_id, note="คืนเครดิต งานล้มเหลวเพราะระบบ")
+        # ค่าติดลบบนรายการตัด = จำนวนที่หักจากถังนั้น คืนได้ไม่เกินจำนวนนั้น และไม่คืนค่าบวก (จะกลายเป็นการหักซ้ำ)
+        topup = max(0, -int(charge["credits"] or 0))
+        plan = max(0, -int(charge["minutes"] or 0))
+        plan_back = plan if plan and _subscription(db, uid) else 0
+        if plan_back:
+            db.execute("UPDATE subscriptions SET minutes_left = minutes_left + ? WHERE user_id = ?",
+                       (plan_back, uid))
+        if topup:
+            db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (topup, uid))
+        _log(db, uid, "refund", credits=topup, minutes=plan_back, ref=ref,
+             note="คืนเครดิต งานล้มเหลวเพราะระบบ")
 
 
 def quote_job(seconds: float) -> dict:
