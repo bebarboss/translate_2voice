@@ -2229,9 +2229,10 @@ def admin_actor_wht_csv(month: str, _=Depends(require_admin)):
     for i, p in enumerate(actors.wht_rows(month), 1):
         day = time.strftime("%d/%m/%Y", time.gmtime(p["paid_at"] + actors.TZ))
         rate = f"{settings.actor_wht_percent:g}" if p["wht"] else "0"
-        w.writerow([i, p["tax_id"], p["payee_name"], p["address"], day, settings.actor_income_type, rate,
+        w.writerow([i, p["tax_id"], actors.csv_text(p["payee_name"]), actors.csv_text(p["address"]), day,
+                    settings.actor_income_type, rate,
                     f"{p['amount'] / 100:.2f}", f"{p['wht'] / 100:.2f}", f"{(p['amount'] - p['wht']) / 100:.2f}",
-                    p["month"], p["note"]])
+                    p["month"], actors.csv_text(p["note"])])
     return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv",
                     headers={"content-disposition": f"attachment; filename=actor-wht-{month}.csv"})
 
