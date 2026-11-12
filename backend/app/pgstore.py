@@ -344,9 +344,12 @@ class Conn:
         return Result([])
 
 
+_trial_index_ensured = False
+
+
 def connect() -> Conn:
     """connection สำหรับเขียนภายใต้ accounts._lock — คนละเส้นกับ pool อ่าน"""
-    global _write_conn
+    global _write_conn, _trial_index_ensured
     with _write_lock:
         if _write_conn is None or _write_conn.closed:
             _write_conn = _open()
@@ -363,7 +366,18 @@ def connect() -> Conn:
                     except Exception:
                         pass
                     _write_conn = _open()
-        return Conn(_write_conn)
+        conn = Conn(_write_conn)
+        if not _trial_index_ensured:
+            # ครั้งแรกของโปรเซส: สร้าง unique แพ็กทดลองถ้ายังไม่มีแถว kind=trial ซ้ำ
+            # ไม่ลบข้อมูล ถ้าสร้างไม่ได้ แอปยังทำงานด้วยการเช็คใน claim_trial
+            try:
+                from .accounts import _ensure_trial_once_index
+                _ensure_trial_once_index(conn)
+            except Exception:
+                import logging
+                logging.getLogger("dubbing.pgstore").exception("ledger_trial_once ensure failed")
+            _trial_index_ensured = True
+        return conn
 
 
 def is_pg(db) -> bool:

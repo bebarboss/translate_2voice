@@ -93,6 +93,7 @@ class SetAdmin(BaseModel):
 
 class GrantPlan(BaseModel):
     plan_id: str
+    force: bool = Field(False, description="ให้แพ็กทดลองซ้ำได้เฉพาะเมื่อผู้ดูแลตั้งใจ (ค่าปกติคือครั้งเดียว)")
 
 
 class RejectSlip(BaseModel):
@@ -382,7 +383,7 @@ def admin_credit(user_id: str, body: Credit, admin=Depends(require_admin)):
 def admin_plan(user_id: str, body: GrantPlan, admin=Depends(require_admin)):
     """ให้แพ็กเกจโดยไม่ต้องชำระ"""
     try:
-        accounts.grant_plan(user_id, body.plan_id, admin["email"])
+        accounts.grant_plan(user_id, body.plan_id, admin["email"], force=body.force)
     except AccountError as e:
         raise _fail(e)
 
