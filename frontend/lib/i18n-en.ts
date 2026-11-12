@@ -102,6 +102,7 @@ export const EN: Record<string, string> = {
   "ซื้อได้เมื่อมีแพ็กเกจ": "Available after you have a plan",
   "ยังไม่มีแพ็กเกจ — รับทดลองหรือซื้อแพ็กก่อนจึงเติมเครดิตได้": "No plan yet — claim the trial or buy a plan before topping up",
   "ยังไม่ได้เริ่มแพ็กทดลอง — รับฟรี 2 เครดิตได้ครั้งเดียว": "You have not started the trial — claim 2 free credits once",
+  "ยังไม่มีแพ็กทดลอง — กดรับฟรี 2 เครดิตได้ครั้งเดียว (ปกติได้ตอนเข้าสู่ระบบแล้ว)": "No trial yet — claim 2 free credits once (normally granted at sign-in)",
   "1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง ตัดตอนเริ่มวิเคราะห์ ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม เครดิตแพ็กเกจที่เหลือทบไปได้ 1 รอบเมื่อต่ออายุหรืออัปเกรด": "1 credit = 1 minute of clip, billed by actual length when analysis starts. Plan credits are used first, then top-ups. Unused plan credits roll over for 1 cycle on renew/upgrade",
   "1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง ตัดตอนเริ่มวิเคราะห์ ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม เครดิตแพ็กเกจที่เหลือทบไปได้ 1 รอบเมื่อต่ออายุหรืออัปเกรด พากย์ซ้ำคิด 0.1 เครดิตต่อวินาทีของประโยคที่แก้ (ฟรีไม่เกิน 10% ของคลิป และประโยคที่ AI ติดธงฟรี)": "1 credit = 1 minute of clip, billed by actual length when analysis starts. Plan credits first, then top-ups. Unused plan credits roll over 1 cycle on renew/upgrade. Re-dubbing costs 0.1 credit per second of edited lines (free up to 10% of the clip; AI-flagged lines are free)",
   "พากย์ซ้ำครั้งนี้อยู่ในโควตาฟรี (ไม่เกิน 10% หรือบรรทัดที่ AI ติดธง)": "This re-dub is within the free quota (up to 10%, or AI-flagged lines)",
