@@ -116,6 +116,7 @@ def test_ensure_local_downloads_when_missing(job_dir: Path):
 
 def test_delete_prefix_pages(job_dir: Path):
     client = MagicMock()
+    # delete_prefix ไล่ทั้ง jobs/ และ free/jobs/ — หน้าแรกของ jobs แบ่ง 2 หน้า แล้ว free ว่าง
     client.list_objects_v2.side_effect = [
         {
             "Contents": [{"Key": "jobs/abc123def456/output.mp4"}],
@@ -126,6 +127,7 @@ def test_delete_prefix_pages(job_dir: Path):
             "Contents": [{"Key": "jobs/abc123def456/vocals.wav"}],
             "IsTruncated": False,
         },
+        {"Contents": [], "IsTruncated": False},
     ]
     with patch.object(object_store, "enabled", return_value=True), \
          patch.object(object_store, "_client", return_value=client), \
@@ -133,3 +135,4 @@ def test_delete_prefix_pages(job_dir: Path):
         n = object_store.delete_prefix("abc123def456")
     assert n == 2
     assert client.delete_objects.call_count == 2
+    assert client.list_objects_v2.call_count == 3

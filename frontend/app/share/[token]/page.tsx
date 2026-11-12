@@ -46,7 +46,7 @@ export default function SharePage() {
           <div style={{ padding: "4px 18px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
             <h1 style={{ margin: 0, fontSize: 20, lineHeight: 1.35 }}>{info.filename}</h1>
             <span className="dim">
-              {tx(TARGET_LABEL[info.target_lang] || info.target_lang)}
+              {tx((TARGET_LABEL as Record<string, string>)[info.target_lang] || info.target_lang)}
               {info.duration ? ` · ${fmtDuration(info.duration)}` : ""}
               {info.watermark ? ` · ${tx("มีลายน้ำ")}` : ""}
             </span>

@@ -96,15 +96,12 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       setRedubQuote(null);
       return;
     }
-    const editSec = dirty.reduce((s, id) => {
-      const u = sorted.find((x) => x.id === id);
-      if (!u) return s;
+    const editSec = dirty.reduce((s, u) => {
       const d = tr.draftOf(u);
       return s + Math.max(0, d.end - d.start);
     }, 0);
-    const freeSec = dirty.reduce((s, id) => {
-      const u = sorted.find((x) => x.id === id);
-      if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+    const freeSec = dirty.reduce((s, u) => {
+      if (!(u.unclear || (u.check_note || "").trim())) return s;
       const d = tr.draftOf(u);
       return s + Math.max(0, d.end - d.start);
     }, 0);
@@ -113,7 +110,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
       .then((q) => { if (!cancelled) setRedubQuote({ credits: q.credits, free: q.free, enough: q.enough }); })
       .catch(() => { if (!cancelled) setRedubQuote(null); });
     return () => { cancelled = true; };
-  }, [dirty, sorted, tr.drafts, job.duration]);
+  }, [dirty, tr.drafts, job.duration]);
 
   const seek = (sec: number) => {
     const v = videoRef.current;
@@ -156,19 +153,16 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     tr.setMessage(null);
     try {
       // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยพากย์ใหม่ช่วงที่เปลี่ยน + ส่งวินาทีที่แก้ให้คิดเครดิต
-      const editIds = [...dirty];
+      const edited = [...dirty];
       await tr.saveLines();
       let body: { edit_seconds?: number; free_flagged_seconds?: number } | undefined;
-      if (editIds.length) {
-        const editSec = editIds.reduce((s, id) => {
-          const u = sorted.find((x) => x.id === id);
-          if (!u) return s;
+      if (edited.length) {
+        const editSec = edited.reduce((s, u) => {
           const d = tr.draftOf(u);
           return s + Math.max(0, d.end - d.start);
         }, 0);
-        const freeSec = editIds.reduce((s, id) => {
-          const u = sorted.find((x) => x.id === id);
-          if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+        const freeSec = edited.reduce((s, u) => {
+          if (!(u.unclear || (u.check_note || "").trim())) return s;
           const d = tr.draftOf(u);
           return s + Math.max(0, d.end - d.start);
         }, 0);

@@ -46,15 +46,12 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       setRedubQuote(null);
       return;
     }
-    const editSec = dirty.reduce((s, id) => {
-      const u = sorted.find((x) => x.id === id);
-      if (!u) return s;
+    const editSec = dirty.reduce((s, u) => {
       const d = tr.draftOf(u);
       return s + Math.max(0, d.end - d.start);
     }, 0);
-    const freeSec = dirty.reduce((s, id) => {
-      const u = sorted.find((x) => x.id === id);
-      if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+    const freeSec = dirty.reduce((s, u) => {
+      if (!(u.unclear || (u.check_note || "").trim())) return s;
       const d = tr.draftOf(u);
       return s + Math.max(0, d.end - d.start);
     }, 0);
@@ -63,7 +60,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
       .then((q) => { if (!cancelled) setRedubQuote({ credits: q.credits, free: q.free, enough: q.enough }); })
       .catch(() => { if (!cancelled) setRedubQuote(null); });
     return () => { cancelled = true; };
-  }, [job.status, job.duration, dirty, sorted, tr.drafts]);
+  }, [job.status, job.duration, dirty, tr.drafts]);
 
   // เข้าหน้าแก้บทแล้วเลือกเสียงแนะนำอัตโนมัติ ตามคลังที่แพ็กเกจใช้ได้ (ทดลอง = Standard เท่านั้น)
   useEffect(() => {
@@ -160,22 +157,19 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     try {
       // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยเข้าคิวพากย์
       // บทว่าง: เซิร์ฟเวอร์ให้ AI วิเคราะห์แล้วเติมเองก่อนพากย์ (AI_FILL_EMPTY)
-      const editIds = [...dirty];
+      const edited = [...dirty];
       await saveAll();
       if (empty) {
         setMessage({ kind: "info", text: tx("พบบทว่าง {0} ประโยค — AI จะเติมให้อัตโนมัติแล้วพากย์", { 0: empty }) });
       }
       let body: { edit_seconds?: number; free_flagged_seconds?: number } | undefined;
-      if (job.status === "done" && editIds.length) {
-        const editSec = editIds.reduce((s, id) => {
-          const u = sorted.find((x) => x.id === id);
-          if (!u) return s;
+      if (job.status === "done" && edited.length) {
+        const editSec = edited.reduce((s, u) => {
           const d = tr.draftOf(u);
           return s + Math.max(0, d.end - d.start);
         }, 0);
-        const freeSec = editIds.reduce((s, id) => {
-          const u = sorted.find((x) => x.id === id);
-          if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+        const freeSec = edited.reduce((s, u) => {
+          if (!(u.unclear || (u.check_note || "").trim())) return s;
           const d = tr.draftOf(u);
           return s + Math.max(0, d.end - d.start);
         }, 0);
