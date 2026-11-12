@@ -88,6 +88,8 @@ export const EN: Record<string, string> = {
   "เริ่มแพ็กทดลองแล้ว": "Free trial started",
   "กำลังเปิด...": "Opening...",
   "รับไปแล้ว": "Already claimed",
+  "คุณมีแพ็กเกจที่ใช้งานอยู่แล้ว": "You already have an active plan",
+  "คุณมีแพ็กเกจที่ใช้งานอยู่แล้ว แพ็กเกจเดิมไม่เปลี่ยนแปลง": "You already have an active plan. Your current plan is unchanged.",
   "กำลังใช้แพ็กนี้": "Current plan",
   "ฟรี": "Free",
   "คลิปยาวสุด {0} นาที": "Clips up to {0} min",
