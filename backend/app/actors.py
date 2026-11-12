@@ -12,6 +12,8 @@
 - actor_payouts: การจ่ายค่าตอบแทนแต่ละครั้ง ยอดค้างจ่าย = ค่าตอบแทนตามการใช้งานของเดือน − ที่จ่ายแล้ว
   amount = ยอดก่อนหักภาษี, wht = ภาษีหัก ณ ที่จ่าย (โอนจริง = amount − wht) และสำเนาชื่อ เลขผู้เสียภาษี ที่อยู่ ณ วันจ่าย
 - actor_payment: ข้อมูลรับเงินของนักพากย์ (ชื่อผู้รับเงิน เลขประจำตัวผู้เสียภาษี ที่อยู่ บัญชีธนาคาร)
+  tax_id และ account_no เขียนคู่กันทั้งคอลัมน์เดิมและคอลัมน์เข้ารหัส (tax_id_enc, tax_id_hmac, account_no_enc)
+  การอ่านใช้ค่าที่ถอดจากคอลัมน์เข้ารหัสถ้ามี ไม่งั้นใช้ค่าเดิมระหว่างย้ายข้อมูล
 นักพากย์ใช้เสียงตัวเองพากย์งานของตัวเอง ไม่นับเป็นค่าตอบแทน
 """
 import hashlib
@@ -22,6 +24,7 @@ import threading
 import time
 from typing import Optional
 
+from . import pii_crypto
 from .accounts import AccountError, _read, _tx
 from .config import settings, using_postgres
 
@@ -143,7 +146,32 @@ def _init() -> None:
                 db.execute("ALTER TABLE actor_payouts ADD COLUMN wht INTEGER NOT NULL DEFAULT 0")
                 for col in ("payee_name", "tax_id", "address"):
                     db.execute(f"ALTER TABLE actor_payouts ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+            _ensure_pii_columns(db)
         _ready = True
+
+
+def _ensure_pii_columns(db) -> None:
+    """เพิ่มคอลัมน์เข้ารหัสบน SQLite เท่านั้น
+
+    Postgres มีข้อมูลอยู่แล้ว ไม่แก้ schema ตอนเปิดแอป
+    ให้รัน deploy/db/migrate/20261112_actor_pii_columns.sql เองก่อนเปิดรุ่นที่เขียนคอลัมน์ใหม่
+    """
+    from .pgstore import is_pg
+    if is_pg(db):
+        return
+    pay = {r["name"] for r in db.execute("PRAGMA table_info(actor_payment)")}
+    for col in ("tax_id_enc", "tax_id_hmac", "account_no_enc"):
+        if col not in pay:
+            db.execute(f"ALTER TABLE actor_payment ADD COLUMN {col} TEXT")
+    payout = {r["name"] for r in db.execute("PRAGMA table_info(actor_payouts)")}
+    for col in ("tax_id_enc", "tax_id_hmac"):
+        if col not in payout:
+            db.execute(f"ALTER TABLE actor_payouts ADD COLUMN {col} TEXT")
+    db.execute("CREATE INDEX IF NOT EXISTS actor_payouts_tax_hmac ON actor_payouts(tax_id_hmac)")
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS actor_payment_tax_hmac_uniq ON actor_payment(tax_id_hmac) "
+        "WHERE tax_id_hmac IS NOT NULL AND tax_id_hmac != ''"
+    )
 
 
 def month_of(ts: float) -> str:
@@ -184,10 +212,58 @@ def valid_tax_id(tax_id: str) -> bool:
     return (11 - s % 11) % 10 == int(tax_id[12])
 
 
+def _prefer_secret(row: dict, field: str, *, table: str, row_id: str) -> None:
+    """มี ciphertext แล้วใช้ค่านั้น ถอดไม่ได้ถือว่าเสีย ห้ามตกไปใช้ค่าเดิมที่อาจถูกแก้"""
+    stored = row.get(f"{field}_enc") or ""
+    if stored:
+        row[field] = pii_crypto.decrypt(stored, table=table, column=field, row_id=row_id)
+
+
+def _public_payment(row) -> dict:
+    data = dict(row)
+    uid = str(data["user_id"])
+    _prefer_secret(data, "tax_id", table="actor_payment", row_id=uid)
+    _prefer_secret(data, "account_no", table="actor_payment", row_id=uid)
+    for key in ("tax_id_enc", "tax_id_hmac", "account_no_enc"):
+        data.pop(key, None)
+    return data
+
+
+def _public_payout(row) -> dict:
+    data = dict(row)
+    _prefer_secret(data, "tax_id", table="actor_payouts", row_id=str(data["id"]))
+    for key in ("tax_id_enc", "tax_id_hmac"):
+        data.pop(key, None)
+    return data
+
+
+def _missing_pii_column(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(name in text for name in ("tax_id_enc", "tax_id_hmac", "account_no_enc")) and (
+        "does not exist" in text or "no such column" in text or "no column named" in text
+    )
+
+
+def _tax_hmac_conflict(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "actor_payment_tax_hmac_uniq" in text or ("tax_id_hmac" in text and "unique" in text)
+
+
 def payment(uid: str) -> Optional[dict]:
     _init()
     rows = _read("SELECT * FROM actor_payment WHERE user_id = ?", uid)
-    return dict(rows[0]) if rows else None
+    return _public_payment(rows[0]) if rows else None
+
+
+def find_payment_user(tax_id: str) -> Optional[str]:
+    """หาผู้ใช้จากเลขผู้เสียภาษีผ่าน HMAC ของเลข ASCII ที่ตัดช่องว่างและขีดแล้ว"""
+    _init()
+    try:
+        digest = pii_crypto.tax_id_hmac(tax_id)
+    except pii_crypto.PiiCryptoError:
+        return None
+    rows = _read("SELECT user_id FROM actor_payment WHERE tax_id_hmac = ?", digest)
+    return str(rows[0]["user_id"]) if rows else None
 
 
 def _mask(s: str) -> str:
@@ -220,11 +296,40 @@ def save_payment(uid: str, payee_name: str, tax_id: str, address: str, bank: str
         raise AccountError(400, "เลขบัญชีหรือพร้อมเพย์ต้องเป็นตัวเลข 10–15 หลัก")
     if len(account_name) < 2:
         raise AccountError(400, "กรอกชื่อบัญชี")
-    with _tx() as db:
-        if db.execute("SELECT 1 FROM actors WHERE user_id = ? AND status != 'withdrawn'", (uid,)).fetchone() is None:
-            raise AccountError(404, "ยังไม่ได้สมัครเป็นนักพากย์")
-        db.execute("INSERT OR REPLACE INTO actor_payment VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                   (uid, payee_name[:100], tax_id, address[:300], bank, account_no, account_name[:100], time.time()))
+    # ผ่าน [0-9] แล้วเท่านั้น จึงเข้ารหัสและทำ HMAC จากค่าที่ตัดช่องว่างกับขีดแล้ว
+    tax_id = pii_crypto.normalize_tax_id(tax_id)
+    account_no = pii_crypto.normalize_tax_id(account_no)
+    tax_id_enc = pii_crypto.encrypt(tax_id, table="actor_payment", column="tax_id", row_id=uid)
+    tax_hmac = pii_crypto.tax_id_hmac(tax_id)
+    account_no_enc = pii_crypto.encrypt(account_no, table="actor_payment", column="account_no", row_id=uid)
+    try:
+        with _tx() as db:
+            if db.execute("SELECT 1 FROM actors WHERE user_id = ? AND status != 'withdrawn'", (uid,)).fetchone() is None:
+                raise AccountError(404, "ยังไม่ได้สมัครเป็นนักพากย์")
+            clash = db.execute(
+                "SELECT user_id FROM actor_payment WHERE user_id != ? AND ("
+                "tax_id_hmac = ? OR ((tax_id_hmac IS NULL OR tax_id_hmac = '') AND tax_id = ?))",
+                (uid, tax_hmac, tax_id),
+            ).fetchone()
+            if clash is not None:
+                raise AccountError(409, "เลขประจำตัวผู้เสียภาษีนี้ผูกกับนักพากย์คนอื่นแล้ว")
+            db.execute(
+                "INSERT OR REPLACE INTO actor_payment "
+                "(user_id, payee_name, tax_id, address, bank, account_no, account_name, updated_at, "
+                "tax_id_enc, tax_id_hmac, account_no_enc) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (uid, payee_name[:100], tax_id, address[:300], bank, account_no, account_name[:100], time.time(),
+                 tax_id_enc, tax_hmac, account_no_enc),
+            )
+    except AccountError:
+        raise
+    except Exception as exc:
+        if _tax_hmac_conflict(exc):
+            raise AccountError(409, "เลขประจำตัวผู้เสียภาษีนี้ผูกกับนักพากย์คนอื่นแล้ว") from exc
+        if _missing_pii_column(exc):
+            raise AccountError(
+                503, "ยังไม่มีคอลัมน์เข้ารหัส รัน deploy/db/migrate/20261112_actor_pii_columns.sql ก่อน",
+            ) from exc
+        raise
     return payment_out(uid)
 
 
@@ -714,17 +819,40 @@ def add_payout(uid: str, month: str, note: str, by: str) -> dict:
     if p is None:
         raise AccountError(409, "นักพากย์ยังไม่ได้กรอกข้อมูลรับเงิน (ชื่อ เลขผู้เสียภาษี ที่อยู่ บัญชี)")
     wht = wht_of(due)
-    with _tx() as db:
-        db.execute("INSERT INTO actor_payouts (actor_id, month, amount, wht, payee_name, tax_id, address, note, paid_by, "
-                   "paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                   (uid, month, due, wht, p["payee_name"], p["tax_id"], p["address"], note, by, time.time()))
+    try:
+        with _tx() as db:
+            cur = db.execute(
+                "INSERT INTO actor_payouts (actor_id, month, amount, wht, payee_name, tax_id, address, note, paid_by, "
+                "paid_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                (uid, month, due, wht, p["payee_name"], p["tax_id"], p["address"], note, by, time.time()),
+            )
+            payout_id = cur.fetchone()["id"]
+            # รหัสแถวมาก่อน จึงผูก AAD กับ id ได้ เข้ารหัสหลังตรวจว่าเป็นเลข ASCII
+            tax_id = pii_crypto.normalize_tax_id(p["tax_id"])
+            db.execute(
+                "UPDATE actor_payouts SET tax_id_enc = ?, tax_id_hmac = ? WHERE id = ?",
+                (
+                    pii_crypto.encrypt(tax_id, table="actor_payouts", column="tax_id", row_id=str(payout_id)),
+                    pii_crypto.tax_id_hmac(tax_id),
+                    payout_id,
+                ),
+            )
+    except AccountError:
+        raise
+    except Exception as exc:
+        if _missing_pii_column(exc):
+            raise AccountError(
+                503, "ยังไม่มีคอลัมน์เข้ารหัส รัน deploy/db/migrate/20261112_actor_pii_columns.sql ก่อน",
+            ) from exc
+        raise
     return {"amount": due, "wht": wht, "net": due - wht}
 
 
 def wht_rows(paid_month: str) -> list[dict]:
     """การจ่ายที่หักภาษีในเดือนที่จ่ายจริง (ตามเวลาไทย) สำหรับยื่นแบบหักภาษี ณ ที่จ่ายและออกหนังสือรับรอง"""
     _init()
-    return [dict(r) for r in _read("SELECT * FROM actor_payouts ORDER BY paid_at") if month_of(r["paid_at"]) == paid_month]
+    rows = _read("SELECT * FROM actor_payouts ORDER BY paid_at")
+    return [_public_payout(r) for r in rows if month_of(r["paid_at"]) == paid_month]
 
 
 # ตัวอักษรที่สเปรดชีตตีความเป็นสูตรเมื่ออยู่ต้นเซลล์
@@ -743,8 +871,10 @@ def payouts(uid: Optional[str] = None) -> list[dict]:
     """แถวเต็ม รวมเลขผู้เสียภาษีและที่อยู่ ณ วันจ่าย ใช้กับสำเนา PDPA (/auth/export) และงานภายในเท่านั้น"""
     _init()
     if uid:
-        return [dict(r) for r in _read("SELECT * FROM actor_payouts WHERE actor_id = ? ORDER BY id DESC", uid)]
-    return [dict(r) for r in _read("SELECT * FROM actor_payouts ORDER BY id DESC")]
+        rows = _read("SELECT * FROM actor_payouts WHERE actor_id = ? ORDER BY id DESC", uid)
+    else:
+        rows = _read("SELECT * FROM actor_payouts ORDER BY id DESC")
+    return [_public_payout(r) for r in rows]
 
 
 # คอลัมน์ที่ตารางประวัติบนหน้าเว็บแสดงจริง ไม่มีเลขผู้เสียภาษี ที่อยู่ หรือเลขบัญชี

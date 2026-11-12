@@ -69,6 +69,22 @@ spec:
                 name: pakdee-config
             - secretRef:
                 name: pakdee-secrets
+          env:
+            - name: PII_ENC_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: pakdee-pii
+                  key: PII_ENC_KEYS
+            - name: PII_ENC_ACTIVE_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: pakdee-pii
+                  key: PII_ENC_ACTIVE_VERSION
+            - name: PII_HMAC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pakdee-pii
+                  key: PII_HMAC_KEY
           startupProbe:
             httpGet:
               path: /health

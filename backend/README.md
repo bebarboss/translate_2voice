@@ -12,3 +12,5 @@ pytest -q
 ```
 
 บน VPS: image build จากโฟลเดอร์นี้ — ดู `../deploy/` และ `../docs/deploy-vps.md`
+
+เข้ารหัสเลขผู้เสียภาษีและเลขบัญชีนักพากย์: `../docs/pii-encryption.md`

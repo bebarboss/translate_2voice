@@ -170,9 +170,12 @@ create table if not exists studio.actor_payouts (
   wht integer not null default 0,
   payee_name text not null default '',
   tax_id text not null default '',
-  address text not null default ''
+  address text not null default '',
+  tax_id_enc text,
+  tax_id_hmac text
 );
 create index if not exists actor_payouts_actor on studio.actor_payouts (actor_id, month);
+create index if not exists actor_payouts_tax_hmac on studio.actor_payouts (tax_id_hmac);
 
 create table if not exists studio.actor_moods (
   voice_id text not null,
@@ -193,5 +196,11 @@ create table if not exists studio.actor_payment (
   bank text not null,
   account_no text not null,
   account_name text not null,
-  updated_at double precision not null
+  updated_at double precision not null,
+  tax_id_enc text,
+  tax_id_hmac text,
+  account_no_enc text
 );
+create unique index if not exists actor_payment_tax_hmac_uniq
+  on studio.actor_payment (tax_id_hmac)
+  where tax_id_hmac is not null and tax_id_hmac <> '';

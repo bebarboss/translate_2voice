@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
-from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, daily_metrics, memory, notify, pii_crypto, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import fastapi_docs_kwargs, settings
 from .jobs import ACTIVE, JobStore, Worker
@@ -54,6 +54,8 @@ log.info("app module ready")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # ไม่มีคีย์ในโปรดักชันต้องหยุดก่อนรับคำขอ คีย์ชั่วคราวใช้ได้เฉพาะ PII_ENC_DEV_EPHEMERAL นอกคลัสเตอร์
+    pii_crypto.require_keys()
     worker.start()
     backup.start()
     daily_metrics.start()  # ทุก 23:59 Asia/Bangkok ประเมินงาน done ในวันนั้น เก็บลง DB
@@ -90,6 +92,12 @@ app.add_middleware(
 def _db_error(_: Request, exc: supabase_db.DBError):
     logging.getLogger("dubbing.db").error("Supabase: %s", exc)
     return JSONResponse({"detail": "บันทึกลงฐานข้อมูลไม่ได้ชั่วคราว ลองใหม่อีกครั้ง"}, status_code=503)
+
+
+@app.exception_handler(pii_crypto.PiiCryptoError)
+def _pii_error(_: Request, exc: pii_crypto.PiiCryptoError):
+    log.error("pii encryption failed: %s", exc)
+    return JSONResponse({"detail": str(exc)}, status_code=500)
 
 
 def require_key(x_api_key: Optional[str] = Header(default=None)) -> None:
