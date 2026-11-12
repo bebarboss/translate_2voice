@@ -87,7 +87,7 @@ copy .env.example .env.local
 npm run dev
 ```
 
-เปิด http://localhost:3000 แล้วลองอัปโหลดคลิปสั้น ๆ ได้เลย เอกสาร API อยู่ที่ http://localhost:8000/docs
+เปิด http://localhost:3000 แล้วลองอัปโหลดคลิปสั้น ๆ ได้เลย เอกสาร API อยู่ที่ http://localhost:8000/docs เมื่อตั้ง `API_DOCS_ENABLED=1` ใน `.env` (ค่าเริ่มต้นปิด เพื่อไม่ให้ schema หลุดบน production)
 
 ## รันกับโมเดลจริง
 

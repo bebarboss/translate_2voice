@@ -1,4 +1,8 @@
-"""เปิดเซิร์ฟเวอร์: python run.py  (เอกสาร API อยู่ที่ http://localhost:8000/docs)"""
+"""เปิดเซิร์ฟเวอร์: python run.py
+
+เอกสาร API ที่ http://localhost:8000/docs เมื่อตั้ง API_DOCS_ENABLED=1
+ค่าเริ่มต้นปิด — production ตอบ 404 ที่ /docs /redoc /openapi.json
+"""
 import os
 import sys
 

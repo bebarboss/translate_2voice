@@ -114,6 +114,9 @@ class Settings:
     supabase_db_url: str = _env("DATABASE_URL") or _env("SUPABASE_DB_URL")
     auth_enabled: bool = _bool("AUTH_ENABLED", True)
     billing_enabled: bool = _bool("BILLING_ENABLED", True)
+    # Swagger / ReDoc / openapi.json — ปิดเป็นค่าเริ่มต้น เพื่อไม่ให้ schema หลุดบน production
+    # เปิดเฉพาะเครื่องพัฒนา: API_DOCS_ENABLED=1
+    api_docs_enabled: bool = _bool("API_DOCS_ENABLED", False)
     google_client_id: str = _env("GOOGLE_CLIENT_ID")
     admin_emails: tuple = tuple(e.strip().lower() for e in _env("ADMIN_EMAILS").split(",") if e.strip())
     payment_provider: str = _env("PAYMENT_PROVIDER").lower()
@@ -263,6 +266,21 @@ class Settings:
 
 
 settings = Settings()
+
+
+def fastapi_docs_kwargs(enabled: bool) -> dict[str, str | None]:
+    """เส้นทางเอกสาร API ให้ FastAPI
+
+    None = ไม่ลงทะเบียนเส้นทางนั้น เลยตอบ 404
+    เปิดด้วย API_DOCS_ENABLED ตอนพัฒนา ค่าเริ่มต้นปิด
+    """
+    if enabled:
+        return {
+            "docs_url": "/docs",
+            "redoc_url": "/redoc",
+            "openapi_url": "/openapi.json",
+        }
+    return {"docs_url": None, "redoc_url": None, "openapi_url": None}
 
 
 def using_postgres() -> bool:

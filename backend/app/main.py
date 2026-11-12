@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
-from .config import settings
+from .config import fastapi_docs_kwargs, settings
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineAdd, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
@@ -70,7 +70,10 @@ app = FastAPI(
     version="2.0.0",
     description="แยกเสียง → แยกผู้พูด → ถอดเสียง → แปลด้วย Typhoon → พากย์ด้วย F5-TTS → รวมวิดีโอ",
     lifespan=lifespan,
+    # ปิดเป็นค่าเริ่มต้น (API_DOCS_ENABLED ไม่ตั้ง) — production ตอบ 404 ที่ /docs /redoc /openapi.json
+    **fastapi_docs_kwargs(settings.api_docs_enabled),
 )
+log.info("api docs %s", "on" if settings.api_docs_enabled else "off")
 
 # หน้าเว็บ Next.js เรียกผ่าน proxy ของตัวเองอยู่แล้ว CORS จำเป็นเฉพาะตอนเรียกจากเบราว์เซอร์ตรง ๆ
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
@@ -116,6 +119,8 @@ def require_key_or_upload_token(x_api_key: Optional[str] = Header(default=None),
     require_key(x_api_key)
 
 
+# /docs /redoc /openapi.json มีจริงเฉพาะเมื่อ API_DOCS_ENABLED=1
+# ปิดอยู่ FastAPI ไม่ลงทะเบียนเส้นทางเหล่านี้ เลย 404 ก่อนถึงการ์ดนี้
 OPEN_PATHS = ("/health", "/auth/", "/legal", "/billing/plans", "/billing/webhooks/",
               "/share/", "/docs", "/openapi.json", "/redoc")
 ADMIN_WRITES = ("/settings", "/voices")  # เปิดระบบบัญชีแล้ว คลังเสียงและค่าตั้งระบบแก้ได้เฉพาะผู้ดูแล
