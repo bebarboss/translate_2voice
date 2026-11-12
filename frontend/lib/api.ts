@@ -716,7 +716,10 @@ export const fileUrl = {
   actorUsageCsv: (month: string) => `${BASE}/admin/actor-usage-csv?month=${month}`,
   actorWhtCsv: (month: string) => `${BASE}/admin/actor-wht-csv?month=${month}`,
   qualityCsv: (days: number, kind = "") => `${BASE}/admin/quality/lines.csv?days=${days}&kind=${kind}`,
-  stem: (id: string, name: string) => `${BASE}/jobs/${id}/stems/${name}`,
+  stem: (id: string, name: string, attachment = false) => {
+    const q = attachment ? "?download=1" : "";
+    return `${BASE}/jobs/${id}/stems/${name}${q}`;
+  },
   voice: (id: string, version = "") => `${BASE}/voices/${id}/audio${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceImage: (id: string, version = "") => `${BASE}/voices/${id}/image${version ? `?v=${encodeURIComponent(version)}` : ""}`,
   voiceMood: (id: string, mood: Mood, version = "") =>

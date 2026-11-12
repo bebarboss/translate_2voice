@@ -478,14 +478,14 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
               <div key={s} className="row" style={{ fontSize: 14 }}>
                 <span className="swatch" style={{ background: speakerColor(s, job.speakers) }} />
                 <span style={{ flex: 1 }}>{tr.label(s)}  {tx("· เสียงต้นฉบับ")}</span>
-                <a href={fileUrl.stem(job.id, s)} download>{tx("ดาวน์โหลด")}</a>
+                <a href={fileUrl.stem(job.id, s, true)} download>{tx("ดาวน์โหลด")}</a>
               </div>
             ))}
             {layerStems.map((s) => (
               <div key={s} className="row" style={{ fontSize: 14 }}>
                 <span className="swatch" style={{ background: "#8A919D" }} />
                 <span style={{ flex: 1 }}>{STEM_LABEL[s] ? tx(STEM_LABEL[s]) : s}</span>
-                <a href={fileUrl.stem(job.id, s)} download>{tx("ดาวน์โหลด")}</a>
+                <a href={fileUrl.stem(job.id, s, true)} download>{tx("ดาวน์โหลด")}</a>
               </div>
             ))}
             {!stems.length && <span className="dim">{tx("ไม่มีไฟล์เลเยอร์")}</span>}

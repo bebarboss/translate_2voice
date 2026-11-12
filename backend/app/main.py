@@ -1210,7 +1210,7 @@ def retry_voice(voice_id: str):
 def get_voice_audio(voice_id: str):
     """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
     v = get_voice_or_404(voice_id)
-    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
+    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav", inline=True)
 
 
 IMAGE_TYPES = {b"\xff\xd8\xff": (".jpg", "image/jpeg"), b"\x89PNG\r\n\x1a\n": (".png", "image/png")}
@@ -1331,7 +1331,7 @@ def get_voice_mood_audio(voice_id: str, mood: Mood, request: Request):
     info = actors.voice_actors().get(voice_id)
     if (voice_id, mood) in actors.blocked_moods() and not sees_pending(request, info):
         raise HTTPException(404, "ไม่พบเสียงอารมณ์นี้")
-    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
+    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav", inline=True)
 
 
 # ---------------------------------------------------------------- ไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/)
@@ -2418,10 +2418,11 @@ def list_stems(job_id: str):
 
 
 @app.get("/jobs/{job_id}/stems/{name}", dependencies=[Depends(require_key)])
-def get_stem(job_id: str, name: str):
+def get_stem(job_id: str, name: str, download: bool = False):
+    """เลเยอร์เสียง เล่นใน <audio> เป็น inline; ปุ่มดาวน์โหลดส่ง download=1"""
     get_job_or_404(job_id)
     if not STEM_NAME.match(name):
         raise HTTPException(400, "ชื่อเลเยอร์ไม่ถูกต้อง")
     d = store.dir(job_id)
     path = d / "stems" / f"{name}.wav" if name.startswith("speaker_") else d / f"{name}.wav"
-    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id)
+    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id, inline=not download)

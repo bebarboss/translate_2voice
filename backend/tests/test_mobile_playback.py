@@ -49,6 +49,33 @@ def test_range_probe_returns_206(tmp_path: Path):
     assert full.content == payload
 
 
+def test_audio_playback_is_inline_and_ranged(tmp_path: Path):
+    """เสียงตัวอย่างและเลเยอร์ที่เล่นใน <audio> ต้อง inline และตอบ Range เป็น 206"""
+    payload = b"RIFF" + bytes(range(64))
+    path = tmp_path / "vocals.wav"
+    path.write_bytes(payload)
+    app = FastAPI()
+
+    @app.get("/a")
+    def audio(download: bool = False):
+        return media_file_response(path, "audio/wav", "vocals.wav", inline=not download)
+
+    client = TestClient(app)
+    probe = client.get("/a", headers={"Range": "bytes=0-3"})
+    assert probe.status_code == 206
+    assert probe.content == payload[:4]
+    assert probe.headers["content-type"].startswith("audio/wav")
+    assert probe.headers["accept-ranges"] == "bytes"
+    assert probe.headers["content-range"] == f"bytes 0-3/{len(payload)}"
+    assert probe.headers["content-length"] == "4"
+    assert probe.headers["content-disposition"].startswith("inline;")
+    assert probe.headers["cache-control"] == "private"
+
+    saved = client.get("/a", params={"download": "1"})
+    assert saved.status_code == 200
+    assert saved.headers["content-disposition"].startswith("attachment;")
+
+
 def test_download_query_is_attachment(tmp_path: Path):
     path = tmp_path / "output.mp4"
     path.write_bytes(b"0123456789")
