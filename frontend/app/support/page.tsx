@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { FlagIcon } from "@/components/Icons";
+import { ACCOUNT_LOAD_ERROR, LoadError } from "@/components/LoadState";
 import { api, type FeedbackItem } from "@/lib/api";
 import { locale, tx } from "@/lib/i18n";
 import { redirectToSignIn } from "@/lib/auth-routes";
-import { useAuth } from "@/lib/useAuth";
+import { isSignedOut, useAuth } from "@/lib/useAuth";
 
 const CATEGORIES: { id: FeedbackItem["category"]; label: string }[] = [
   { id: "bug", label: "บั๊กหรือข้อผิดพลาด" },
@@ -20,7 +21,9 @@ const CAT_LABEL = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label])) as 
 
 /** แจ้งปัญหาหรือข้อเสนอแนะถึงทีม Pakdee */
 export default function SupportPage() {
-  const { config, user, loaded } = useAuth();
+  const auth = useAuth();
+  const { config, user, loaded, unavailable, reload: reloadAuth } = auth;
+  const signedOut = isSignedOut(auth);
   const [category, setCategory] = useState<FeedbackItem["category"]>("bug");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -31,8 +34,8 @@ export default function SupportPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (loaded && config?.auth && !user) redirectToSignIn();
-  }, [loaded, config, user]);
+    if (loaded && signedOut) redirectToSignIn();
+  }, [loaded, signedOut]);
 
   const reload = () => api.myFeedback().then(setMine).catch(() => setMine([]));
   useEffect(() => { if (user) reload(); }, [user]);
@@ -52,10 +55,16 @@ export default function SupportPage() {
     }
   };
 
-  if (!loaded || (config?.auth && !user)) {
+  if (!loaded || signedOut) {
     return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
   }
-  if (config?.auth && !user) return null;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reloadAuth(); }} />
+      </main>
+    );
+  }
 
   return (
     <main className="page support-page">

@@ -1,10 +1,11 @@
 "use client";
 
 // ชิ้นส่วนที่หน้าโปรไฟล์ (/account) หน้าแพ็กเกจและโปรโมชัน (/promotions) และหน้าผู้ดูแล (/admin) ใช้ร่วมกัน
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Cards, type PaymentOrder, type Plan, type Wallet } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
+import type { LoadPhase } from "@/components/LoadState";
 
 export type Message = { kind: "error" | "info"; text: string } | null;
 
@@ -45,18 +46,53 @@ export function useRunner(load: () => void) {
   return { busy, message, setMessage, run };
 }
 
-/** ยอดเครดิตและแพ็กเกจของผู้ใช้ โหลดใหม่ได้ด้วย reload() */
+/**
+ * ยอดเครดิตและแพ็กเกจของผู้ใช้ โหลดใหม่ได้ด้วย reload()
+ * wallet กับ plans เป็นคนละคำขอ ถ้ารอไม่พร้อมกัน (เน็ตมือถือช้า) plans ยังเป็น []
+ * ขณะ wallet มี subscription แล้ว จะหาชื่อแพ็กไม่เจอและโชว์ "ยังไม่มีแพ็กเกจ"
+ * ทั้งที่เดสก์ท็อปมักได้ทั้งคู่ก่อนเฟรมถัดไป จึงเห็นแพ็กทดลองกับประวัติ
+ * จึงถือว่าพร้อมเมื่อทั้งคู่สำเร็จเท่านั้น และไม่ใช้ plans=[] ตอนยังโหลดหรือตอนคำขอล้ม
+ * เป็นรายการว่าง
+ */
 export function useWallet() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [packs, setPacks] = useState<number[]>([]);
   const [error, setError] = useState("");
-  const reload = () => {
-    api.wallet().then(setWallet).catch((e) => setError(e.message));
-    api.plans().then((p) => { setPlans(p.plans); setPacks(p.credit_packs); }).catch(() => setPlans([]));
-  };
-  useEffect(reload, []);
-  return { wallet, plans, packs, error, reload };
+  const [phase, setPhase] = useState<LoadPhase>("loading");
+  const walletRef = useRef<Wallet | null>(null);
+  const seq = useRef(0);
+  const reload = useCallback(() => {
+    const id = ++seq.current;
+    if (walletRef.current == null) setPhase("loading");
+    const walletP = api.wallet().then(
+      (v) => ({ ok: true as const, v }),
+      (e: unknown) => ({ ok: false as const, e }),
+    );
+    const plansP = api.plans().then(
+      (v) => ({ ok: true as const, v }),
+      (e: unknown) => ({ ok: false as const, e }),
+    );
+    void Promise.all([walletP, plansP]).then(([w, p]) => {
+      if (seq.current !== id) return;
+      if (!w.ok || !p.ok) {
+        const err = !w.ok ? w.e : !p.ok ? p.e : null;
+        if (walletRef.current == null) {
+          setError(err instanceof Error ? err.message : "");
+          setPhase("error");
+        }
+        return;
+      }
+      walletRef.current = w.v;
+      setWallet(w.v);
+      setPlans(p.v.plans);
+      setPacks(p.v.credit_packs);
+      setError("");
+      setPhase("ready");
+    });
+  }, []);
+  useEffect(() => { reload(); }, [reload]);
+  return { wallet, plans, packs, error, phase, reload };
 }
 
 /** บัตรที่ผูกไว้ ผูกบัตรครั้งแรกได้เครดิตฟรี ตอนนี้มีแค่ผู้ให้บริการจำลอง (PAYMENT_PROVIDER=mock)

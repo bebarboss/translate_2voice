@@ -9,6 +9,7 @@ import Link from "next/link";
 import { api, fileUrl, uploadVoiceImage, type ActorConsentDoc, type ActorMe, type Gender, type LibraryVoice, type Mood,
   type UsageRow } from "@/lib/api";
 import { fmtBaht, GENDER_LABEL, MOOD_LABEL, MOODS, VOICE_STAGE_LABEL } from "@/lib/format";
+import { ACCOUNT_LOAD_ERROR, LoadError } from "@/components/LoadState";
 import { useAuth } from "@/lib/useAuth";
 
 import { locale, tx } from "@/lib/i18n";
@@ -574,7 +575,7 @@ function Earnings({ me }: { me: ActorMe }) {
 }
 
 export default function ActorPage() {
-  const { config, user, loaded } = useAuth();
+  const { config, user, loaded, unavailable, reload: reloadAuth } = useAuth();
   const [me, setMe] = useState<ActorMe | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -591,6 +592,13 @@ export default function ActorPage() {
   };
 
   if (!loaded) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reloadAuth(); }} />
+      </main>
+    );
+  }
   if (!config?.auth || !user) {
     return (
       <main className="page narrow">
