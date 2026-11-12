@@ -99,6 +99,35 @@ def test_active_paid_plan_is_not_overwritten_on_login(book):
     assert _trial_ledger(book) == []
 
 
+def test_manual_subscribe_trial_does_not_overwrite_active_paid_plan(book):
+    """POST /billing/subscribe plan=trial and POST /billing/trial both call claim_trial."""
+    book.grant_plan("u1", "starter", "ops@example.com")
+    book._db().execute("UPDATE users SET credits = 500 WHERE id = 'u1'")
+    before = book._db().execute(
+        "SELECT plan_id, minutes_left, expires_at, credits FROM subscriptions s "
+        "JOIN users u ON u.id = s.user_id WHERE s.user_id = 'u1'"
+    ).fetchone()
+    ledger_before = book._db().execute(
+        "SELECT kind, ref, minutes FROM ledger WHERE user_id = 'u1' ORDER BY id"
+    ).fetchall()
+
+    for call in (lambda: book.subscribe("u1", "trial"), lambda: book.claim_trial("u1")):
+        with pytest.raises(book.AccountError) as exc:
+            call()
+        assert exc.value.status == 409
+        assert "หมดอายุ" in str(exc.value)
+
+    after = book._db().execute(
+        "SELECT plan_id, minutes_left, expires_at, credits FROM subscriptions s "
+        "JOIN users u ON u.id = s.user_id WHERE s.user_id = 'u1'"
+    ).fetchone()
+    ledger_after = book._db().execute(
+        "SELECT kind, ref, minutes FROM ledger WHERE user_id = 'u1' ORDER BY id"
+    ).fetchall()
+    assert tuple(after) == tuple(before)
+    assert [tuple(r) for r in ledger_after] == [tuple(r) for r in ledger_before]
+
+
 def test_expired_paid_plan_still_receives_trial(book):
     book.grant_plan("u1", "starter", "ops@example.com")
     with book._tx() as db:
