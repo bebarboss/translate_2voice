@@ -6,8 +6,9 @@ import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
 import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine, type VoiceReport } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
+import { ACCOUNT_LOAD_ERROR, LoadError } from "@/components/LoadState";
 import { redirectToSignIn } from "@/lib/auth-routes";
-import { useAuth } from "@/lib/useAuth";
+import { isSignedOut, useAuth } from "@/lib/useAuth";
 
 const TYPE_LABEL: Record<AccountType, string> = { personal: "บุคคลทั่วไป", creator: "ครีเอเตอร์", business: "บริษัท / หน่วยงาน" };
 
@@ -426,12 +427,21 @@ function VoiceReportsSection() {
 
 /** ผู้ดูแลระบบ: ผู้ใช้ทั้งหมด (เครดิต แพ็กเกจ สิทธิ์ผู้ดูแล) คุณภาพงาน และการสำรองข้อมูล */
 export default function AdminPage() {
-  const { config, user, loaded } = useAuth();
+  const auth = useAuth();
+  const { config, user, loaded, unavailable, reload } = auth;
+  const signedOut = isSignedOut(auth);
   useEffect(() => {
-    if (loaded && config?.auth && !user) redirectToSignIn();
-  }, [loaded, config, user]);
+    if (loaded && signedOut) redirectToSignIn();
+  }, [loaded, signedOut]);
 
-  if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (!loaded || signedOut) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reload(); }} />
+      </main>
+    );
+  }
   if (!config?.auth || !user?.admin) {
     return <main className="page narrow"><div className="card"><span className="muted">{tx("เฉพาะผู้ดูแลระบบ")}</span></div></main>;
   }

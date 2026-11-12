@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import ActorPaymentSection from "@/components/ActorPaymentSection";
 import { fmtCredits, fmtDate, useWallet } from "@/components/Billing";
+import { ACCOUNT_LOAD_ERROR, CREDITS_LOAD_ERROR, LoadError, Skel, SkelLines } from "@/components/LoadState";
 import { GearIcon, MicIcon, ShieldIcon, TagIcon, UserIcon } from "@/components/Icons";
 import { api, fileUrl, type AccountType, type ActorMe, type User } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { chooseLang, chooseTheme, currentTheme, getLang, locale, tx, type Lang, type Theme } from "@/lib/i18n";
 import { redirectToSignIn } from "@/lib/auth-routes";
-import { useAuth } from "@/lib/useAuth";
+import { isSignedOut, useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
   topup: "ซื้อเครดิต", subscribe: "ซื้อแพ็กเกจ", charge: "ใช้พากย์", refund: "คืนเครดิต", adjust: "ผู้ดูแลปรับ", bonus: "เครดิตฟรี",
@@ -111,24 +112,54 @@ function PrefsTab({ user: initial }: { user: User }) {
 
 /** เครดิตคงเหลือและประวัติ (ซื้อเครดิตและแพ็กเกจที่หน้าแพ็กเกจและโปรโมชัน) */
 function CreditsTab({ unlimited }: { unlimited: boolean }) {
-  const { wallet, plans } = useWallet();
+  const { wallet, plans, phase, reload } = useWallet();
   const sub = wallet?.subscription;
   const current = plans.find((p) => p.id === sub?.plan_id);
   const planCredits = sub?.minutes_left ?? 0;
   const total = (wallet?.credits ?? 0) + planCredits;
+  const head = <Head title={tx("เครดิต")} text={tx("1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง")} />;
+  if (phase === "error" || (phase !== "ready" && !wallet)) {
+    if (phase === "error") {
+      return (
+        <>
+          {head}
+          <LoadError title={CREDITS_LOAD_ERROR.title} description={CREDITS_LOAD_ERROR.description} onRetry={reload} />
+        </>
+      );
+    }
+    return (
+      <>
+        {head}
+        <div className="set-group" role="status" aria-busy="true">
+          <span className="sr-only">{tx("กำลังโหลด...")}</span>
+          <Row title={tx("ใช้ได้ทั้งหมด")}><Skel width="6em" /></Row>
+          {!unlimited && (
+            <>
+              <Row title={tx("จากแพ็กเกจ")} desc={tx("ใช้ก่อน หมดอายุพร้อมแพ็กเกจ")}><Skel width="14em" /></Row>
+              <Row title={tx("เครดิตเติม (ไม่หมดอายุ)")}><Skel width="6em" /></Row>
+            </>
+          )}
+        </div>
+        <Head title={tx("ประวัติ")} />
+        <div className="set-group" style={{ padding: "8px 14px" }}><SkelLines rows={3} /></div>
+      </>
+    );
+  }
   return (
     <>
-      <Head title={tx("เครดิต")} text={tx("1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง")} />
+      {head}
       <div className="set-group">
         <Row title={tx("ใช้ได้ทั้งหมด")}>
-          <span style={{ fontSize: 20, fontWeight: 600, color: "var(--text)" }}>{unlimited ? tx("ไม่จำกัด") : wallet ? fmtCredits(total) : "..."}</span>
+          <span style={{ fontSize: 20, fontWeight: 600, color: "var(--text)" }}>{unlimited ? tx("ไม่จำกัด") : fmtCredits(total)}</span>
         </Row>
         {!unlimited && (
           <>
             <Row title={tx("จากแพ็กเกจ")} desc={tx("ใช้ก่อน หมดอายุพร้อมแพ็กเกจ")}>
-              {sub && current ? tx("{0} · {1} · หมดอายุ {2}", { 0: current.name, 1: fmtCredits(planCredits), 2: fmtDate(sub.expires_at) }) : tx("ยังไม่มีแพ็กเกจ")}
+              {!sub ? tx("ยังไม่มีแพ็กเกจ") : tx("{0} · {1} · หมดอายุ {2}", {
+                0: current?.name ?? sub.plan_id, 1: fmtCredits(planCredits), 2: fmtDate(sub.expires_at),
+              })}
             </Row>
-            <Row title={tx("เครดิตเติม (ไม่หมดอายุ)")}>{wallet ? fmtCredits(wallet.credits) : "..."}</Row>
+            <Row title={tx("เครดิตเติม (ไม่หมดอายุ)")}>{fmtCredits(wallet?.credits ?? 0)}</Row>
             <Row title={tx("เติมเครดิต / ซื้อแพ็กเกจ")} desc={tx("ดูแพ็กเกจและโปรโมชันทั้งหมด")}>
               <Link href="/promotions" className="btn primary small">{tx("ดูแพ็กเกจ")}</Link>
             </Row>
@@ -137,7 +168,7 @@ function CreditsTab({ unlimited }: { unlimited: boolean }) {
       </div>
       <Head title={tx("ประวัติ")} />
       <div className="set-group" style={{ padding: "8px 14px" }}>
-        {!wallet?.ledger.length ? <div className="empty">{tx("ยังไม่มีรายการ")}</div> : (
+        {wallet && wallet.ledger.length === 0 ? <div className="empty">{tx("ยังไม่มีรายการ")}</div> : wallet ? (
           <table className="ledger" style={{ minWidth: 0 }}>
             <thead><tr><th>{tx("วันที่")}</th><th>{tx("รายการ")}</th><th>{tx("รายละเอียด")}</th><th>{tx("เครดิต")}</th><th>{tx("ชำระ")}</th></tr></thead>
             <tbody>
@@ -155,7 +186,7 @@ function CreditsTab({ unlimited }: { unlimited: boolean }) {
               })}
             </tbody>
           </table>
-        )}
+        ) : null}
       </div>
     </>
   );
@@ -264,7 +295,9 @@ function PayoutTab({ me, reload }: { me: ActorMe | null; reload: () => void }) {
 
 /** โปรไฟล์และการตั้งค่าของบัญชี: เมนูย่อยซ้าย (จำแท็บไว้ใน #hash ของลิงก์) */
 export default function AccountPage() {
-  const { config, user, loaded } = useAuth();
+  const auth = useAuth();
+  const { config, user, loaded, unavailable, reload } = auth;
+  const signedOut = isSignedOut(auth);
   const [tab, setTab] = useState<Tab>("profile");
   const [actorMe, setActorMe] = useState<ActorMe | null>(null);
   const reloadActor = useCallback(() => {
@@ -275,14 +308,21 @@ export default function AccountPage() {
     if (TABS.some((t) => t.id === h)) setTab(h as Tab);
   }, []);
   useEffect(() => {
-    if (loaded && config?.auth && !user) redirectToSignIn();
-  }, [loaded, config, user]);
+    if (loaded && signedOut) redirectToSignIn();
+  }, [loaded, signedOut]);
   useEffect(() => {
     if (user) reloadActor();
   }, [user, reloadActor]);
   const pick = (t: Tab) => { setTab(t); window.history.replaceState(null, "", `#${t}`); };
 
-  if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (!loaded || signedOut) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reload(); }} />
+      </main>
+    );
+  }
   if (!config?.auth || !user) {
     return (
       <main className="page narrow">

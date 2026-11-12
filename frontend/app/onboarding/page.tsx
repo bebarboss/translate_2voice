@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BrandLockup } from "@/components/Brand";
+import { ACCOUNT_LOAD_ERROR, LoadError } from "@/components/LoadState";
 import { api, type AccountType, type Legal } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import Prefs from "@/components/Prefs";
@@ -19,7 +20,7 @@ function nextPath(): string {
 
 /** ข้อมูลเบื้องต้นที่ต้องกรอกหลังล็อกอินด้วย Google ครั้งแรก (แก้ภายหลังได้จากหน้าบัญชี) */
 export default function OnboardingPage() {
-  const { config, user, loaded } = useAuth();
+  const { config, user, loaded, unavailable, reload } = useAuth();
   const [name, setName] = useState("");
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -36,6 +37,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!loaded) return;
+    if (unavailable && !user) return;
     if (!config?.auth) { window.location.href = "/"; return; }
     if (!user) { window.location.href = `/login?next=${encodeURIComponent("/onboarding" + window.location.search)}`; return; }
     const p = user.profile;
@@ -46,7 +48,7 @@ export default function OnboardingPage() {
     setCompany(p.company);
     setUseCase(p.use_case);
     setMarketing(user.marketing);
-  }, [loaded, config, user]);
+  }, [loaded, config, user, unavailable]);
 
   const editing = !!user?.profile_complete;
   const needConsent = !!user && !user.consent_current;
@@ -75,7 +77,15 @@ export default function OnboardingPage() {
     }
   };
 
-  if (!loaded || !user) return <main className="page narrow"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (!loaded) return <main className="page narrow"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page narrow">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reload(); }} />
+      </main>
+    );
+  }
+  if (!user) return <main className="page narrow"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
   return (
     <main className="onboard">
       <div className="corner-prefs"><Prefs compact /></div>
