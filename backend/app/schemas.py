@@ -121,6 +121,9 @@ class Job(BaseModel):
     project_id: Optional[str] = None
     project_matches: dict[str, dict] = Field(default_factory=dict)
     duration: Optional[float] = None
+    # ตัดช่วงก่อนพากย์ (วินาที) — None = ทั้งคลิป; หลังวิเคราะห์ duration คือความยาวช่วงที่ตัดแล้ว
+    clip_start: Optional[float] = None
+    clip_end: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
     queue_position: Optional[int] = None  # ลำดับคิว (เฉพาะคำตอบของ API ตอนรอคิว ไม่ได้บันทึกลงไฟล์)

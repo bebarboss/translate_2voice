@@ -157,6 +157,31 @@ def cut_clip(src_wav: Path, start: float, end: float, out_wav: Path, sr: int = 2
     return out_wav
 
 
+def crop_media(src: Path, start: float, end: float, out: Path) -> Path:
+    """ตัดช่วงสื่อ [start, end) วินาที เป็นไฟล์ใหม่ (ไทม์ไลน์เริ่มที่ 0) — ใช้ก่อนถอดเสียง/คิดเครดิต
+    ลองคัดลอกสตรีมก่อน ล้มเหลวค่อยเข้ารหัสใหม่"""
+    if end <= start:
+        raise ValueError("ช่วงตัดคลิปไม่ถูกต้อง (ปลายต้องหลังต้น)")
+    if start < 0:
+        raise ValueError("จุดเริ่มตัดคลิปต้องไม่ติดลบ")
+    dur = end - start
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ss, t = f"{start:.3f}", f"{dur:.3f}"
+    try:
+        run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-t", t,
+             "-c", "copy", "-avoid_negative_ts", "make_zero", out])
+    except RuntimeError:
+        ext = out.suffix.lower()
+        if ext in (".wav", ".flac", ".mp3", ".m4a", ".aac"):
+            run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-t", t,
+                 "-vn", "-ac", "2", "-ar", 44100, "-c:a", "pcm_s16le" if ext == ".wav" else "aac", out])
+        else:
+            run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-t", t,
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out])
+    return out
+
+
 def trim_silence(audio: np.ndarray, sr: int, threshold_db: float = -40, pad_ms: float = 120) -> np.ndarray:
     """ตัดความเงียบหัวท้ายที่ TTS มักแถมมา จะได้วางเสียงตรงจังหวะปาก (เหลือขอบไว้ให้เสียงหายใจและหางเสียง)"""
     if len(audio) == 0:

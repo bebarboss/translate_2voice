@@ -43,6 +43,7 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [shareUrl, setShareUrl] = useState("");
+  const [redubQuote, setRedubQuote] = useState<{ credits: number; free: boolean; enough: boolean } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resume = useRef<{ time: number; playing: boolean } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,6 +90,31 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty.length]);
 
+  // ประมาณเครดิตพากย์ซ้ำจากประโยคที่แก้ (โควตาฟรี 10% + บรรทัดที่ AI ติดธง)
+  useEffect(() => {
+    if (!dirty.length) {
+      setRedubQuote(null);
+      return;
+    }
+    const editSec = dirty.reduce((s, id) => {
+      const u = sorted.find((x) => x.id === id);
+      if (!u) return s;
+      const d = tr.draftOf(u);
+      return s + Math.max(0, d.end - d.start);
+    }, 0);
+    const freeSec = dirty.reduce((s, id) => {
+      const u = sorted.find((x) => x.id === id);
+      if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+      const d = tr.draftOf(u);
+      return s + Math.max(0, d.end - d.start);
+    }, 0);
+    let cancelled = false;
+    api.quoteRedub(editSec, job.duration || 0, freeSec)
+      .then((q) => { if (!cancelled) setRedubQuote({ credits: q.credits, free: q.free, enough: q.enough }); })
+      .catch(() => { if (!cancelled) setRedubQuote(null); });
+    return () => { cancelled = true; };
+  }, [dirty, sorted, tr.drafts, job.duration]);
+
   const seek = (sec: number) => {
     const v = videoRef.current;
     if (v) v.currentTime = sec + 0.01;
@@ -129,9 +155,26 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
     tr.setBusy("dub");
     tr.setMessage(null);
     try {
-      // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยพากย์ใหม่ช่วงที่เปลี่ยน
+      // กดพากย์ = บันทึกที่แก้ทั้งหมด แล้วค่อยพากย์ใหม่ช่วงที่เปลี่ยน + ส่งวินาทีที่แก้ให้คิดเครดิต
+      const editIds = [...dirty];
       await tr.saveLines();
-      await api.synthesize(job.id);
+      let body: { edit_seconds?: number; free_flagged_seconds?: number } | undefined;
+      if (editIds.length) {
+        const editSec = editIds.reduce((s, id) => {
+          const u = sorted.find((x) => x.id === id);
+          if (!u) return s;
+          const d = tr.draftOf(u);
+          return s + Math.max(0, d.end - d.start);
+        }, 0);
+        const freeSec = editIds.reduce((s, id) => {
+          const u = sorted.find((x) => x.id === id);
+          if (!u || !(u.unclear || (u.check_note || "").trim())) return s;
+          const d = tr.draftOf(u);
+          return s + Math.max(0, d.end - d.start);
+        }, 0);
+        body = { edit_seconds: editSec, free_flagged_seconds: freeSec };
+      }
+      await api.synthesize(job.id, body);
       onChanged();
     } catch (e) {
       tr.setMessage({ kind: "error", text: (e as Error).message });
@@ -221,7 +264,8 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
         </div>
         <div className="row">
           {needsDub && (
-            <button type="button" className="btn primary" onClick={redub} disabled={!!tr.busy}
+            <button type="button" className="btn primary" onClick={redub}
+              disabled={!!tr.busy || (redubQuote != null && !redubQuote.enough)}
               title={tx("บันทึกบทที่แก้ทั้งหมด แล้วพากย์ใหม่เฉพาะช่วงที่เปลี่ยน")}>
               <MicIcon size={17} />{tr.busy === "dub" ? tx("กำลังบันทึกและพากย์...") : tx("บันทึกและพากย์ใหม่")}
             </button>
@@ -230,6 +274,15 @@ export default function ResultView({ job, onChanged, onEdit }: { job: Job; onCha
           <Link href="/" className="btn">{tx("ส่งคลิปถัดไป")}</Link>
         </div>
       </div>
+
+      {redubQuote && dirty.length > 0 && (
+        <div className={`alert ${redubQuote.enough ? "info" : "error"}`} role="status">
+          {redubQuote.free
+            ? tx("พากย์ซ้ำครั้งนี้อยู่ในโควตาฟรี (ไม่เกิน 10% หรือบรรทัดที่ AI ติดธง)")
+            : tx("พากย์ซ้ำครั้งนี้ใช้ประมาณ {0} เครดิต", { 0: redubQuote.credits.toFixed(2) })}
+          {!redubQuote.enough && <> — <Link href="/promotions">{tx("เติมเครดิตหรืออัปเกรด")}</Link></>}
+        </div>
+      )}
 
       {job.synth_stats && (
         <span className="dim" style={{ marginTop: -12 }}>

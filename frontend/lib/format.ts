@@ -35,6 +35,7 @@ export const STATUS_LABEL: Record<JobStatus, string> = {
 export const STAGE_LABEL: Record<string, string> = {
   queued: "รอคิว",
   download: "ดาวน์โหลดคลิปจากลิงก์",
+  crop_clip: "ตัดช่วงคลิปตามที่เลือก",
   extract_audio: "ดึงเสียงออกจากวิดีโอ",
   separate_vocals: "แยกเสียงพูดกับเพลง",
   diarize: "แยกว่าใครพูดตอนไหน",
@@ -73,8 +74,10 @@ export function stepsFor(job: Job): string[] {
   if (job.timeline) {
     return ["timeline_render", "transcribe", "timeline_merge", "translate", "fit_lengths"];
   }
+  const trim = job.clip_start != null || job.clip_end != null;
   return [
     ...(job.source_url ? ["download"] : []),
+    ...(trim ? ["crop_clip"] : []),
     "extract_audio", "separate_vocals", "diarize", "transcribe", "translate", "fit_lengths",
   ];
 }

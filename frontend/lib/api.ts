@@ -48,6 +48,9 @@ export interface Job {
   /** โหมดฟรี: วันหมดอายุไฟล์บน R2 */
   expires_at?: string | null;
   share_token?: string | null;
+  /** ตัดช่วงก่อนพากย์ (วินาที) */
+  clip_start?: number | null;
+  clip_end?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -377,6 +380,9 @@ export interface CreateOptions {
   glossary?: string;
   library?: boolean;
   projectId?: string; // ส่งเข้าโปรเจกต์
+  /** ตัดช่วงก่อนพากย์ (วินาที) — ไม่ส่ง = ทั้งคลิป */
+  clipStart?: number | null;
+  clipEnd?: number | null;
 }
 
 const BASE = "/api";
@@ -738,6 +744,8 @@ function buildForm(opts: CreateOptions): FormData {
   if (opts.glossary) form.append("glossary", opts.glossary);
   if (opts.library) form.append("library", "true");
   if (opts.projectId) form.append("project_id", opts.projectId);
+  if (opts.clipStart != null && Number.isFinite(opts.clipStart)) form.append("clip_start", String(opts.clipStart));
+  if (opts.clipEnd != null && Number.isFinite(opts.clipEnd)) form.append("clip_end", String(opts.clipEnd));
   return form;
 }
 

@@ -383,6 +383,8 @@ async def create_job(
     glossary: str = Form("", max_length=2000, description="ชื่อเฉพาะและคำแปล บรรทัดละคำ เช่น ドラえもん = โดราเอมอน"),
     library: bool = Form(False, description="true = คลิปสำหรับเก็บเสียงเข้าคลัง (รับไฟล์เสียงได้) แยกผู้พูดและถอดเสียงแล้วหยุดรอ ไม่แปลไม่พากย์"),
     project_id: Optional[str] = Form(None, description="ส่งเข้าโปรเจกต์ จับคู่ตัวละคร ชื่อเฉพาะ และเสียงพากย์ตามที่โปรเจกต์จำไว้"),
+    clip_start: Optional[float] = Form(None, description="วินาทีเริ่มตัดก่อนพากย์ (ว่าง = ต้นคลิป)"),
+    clip_end: Optional[float] = Form(None, description="วินาทีจบตัดก่อนพากย์ (ว่าง = ท้ายคลิป)"),
 ):
     owner = current_user_id(request)
     project = None
@@ -411,6 +413,22 @@ async def create_job(
     input_path, filename = "", ""
     watermark = bool(owner and accounts.entitlements(owner).get("watermark"))
 
+    # ช่วงตัดก่อนพากย์ (วินาที) — ตรวจรูปแบบที่นี่ ความยาวจริงเทียบไฟล์ตอนวิเคราะห์
+    trim_start = trim_end = None
+    if clip_start is not None or clip_end is not None:
+        if library:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise HTTPException(400, "งานเก็บเสียงเข้าคลังไม่รองรับการตัดช่วง")
+        try:
+            trim_start = float(clip_start) if clip_start is not None else 0.0
+            trim_end = float(clip_end) if clip_end is not None else None
+        except (TypeError, ValueError):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise HTTPException(400, "ช่วงตัดคลิปต้องเป็นตัวเลขวินาที")
+        if trim_start < 0 or (trim_end is not None and trim_end <= trim_start):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise HTTPException(400, "ช่วงตัดคลิปไม่ถูกต้อง (ต้นต้อง ≥ 0 และปลายต้องหลังต้น)")
+
     if has_file:
         ext = Path(file.filename).suffix.lower()
         allowed = AUDIO_EXT if library else ALLOWED_EXT
@@ -421,9 +439,18 @@ async def create_job(
         await save_upload(file, dest, job_dir)
         input_path, filename = str(dest), file.filename
         if owner and not library:
+            from .pipeline import audio as _audio
+            full = _audio.probe_duration(dest)
+            bill = full
+            if trim_start is not None:
+                if trim_start >= full:
+                    shutil.rmtree(job_dir, ignore_errors=True)
+                    raise HTTPException(400, "จุดเริ่มตัดเกินความยาวคลิป")
+                end = min(trim_end, full) if trim_end is not None else full
+                bill = max(0.01, end - trim_start)
+                trim_end = end
             try:
-                from .pipeline import audio as _audio
-                accounts.check_clip_duration(owner, _audio.probe_duration(dest))
+                accounts.check_clip_duration(owner, bill)
             except accounts.AccountError as e:
                 shutil.rmtree(job_dir, ignore_errors=True)
                 raise HTTPException(e.status, str(e))
@@ -450,6 +477,8 @@ async def create_job(
         glossary=glossary.strip(),
         owner=owner,
         project_id=project.id if project and not library else None,
+        clip_start=trim_start,
+        clip_end=trim_end,
     ))
     worker.submit(job.id, "analyze")
     return JobCreated(id=job.id, status=JobStatus.queued)

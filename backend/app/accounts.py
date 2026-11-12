@@ -19,6 +19,7 @@ PAYMENT_PROVIDER=stripe เปิด Stripe Checkout (stripe_pay.py) แล้�
 """
 import hashlib
 import json
+import logging
 import math
 import re
 import secrets
@@ -33,6 +34,8 @@ import requests
 
 from .config import settings, using_postgres
 from .slip_ocr import SlipOcrError, image_mime, read_slip, verdict
+
+log = logging.getLogger("dubbing.accounts")
 
 SESSION_DAYS = 30
 TOPUP_MIN, TOPUP_MAX = 5, 2000  # ซื้อเครดิตเติมได้ครั้งละกี่เครดิต
@@ -670,6 +673,35 @@ def _activate(db, uid: str, p: Plan, kind: str, amount: int, note: str) -> None:
     _log(db, uid, kind, minutes=granted, amount=amount, ref=p.id, note=note + extra)
 
 
+def promote_owner_media(uid: str) -> int:
+    """หลังอัปเกรดแพ็กไม่มีลายน้ำ: ย้ายไฟล์งานจาก free/ ออก และล้าง expires_at
+    วิดีโอที่เรนเดอร์มีลายน้ำแล้วยังมี watermark=True (ไฟล์เดิมไม่ลบลายน้ำ) คืนจำนวนงานที่แตะ"""
+    if not uid or bool(entitlements(uid).get("watermark")):
+        return 0
+    try:
+        from .main import store
+        from . import object_store
+    except Exception:  # noqa: BLE001
+        log.exception("promote_owner_media import failed")
+        return 0
+    touched = 0
+    for job in store.all():
+        if job.owner != uid:
+            continue
+        if not job.expires_at and not job.watermark:
+            continue
+        try:
+            object_store.promote_from_free(job.id, store.dir(job.id))
+        except Exception:  # noqa: BLE001 ไม่ให้การชำระเงินล้มเพราะ R2
+            log.exception("promote free media failed for job %s", job.id)
+        if job.expires_at is not None:
+            store.update(job.id, expires_at=None)
+            touched += 1
+        elif job.watermark:
+            touched += 1
+    return touched
+
+
 def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
     """ผู้ดูแลให้แพ็กเกจโดยไม่ต้องชำระ (รับโอนนอกระบบ ชดเชย ฯลฯ)"""
     p = plan(plan_id)
@@ -679,6 +711,8 @@ def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
         if db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None:
             raise AccountError(404, "ไม่พบผู้ใช้นี้")
         _activate(db, uid, p, "adjust", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิต ให้โดย {admin_email}")
+    if not p.watermark:
+        promote_owner_media(uid)
 
 
 def _exempt(db, uid: str) -> bool:
@@ -710,7 +744,8 @@ def can_start(uid: str) -> None:
 
 
 def charge_job(uid: str, job_id: str, seconds: float) -> None:
-    """ตัดเครดิตของงานเมื่อรู้ความยาวคลิป (ต้นขั้นวิเคราะห์) ตัดครั้งเดียวต่องาน พากย์ซ้ำหรือแก้บทไม่ตัดเพิ่ม"""
+    """ตัดเครดิตของงานเมื่อรู้ความยาวคลิป (ต้นขั้นวิเคราะห์) ตัดครั้งเดียวต่องานหลัก
+    พากย์ซ้ำหลังเสร็จแล้วคิดแยกด้วย charge_redub (0.1 เครดิต/วิ ของบรรทัดที่แก้)"""
     if not billing_enabled():
         return
     check_clip_duration(uid, seconds)
@@ -1319,6 +1354,7 @@ def resolve_feedback(fid: str, admin_email: str, *, status: str = "done", note: 
 
 def mark_paid(topup_id: str) -> None:
     """ช่องทางชำระเงินแจ้งว่าจ่ายแล้ว (webhook) ให้เครดิตหรือเริ่มแพ็กเกจครั้งเดียวต่อรายการ"""
+    promote_uid = None
     with _tx() as db:
         t = db.execute("SELECT * FROM topups WHERE id = ?", (topup_id,)).fetchone()
         if t is None or t["status"] == "paid":
@@ -1327,7 +1363,11 @@ def mark_paid(topup_id: str) -> None:
         p = plan(t["plan_id"]) if t["plan_id"] else None
         if p:
             _activate(db, t["user_id"], p, "subscribe", t["amount"], f"แพ็กเกจ{p.name} {p.minutes} เครดิต")
+            if not p.watermark:
+                promote_uid = t["user_id"]
         else:
             db.execute("UPDATE users SET credits = credits + ? WHERE id = ?", (t["credits"] * UNIT, t["user_id"]))
             _log(db, t["user_id"], "topup", credits=t["credits"] * UNIT, amount=t["amount"], ref=topup_id,
                  note=f"ซื้อ {t['credits']:,} เครดิต ผ่าน {t['provider']}")
+    if promote_uid:
+        promote_owner_media(promote_uid)

@@ -306,3 +306,50 @@ def archive_after_done(job_dir: Path, *, free_tier: bool = False) -> None:
         log.info("r2 archive job %s: %d objects (free=%s)", job_dir.name, len(keys), free_tier)
     except Exception:  # noqa: BLE001
         log.exception("r2 archive failed for job %s", job_dir.name)
+
+
+def promote_from_free(job_id: str, job_dir: Path) -> int:
+    """ย้ายอ็อบเจ็กต์จาก free/jobs/{id}/ → jobs/{id}/ หลังอัปเกรดแพ็กไม่มีลายน้ำ แล้วลบฝั่ง free
+    อัปเดต manifest ให้ free_tier=False คืนจำนวนอ็อบเจ็กต์ที่ย้าย"""
+    if not enabled():
+        return 0
+    client = _client()
+    src_prefix = f"free/jobs/{job_id}/"
+    n = 0
+    man = load_manifest(job_dir) if job_dir.is_dir() else {"files": {}}
+    files: dict = man.setdefault("files", {})
+    token = None
+    while True:
+        kw = {"Bucket": settings.r2_bucket, "Prefix": src_prefix}
+        if token:
+            kw["ContinuationToken"] = token
+        resp = client.list_objects_v2(**kw)
+        for obj in resp.get("Contents") or []:
+            src = obj["Key"]
+            rel = src[len(src_prefix):]
+            if not rel:
+                continue
+            dest = object_key(job_id, rel, free_tier=False)
+            try:
+                client.copy_object(
+                    Bucket=settings.r2_bucket,
+                    CopySource={"Bucket": settings.r2_bucket, "Key": src},
+                    Key=dest,
+                )
+                client.delete_object(Bucket=settings.r2_bucket, Key=src)
+                prev = files.get(rel) or {}
+                files[rel] = {**prev, "key": dest}
+                n += 1
+            except Exception:  # noqa: BLE001
+                log.exception("r2 promote failed %s → %s", src, dest)
+                raise
+        if not resp.get("IsTruncated"):
+            break
+        token = resp.get("NextContinuationToken")
+    if n or man.get("free_tier"):
+        man["files"] = files
+        man["free_tier"] = False
+        if job_dir.is_dir():
+            save_manifest(job_dir, man)
+        log.info("r2 promoted %d objects for job %s off free/", n, job_id)
+    return n

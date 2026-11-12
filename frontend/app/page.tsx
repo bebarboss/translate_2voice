@@ -51,7 +51,19 @@ export default function UploadPage() {
   const [projectId, setProjectId] = useState("");
   const [quote, setQuote] = useState<{ credits: number; remaining: number; enough: boolean; title?: string } | null>(null);
   const [quoteBusy, setQuoteBusy] = useState(false);
+  const [fullDur, setFullDur] = useState<number | null>(null);
+  const [trimOn, setTrimOn] = useState(false);
+  const [clipStart, setClipStart] = useState(0);
+  const [clipEnd, setClipEnd] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
+
+  const billSeconds = (() => {
+    if (!fullDur || fullDur <= 0) return null;
+    if (!trimOn) return fullDur;
+    const start = Math.max(0, Math.min(clipStart, fullDur - 0.1));
+    const end = Math.max(start + 0.1, Math.min(clipEnd || fullDur, fullDur));
+    return Math.max(0.1, end - start);
+  })();
 
   useEffect(() => {
     api.getSettings().then((s) => {
@@ -69,13 +81,14 @@ export default function UploadPage() {
     }).catch(() => setProjects([]));
   }, []);
 
-  // ประมาณเครดิตจากลิงก์ (debounce)
+  // ประมาณเครดิตจากลิงก์ (debounce) — เก็บความยาวเต็มไว้ตัดช่วง
   useEffect(() => {
     if (mode !== "url") return;
     const u = url.trim();
     if (!/^https?:\/\/\S+$/i.test(u)) {
       setQuote(null);
       setQuoteBusy(false);
+      setFullDur(null);
       return;
     }
     let cancelled = false;
@@ -83,13 +96,32 @@ export default function UploadPage() {
     const t = window.setTimeout(() => {
       api.quoteUrl(u)
         .then((q) => {
-          if (!cancelled) setQuote({ credits: q.credits, remaining: q.remaining, enough: q.enough, title: q.title });
+          if (cancelled) return;
+          setFullDur(q.seconds > 0 ? q.seconds : null);
+          setClipStart(0);
+          setClipEnd(q.seconds > 0 ? q.seconds : 0);
+          setTrimOn(false);
+          setQuote({ credits: q.credits, remaining: q.remaining, enough: q.enough, title: q.title });
         })
-        .catch(() => { if (!cancelled) setQuote(null); })
+        .catch(() => {
+          if (!cancelled) { setQuote(null); setFullDur(null); }
+        })
         .finally(() => { if (!cancelled) setQuoteBusy(false); });
     }, 600);
     return () => { cancelled = true; window.clearTimeout(t); };
   }, [mode, url]);
+
+  // ประมาณเครดิตใหม่เมื่อเปิดตัดช่วง / เปลี่ยนต้น–ปลาย
+  useEffect(() => {
+    if (billSeconds == null) return;
+    let cancelled = false;
+    api.quoteJob(billSeconds)
+      .then((q) => {
+        if (!cancelled) setQuote((prev) => ({ credits: q.credits, remaining: q.remaining, enough: q.enough, title: prev?.title }));
+      })
+      .catch(() => { /* คง quote เดิม */ });
+    return () => { cancelled = true; };
+  }, [billSeconds]);
 
   const project = projects.find((p) => p.id === projectId);
   const pickProject = (id: string) => {
@@ -101,6 +133,8 @@ export default function UploadPage() {
   const pickFile = (f: File | undefined | null) => {
     setError("");
     setQuote(null);
+    setFullDur(null);
+    setTrimOn(false);
     if (!f) return;
     const ext = f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPT.split(",").includes(ext)) {
@@ -115,6 +149,9 @@ export default function UploadPage() {
       const sec = video.duration;
       URL.revokeObjectURL(urlObj);
       if (!Number.isFinite(sec) || sec <= 0) return;
+      setFullDur(sec);
+      setClipStart(0);
+      setClipEnd(sec);
       api.quoteJob(sec).then((q) => setQuote({ credits: q.credits, remaining: q.remaining, enough: q.enough }))
         .catch(() => setQuote(null));
     };
@@ -126,10 +163,22 @@ export default function UploadPage() {
   const submit = async () => {
     if (!ready || busy) return;
     setError("");
+    if (trimOn && fullDur && fullDur > 0 && clipEnd <= clipStart) {
+      setError(tx("ช่วงตัดคลิปไม่ถูกต้อง — จุดจบต้องหลังจุดเริ่ม"));
+      return;
+    }
     setBusy(true);
     const opts: CreateOptions = {
       sourceLang, targetLang, review, burnSubs, projectId: projectId || undefined,
     };
+    if (trimOn && fullDur && fullDur > 0) {
+      const start = Math.max(0, Math.min(clipStart, fullDur - 0.1));
+      const end = Math.max(start + 0.1, Math.min(clipEnd || fullDur, fullDur));
+      if (start > 0.05 || end < fullDur - 0.05) {
+        opts.clipStart = Math.round(start * 1000) / 1000;
+        opts.clipEnd = Math.round(end * 1000) / 1000;
+      }
+    }
     try {
       let id: string;
       if (mode === "file" && file) {
@@ -160,10 +209,10 @@ export default function UploadPage() {
 
         <div className="create-box">
           <div className="tabs" role="tablist" aria-label={tx("วิธีส่งคลิป")}>
-            <button type="button" role="tab" className="tab" aria-selected={mode === "file"} onClick={() => { setMode("file"); setQuote(null); }}>
+            <button type="button" role="tab" className="tab" aria-selected={mode === "file"} onClick={() => { setMode("file"); setQuote(null); setFullDur(null); setTrimOn(false); }}>
               <UploadIcon size={15} />{tx("อัปโหลดไฟล์")}
             </button>
-            <button type="button" role="tab" className="tab" aria-selected={mode === "url"} onClick={() => { setMode("url"); setQuote(null); }}>
+            <button type="button" role="tab" className="tab" aria-selected={mode === "url"} onClick={() => { setMode("url"); setQuote(null); setFullDur(null); setTrimOn(false); }}>
               <LinkIcon size={15} />{tx("วางลิงก์")}
             </button>
             <Link href="/timeline" className="tab">
@@ -198,6 +247,33 @@ export default function UploadPage() {
               <input id="url" className="input" type="url" placeholder="https://www.youtube.com/watch?v=..."
                 value={url} onChange={(e) => setUrl(e.target.value)} disabled={busy} />
               <span className="dim">{tx("รองรับ YouTube, TikTok, Facebook, Bilibili และเว็บอื่นที่ yt-dlp รองรับ · คลิปยาวไม่เกิน 60 นาที")}</span>
+            </div>
+          )}
+
+          {fullDur != null && fullDur > 0 && (
+            <div className="create-trim" style={{ padding: "4px 4px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+              <label className="chip" title={tx("พากย์เฉพาะช่วงที่เลือก เครดิตคิดตามความยาวช่วง")}>
+                <input type="checkbox" checked={trimOn} onChange={(e) => {
+                  const on = e.target.checked;
+                  setTrimOn(on);
+                  if (on && fullDur) { setClipStart(0); setClipEnd(fullDur); }
+                }} />
+                {tx("ตัดช่วงก่อนพากย์")}
+                <span className="n">· {fmtDuration(fullDur)}</span>
+              </label>
+              {trimOn && (
+                <div className="row time-range" style={{ gap: 8, alignItems: "center" }}>
+                  <label htmlFor="clip-start">{tx("จาก")}</label>
+                  <input id="clip-start" type="number" step={0.1} min={0} max={Math.max(0, fullDur - 0.1)}
+                    value={Number(clipStart.toFixed(1))}
+                    onChange={(e) => setClipStart(Number(e.target.value) || 0)} disabled={busy} />
+                  <label htmlFor="clip-end">{tx("ถึง")}</label>
+                  <input id="clip-end" type="number" step={0.1} min={0.1} max={fullDur}
+                    value={Number(clipEnd.toFixed(1))}
+                    onChange={(e) => setClipEnd(Number(e.target.value) || 0)} disabled={busy} />
+                  <span className="dim">{tx("วินาที")} · {fmtDuration(billSeconds ?? 0)}</span>
+                </div>
+              )}
             </div>
           )}
 

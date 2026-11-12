@@ -273,6 +273,18 @@ R2_PURGE_LOCAL=0   # 1 = ลบสื่อบนดิสก์หลังอ�
    - คัดลอก Access Key ID / Secret Access Key
 3. Account ID อยู่ที่หน้า R2 overview ขวาสุด
 
+### Lifecycle งานโหมดฟรี (`free/`)
+
+งานที่มีลายน้ำอัปใต้ `free/jobs/<id>/…` และตั้ง `expires_at` ตาม `FREE_RETENTION_DAYS` (ค่าเริ่มต้น 7 วัน)  
+อัปเกรดแพ็กไม่มีลายน้ำ → API ย้ายคีย์ไป `jobs/<id>/…` และล้าง `expires_at`  
+**ต้องตั้งกฎ lifecycle บน R2 เอง** (โค้ดไม่ลบตามเวลา):
+
+1. R2 → bucket → **Settings** → **Object lifecycle rules**
+2. สร้างกฎ: prefix `free/` → **Delete objects after 7 days** (ให้ตรง `FREE_RETENTION_DAYS`)
+3. อย่าใส่กฎลบ prefix `jobs/` (แพ็กจ่ายเก็บยาวกว่า)
+
+ตรวจว่ากฎทำงาน: อัปโหลดอ็อบเจ็กต์ทดสอบใต้ `free/_lifecycle-test/` แล้วรอหรือดูใน Metrics
+
 ย้ายงาน `done` เก่าขึ้น R2:
 
 ```bash

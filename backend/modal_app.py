@@ -64,7 +64,8 @@ progress = modal.Dict.from_name("dubbing-progress", create_if_missing=True)  # g
 # L4 ถูกที่สุดแต่คิวเต็มบ่อย ไม่ว่างก็ใช้ A10G (24 GB เท่ากัน) แทน ไม่ต้องรอ
 GPU = dict(gpu=["L4", "A10G"], secrets=[keys], volumes={MODELS: models},
            timeout=60 * 60,  # คลิป 60 นาทีใช้ราว 10–20 นาที เผื่อไว้
-           scaledown_window=60)  # ว่างเกิน 1 นาทีปิด container (พากย์รอบสองหลังย่อบทยังได้ container เดิม)
+           # ว่างเกิน 3 นาทีค่อยปิด — คั่นขั้นแปลบน API แล้วยังได้ container เดิมตอน resplit/พากย์
+           scaledown_window=180)
 
 
 def _reporter(key: Optional[str]):

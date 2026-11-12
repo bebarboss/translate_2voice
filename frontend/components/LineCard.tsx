@@ -75,10 +75,23 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
             <span className="badge warn" title={u.unclear_reason}>{tx("ควรตรวจ")}</span>
           )}
           {!!u.heard && !changed && (
-            <span className="badge warn" title={tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })}>{tx("ควรฟัง")}</span>
+            <span className="badge warn" title={tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })}>
+              {tx("ควรฟัง")}
+              {u.heard_score != null ? ` · ${Math.round(u.heard_score * 100)}%` : ""}
+            </span>
           )}
         </span>
       </div>
+      {(u.check_note || u.unclear_reason || u.heard) && !changed && (
+        <p className="dim" style={{ margin: "2px 0 0", fontSize: 12.5, lineHeight: 1.4 }}>
+          {u.check_note
+            || u.unclear_reason
+            || (u.heard
+              ? tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })
+                + (u.heard_score != null ? ` (${Math.round(u.heard_score * 100)}%)` : "")
+              : "")}
+        </p>
+      )}
       <p className="src">{u.source}</p>
       <div className="row time-range" style={{ gap: 6 }}>
         <label htmlFor={`st-${u.id}`}>{tx("เริ่ม")}</label>

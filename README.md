@@ -135,7 +135,7 @@ modal deploy modal_app.py                     # ครั้งแรกนา�
 แล้วแก้ `.env`: `WORKER=modal` (ใส่ `TYPHOON_API_KEY` ไว้เหมือนเดิม `HF_TOKEN` บนเครื่องไม่จำเป็นแล้ว) แล้ว `python run.py` จาก `backend/` เครื่องนี้ไม่ต้องติดตั้ง PyTorch หรือ `requirements-ml.txt`
 
 - งานแรกหลัง deploy ช้ากว่าปกติ เพราะ Modal โหลดโมเดลหลาย GB ลง Volume ครั้งเดียว งานต่อ ๆ ไปเปิด container ใหม่ราว 30–60 วินาที
-- container ปิดตัวเองเมื่อว่าง 1 นาที (`scaledown_window` ใน `modal_app.py`) ไม่เสียเครดิตตอนไม่มีงาน
+- container ปิดตัวเองเมื่อว่าง 3 นาที (`scaledown_window` ใน `modal_app.py`) ไม่เสียเครดิตตอนไม่มีงาน — คั่นขั้นแปลบน API แล้วยังได้ GPU เดิมตอนพากย์
 - แก้ค่าโมเดลหรือเกณฑ์ใน `.env` มีผลทันที ไม่ต้อง deploy ใหม่ แต่ถ้าแก้โค้ดใน `backend/app/pipeline/` ต้อง `modal deploy modal_app.py` ใหม่
 - ดู log และค่าใช้จ่ายที่ https://modal.com/apps (แอป `dubbing-gpu`)
 - งานที่วิเคราะห์ตอน `WORKER=local` แล้วมาพากย์ตอน `WORKER=modal` ได้ แต่จะข้ามการคัดเสียงตัวอย่างตามความสะอาดและลายเสียง (ค่าพวกนี้ Modal วัดไว้ตอนวิเคราะห์)

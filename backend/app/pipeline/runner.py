@@ -89,6 +89,22 @@ def run_analyze(store: JobStore, job_id: str) -> None:
             yt_sub_path = existing
 
     video = Path(job.input_path)
+    # ตัดช่วงก่อนพากย์ (ถ้ามี) → ความยาว/เครดิต/ไทม์ไลน์อิงช่วงที่ตัดแล้ว
+    cs, ce = job.clip_start, job.clip_end
+    if cs is not None or ce is not None:
+        full = audio.probe_duration(video)
+        start = float(cs or 0.0)
+        end = float(ce) if ce is not None else full
+        if start < 0 or end <= start or start >= full:
+            raise RuntimeError("ช่วงตัดคลิปไม่ถูกต้อง")
+        end = min(end, full)
+        stage("crop_clip", 0.058)
+        trimmed = d / f"input_trim{video.suffix.lower() or '.mp4'}"
+        audio.crop_media(video, start, end, trimmed)
+        store.update(job_id, input_path=str(trimmed), clip_start=start, clip_end=end)
+        video = trimmed
+        job = store.get(job_id)
+
     duration = round(audio.probe_duration(video), 2)
     store.update(job_id, duration=duration)
     if job.owner:  # งานของผู้ใช้ที่ล็อกอิน: ตรวจสิทธิ์ความยาว + ตัดเครดิตก่อนใช้การ์ดจอ
@@ -900,9 +916,14 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         decisions = judge_dub_quality(judge_lines, cancel)
         log.info("job %s: dub judge %s", job_id, decisions)
         retry_plans, shorten_plans = [], []
+        accepted = 0
         for p in unclear_plans:
             action = decisions.get(p.g[0].id, "retry")
             if action == "accept":
+                # ยอมรับ take นี้ → ล้างป้าย “ควรฟัง” ไม่ให้ค้างในผลลัพธ์/quality_ok
+                for u in p.g:
+                    u.heard, u.heard_score = "", None
+                accepted += 1
                 continue
             if action == "shorten" and can_shorten:
                 before = p.text()
@@ -913,6 +934,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                     retry_plans.append(p)
             else:
                 retry_plans.append(p)
+        if accepted:
+            log.info("job %s: AI accepted %d dub lines (cleared heard flags)", job_id, accepted)
         redo = shorten_plans + retry_plans
         if redo:
             for p in redo:
