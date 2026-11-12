@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
@@ -1773,6 +1773,14 @@ class ActorApply(BaseModel):
     consent_version: str = Field(..., max_length=20, description="เวอร์ชันหนังสือยินยอมที่อ่านและกดยอมรับ")
     consent_items: list[str] = Field(default_factory=list, max_length=10, description="ข้อที่ติ๊กยอมรับ (ต้องครบทุกข้อ)")
 
+    @field_validator("stage_name", mode="before")
+    @classmethod
+    def _strip_stage_name(cls, v: object) -> object:
+        # ตัดช่องว่างก่อนตรวจความยาว ชื่อที่มีแต่ช่องว่างจึงไม่ผ่าน min_length
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
 
 class ConsentAccept(BaseModel):
     version: str = Field(..., max_length=20)
@@ -1784,13 +1792,27 @@ class Review(BaseModel):
     note: str = Field("", max_length=300)
 
 
+def _strip_digit_separators(v: object) -> object:
+    """ตัดช่องว่างและขีดออกก่อนตรวจรูปแบบ ไม่แปลงเลขไทยหรือเลขเต็มความกว้าง"""
+    if isinstance(v, str):
+        return re.sub(r"[\s-]", "", v)
+    return v
+
+
 class ActorPayment(BaseModel):
     payee_name: str = Field(..., max_length=100, description="ชื่อ-นามสกุลผู้รับเงินตามบัตรประชาชน")
-    tax_id: str = Field(..., max_length=20, description="เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก")
+    tax_id: str = Field(..., min_length=13, max_length=13, pattern=r"^[0-9]{13}$",
+                        description="เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก (0-9 เท่านั้น เว้นวรรคและขีดถูกลบก่อนตรวจ)")
     address: str = Field(..., max_length=300, description="ที่อยู่ตามบัตรประชาชน")
     bank: str = Field(..., max_length=40)
-    account_no: str = Field(..., max_length=30, description="เลขบัญชี หรือเบอร์/เลขพร้อมเพย์")
+    account_no: str = Field(..., min_length=10, max_length=15, pattern=r"^[0-9]{10,15}$",
+                            description="เลขบัญชี หรือเบอร์/เลขพร้อมเพย์ 10–15 หลัก (0-9 เท่านั้น เว้นวรรคและขีดถูกลบก่อนตรวจ)")
     account_name: str = Field(..., max_length=100)
+
+    @field_validator("tax_id", "account_no", mode="before")
+    @classmethod
+    def _normalize_digits(cls, v: object) -> object:
+        return _strip_digit_separators(v)
 
 
 class Payout(BaseModel):

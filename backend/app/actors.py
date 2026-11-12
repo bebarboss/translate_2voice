@@ -176,8 +176,9 @@ BANKS = ("ธนาคารกรุงเทพ", "ธนาคารกสิ
 
 
 def valid_tax_id(tax_id: str) -> bool:
-    """เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก ตรวจหลักสุดท้าย"""
-    if not re.fullmatch(r"\d{13}", tax_id):
+    """เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก ตรวจหลักสุดท้าย
+    รับเฉพาะเลขอารบิก 0-9 ไม่รับเลขไทยหรือเลขเต็มความกว้าง"""
+    if not re.fullmatch(r"[0-9]{13}", tax_id):
         return False
     s = sum(int(tax_id[i]) * (13 - i) for i in range(12))
     return (11 - s % 11) % 10 == int(tax_id[12])
@@ -205,6 +206,7 @@ def save_payment(uid: str, payee_name: str, tax_id: str, address: str, bank: str
                  account_name: str) -> dict:
     _init()
     payee_name, address, account_name = " ".join(payee_name.split()), " ".join(address.split()), " ".join(account_name.split())
+    # เก็บเลขที่ตัดช่องว่างและขีดแล้ว เลขไทย/เลขเต็มความกว้างไม่ถูกแปลงและไม่ผ่านด้านล่าง
     tax_id, account_no = re.sub(r"[\s-]", "", tax_id), re.sub(r"[\s-]", "", account_no)
     if len(payee_name) < 2:
         raise AccountError(400, "กรอกชื่อ-นามสกุลผู้รับเงิน (ตามบัตรประชาชน)")
@@ -214,7 +216,7 @@ def save_payment(uid: str, payee_name: str, tax_id: str, address: str, bank: str
         raise AccountError(400, "กรอกที่อยู่ตามบัตรประชาชน (ใช้ออกหนังสือรับรองการหักภาษี)")
     if bank not in BANKS:
         raise AccountError(400, "เลือกธนาคาร")
-    if not re.fullmatch(r"\d{10,15}", account_no):
+    if not re.fullmatch(r"[0-9]{10,15}", account_no):
         raise AccountError(400, "เลขบัญชีหรือพร้อมเพย์ต้องเป็นตัวเลข 10–15 หลัก")
     if len(account_name) < 2:
         raise AccountError(400, "กรอกชื่อบัญชี")
