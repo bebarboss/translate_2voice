@@ -485,7 +485,7 @@ async def create_job(
         clip_start=trim_start,
         clip_end=trim_end,
     ))
-    worker.submit(job.id, "analyze")
+    worker.submit(job.id, "analyze", job.id)
     return JobCreated(id=job.id, status=JobStatus.queued)
 
 
@@ -557,7 +557,14 @@ def retry_job(job_id: str):
     if phase == "render" and not (store.dir(job_id) / "output.mp4").exists():
         phase = "synthesize"
     _check_quota(job.owner)
-    worker.submit(job_id, phase)
+    # วิเคราะห์คืนรายการตัดหลัก พากย์ใช้ ref ที่รอบที่ล้มเก็บไว้ (พากย์ซ้ำคือ job_id:redub:N) ฝังซับไม่มีการตัด
+    if phase == "analyze":
+        charge_ref = job_id
+    elif phase == "synthesize":
+        charge_ref = job.billing_ref
+    else:
+        charge_ref = None
+    worker.submit(job_id, phase, charge_ref)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -578,7 +585,7 @@ def render(job_id: str):
     out = ensure_job_file(job_id, store.dir(job_id) / "output.mp4")
     if job.status != JobStatus.done or not out.exists():
         raise HTTPException(409, "ฝังซับได้เมื่อพากย์เสร็จแล้วเท่านั้น")
-    worker.submit(job_id, "render")
+    worker.submit(job_id, "render", None)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -942,7 +949,7 @@ def retranslate(job_id: str, body: Retranslate):
     fields = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if fields:
         store.update(job_id, **fields)
-    worker.submit(job_id, "translate")
+    worker.submit(job_id, "translate", None)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -961,20 +968,27 @@ def synthesize(job_id: str, body: Optional[SynthesizeBody] = Body(None)):
     if not store.load_transcript(job_id):
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแปลเสร็จก่อน")
     # พากย์ซ้ำหลังงานเสร็จแล้ว: คิดเครดิตจากวินาทีที่แก้ (โควตาฟรี 10% + บรรทัดติดธง)
-    if job.owner and job.status == JobStatus.done and body and (body.edit_seconds or 0) > 0:
+    # charge_ref คือรายการที่จะคืนถ้ารอบนี้ล้ม — พากย์ซ้ำฟรีหรือไม่ตัดจะเป็น None เพื่อไม่ไปคืนงานเดิม
+    charge_ref = None
+    if job.status in (JobStatus.failed, JobStatus.cancelled):
+        charge_ref = job.billing_ref
+    elif job.owner and job.status == JobStatus.done and body and (body.edit_seconds or 0) > 0:
         try:
-            accounts.charge_redub(
+            quoted = accounts.charge_redub(
                 job.owner, job_id, body.edit_seconds or 0.0,
                 job.duration or 0.0, body.free_flagged_seconds or 0.0)
         except accounts.AccountError as e:
             raise HTTPException(e.status, str(e))
+        charge_ref = quoted.get("ref")
+    elif job.status == JobStatus.awaiting_review:
+        charge_ref = job_id
     try:
         from . import object_store
         object_store.hydrate_job(store.dir(job_id))
     except Exception:  # noqa: BLE001
         pass
     _check_quota(job.owner)
-    worker.submit(job_id, "synthesize")
+    worker.submit(job_id, "synthesize", charge_ref)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -1531,7 +1545,7 @@ def start_timeline(job_id: str, request: Request):
         except accounts.AccountError as e:
             raise HTTPException(e.status, str(e))
     store.update(job_id, status=JobStatus.queued, stage="queued", progress=0.0, error=None)
-    worker.submit(job_id, "analyze")
+    worker.submit(job_id, "analyze", job_id)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
