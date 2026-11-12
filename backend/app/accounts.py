@@ -274,7 +274,9 @@ def _migrate(db: sqlite3.Connection) -> None:
     """ฐานข้อมูลรุ่นก่อนเก็บยอดเป็นเงินบาท (users.balance): แปลงเป็นเครดิตเติมตามราคาเครดิต"""
     from .pgstore import is_pg
     if is_pg(db):
-        return  # schema studio สร้างครบจาก migration แล้ว และข้อมูลที่ย้ายมาคูณหน่วยย่อยไว้แล้ว
+        # schema studio สร้างจาก init/migration — ที่นี่เพิ่มเฉพาะดัชนีแพ็กทดลองครั้งเดียว
+        _ensure_trial_once_index(db)
+        return
     cols = lambda t: {r["name"] for r in db.execute(f"PRAGMA table_info({t})")}
     if "credits" not in cols("users"):
         db.execute("ALTER TABLE users ADD COLUMN credits INTEGER NOT NULL DEFAULT 0")
@@ -324,6 +326,55 @@ def _migrate(db: sqlite3.Connection) -> None:
         "created_at REAL NOT NULL, resolved_at REAL)"
     )
     db.execute("CREATE INDEX IF NOT EXISTS feedback_status_created ON feedback(status, created_at)")
+    _ensure_trial_once_index(db)
+
+
+_TRIAL_ONCE_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS ledger_trial_once ON ledger (user_id) WHERE kind = 'trial'"
+)
+
+
+def _ensure_trial_once_index(db) -> None:
+    """หนึ่งแถว ledger kind=trial ต่อผู้ใช้
+
+    ถ้ามีแถวซ้ำอยู่แล้วจะไม่สร้างดัชนี และไม่ลบข้อมูลลูกค้า
+    สคริปต์เดียวกันอยู่ที่ supabase/migrations/20261112000000_ledger_trial_once.sql
+    """
+    dup = db.execute(
+        "SELECT 1 FROM ledger WHERE kind = 'trial' GROUP BY user_id HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone()
+    if dup:
+        log.warning(
+            "ledger_trial_once not created: duplicate kind=trial ledger rows exist; no customer rows were deleted"
+        )
+        return
+    db.execute(_TRIAL_ONCE_INDEX)
+
+
+def _lock_user(db, uid: str):
+    """ล็อกแถวผู้ใช้ในธุรกรรมนี้ Postgres ใช้ FOR UPDATE ส่วน SQLite ได้จาก BEGIN IMMEDIATE ของ _tx"""
+    from .pgstore import is_pg
+    sql = "SELECT * FROM users WHERE id = ?"
+    if is_pg(db):
+        sql += " FOR UPDATE"
+    return db.execute(sql, (uid,)).fetchone()
+
+
+def _trial_taken(db, uid: str) -> bool:
+    """เคยมีแพ็กทดลองในสมุดบัญชีแล้ว (kind=trial หรือ ref=trial จากแอดมิน)"""
+    return db.execute(
+        "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
+        (uid,),
+    ).fetchone() is not None
+
+
+def _is_unique_violation(exc: BaseException) -> bool:
+    """ชน unique ของ ledger_trial_once ทั้ง SQLite และ Postgres (23505)"""
+    if isinstance(exc, sqlite3.IntegrityError):
+        return "unique" in str(exc).lower()
+    if getattr(exc, "sqlstate", None) == "23505":
+        return True
+    return type(exc).__name__ == "UniqueViolation"
 
 
 class _tx:
@@ -453,7 +504,9 @@ def _verify_google(credential: str) -> dict:
 
 def google_login(credential: str) -> dict:
     """เข้าสู่ระบบด้วย Google ครั้งแรกสร้างบัญชีให้เลย (สมัครกับล็อกอินคือขั้นเดียวกัน)
-    คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)"""
+    คืน {token, user} token ส่งกลับมาใน header X-User-Token (หน้าเว็บเก็บไว้ในคุกกี้ httpOnly)
+    เมื่อเปิด billing: ให้แพ็กทดลองฟรีอัตโนมัติครั้งเดียว ถ้ายังไม่เคยรับและไม่มีแพ็กที่ยังไม่หมดอายุ
+    แพ็กเสียเงินที่ยังใช้งานอยู่จะไม่ถูกทับ และไม่เขียนแถวทดลอง"""
     info = _verify_google(credential)
     email = info["email"].strip().lower()
     token = secrets.token_urlsafe(32)
@@ -467,6 +520,15 @@ def google_login(credential: str) -> dict:
         db.execute("DELETE FROM sessions WHERE expires_at < ?", (time.time(),))
         db.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                    (_token_hash(token), row["id"], time.time() + SESSION_DAYS * 86400))
+    uid = row["id"]
+    if billing_enabled():
+        try:
+            claim_trial(uid)
+        except AccountError as e:
+            # 409 = รับไปแล้ว หรือมีแพ็กที่ยังไม่หมดอายุ, 400 = แอดมิน, 404 = ไม่มีแพ็กทดลอง
+            # ไม่บล็อกการล็อกอิน
+            if e.status not in (400, 404, 409):
+                log.warning("auto claim_trial for %s failed: %s", uid, e)
     return {"token": token, "user": public_user(row)}
 
 
@@ -702,14 +764,17 @@ def promote_owner_media(uid: str) -> int:
     return touched
 
 
-def grant_plan(uid: str, plan_id: str, admin_email: str) -> None:
-    """ผู้ดูแลให้แพ็กเกจโดยไม่ต้องชำระ (รับโอนนอกระบบ ชดเชย ฯลฯ)"""
+def grant_plan(uid: str, plan_id: str, admin_email: str, *, force: bool = False) -> None:
+    """ผู้ดูแลให้แพ็กเกจโดยไม่ต้องชำระ (รับโอนนอกระบบ ชดเชย ฯลฯ)
+    แพ็กทดลองให้ได้ครั้งเดียวเหมือน claim_trial ยกเว้นส่ง force=True"""
     p = plan(plan_id)
     if p is None:
         raise AccountError(404, "ไม่พบแพ็กเกจนี้")
     with _tx() as db:
-        if db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None:
+        if _lock_user(db, uid) is None:
             raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        if p.id == "trial" and not force and _trial_taken(db, uid):
+            raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
         _activate(db, uid, p, "adjust", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิต ให้โดย {admin_email}")
     if not p.watermark:
         promote_owner_media(uid)
@@ -1143,22 +1208,31 @@ def buy_credits(uid: str, credits: int) -> dict:
 
 
 def claim_trial(uid: str) -> dict:
-    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี"""
+    """รับแพ็กทดลองฟรี ครั้งเดียวต่อบัญชี
+    ไม่ทับแพ็กที่ยังไม่หมดอายุและไม่ใช่ trial และไม่เขียนแถว ledger ในกรณีนั้น
+    (แถว kind=trial จะกินโควต้าครั้งเดียว แล้วรับทดลองไม่ได้อีกหลังแพ็กเสียเงินหมดอายุ)"""
     p = plan("trial")
     if p is None or not p.free_once:
         raise AccountError(404, "ไม่มีแพ็กเกจทดลอง")
-    with _tx() as db:
-        if db.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None:
-            raise AccountError(404, "ไม่พบผู้ใช้นี้")
-        if db.execute(
-            "SELECT 1 FROM ledger WHERE user_id = ? AND (kind = 'trial' OR ref = 'trial') LIMIT 1",
-            (uid,),
-        ).fetchone():
-            raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
-        if _exempt(db, uid):
-            raise AccountError(400, "บัญชีผู้ดูแลไม่ต้องใช้แพ็กทดลอง")
-        _activate(db, uid, p, "trial", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิตฟรี")
-        sub = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
+    try:
+        with _tx() as db:
+            if _lock_user(db, uid) is None:
+                raise AccountError(404, "ไม่พบผู้ใช้นี้")
+            if _trial_taken(db, uid):
+                raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว")
+            if _exempt(db, uid):
+                raise AccountError(400, "บัญชีผู้ดูแลไม่ต้องใช้แพ็กทดลอง")
+            active = _subscription(db, uid)
+            if active is not None and active["plan_id"] != "trial":
+                raise AccountError(409, "มีแพ็กเกจที่ยังไม่หมดอายุ จึงไม่ให้แพ็กทดลองทับ")
+            _activate(db, uid, p, "trial", 0, f"แพ็กเกจ{p.name} {p.minutes} เครดิตฟรี")
+            sub = db.execute("SELECT * FROM subscriptions WHERE user_id = ?", (uid,)).fetchone()
+    except AccountError:
+        raise
+    except Exception as exc:
+        if _is_unique_violation(exc):
+            raise AccountError(409, "บัญชีนี้รับแพ็กทดลองไปแล้ว") from exc
+        raise
     # รูปแบบคล้าย PaymentOrder เพื่อหน้าเว็บเดิมที่เรียก /billing/subscribe แล้วมองหา status=paid
     return {
         "id": f"trial-{uid}",

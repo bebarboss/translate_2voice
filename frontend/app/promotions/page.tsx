@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, CardsSection, fmtCredits, fmtDate, OpenPayments, SlipBox, useRunner, useWallet } from "@/components/Billing";
-import { api, type PaymentOrder, type Plan } from "@/lib/api";
+import { ApiError, api, type PaymentOrder, type Plan } from "@/lib/api";
 import { signInPath } from "@/lib/auth-routes";
 import { fmtBaht } from "@/lib/format";
 import { tx } from "@/lib/i18n";
+import { ACTIVE_PLAN_NOTE, trialClaimNotice, trialOffer } from "@/lib/trial-offer";
 import { useAuth } from "@/lib/useAuth";
 
 /** ยังไม่ล็อกอินก็ดูแพ็กเกจได้ ซื้อหรือทดลองค่อยไปหน้าเข้าสู่ระบบ */
@@ -121,21 +122,30 @@ export default function PromotionsPage() {
     return run(key, fn, done);
   };
   const paying = busy ? (slip ? tx("กำลังสร้างรายการ...") : stripe ? tx("กำลังไปหน้าชำระเงิน...") : tx("กำลังซื้อ...")) : null;
+  const onClaimTrial = () => run("trial", () => api.claimTrial(), tx("เริ่มแพ็กทดลองแล้ว"), (e) => {
+    if (!(e instanceof ApiError)) return null;
+    const notice = trialClaimNotice(e.status, e.message, sub);
+    return notice ? tx(notice) : null;
+  });
 
   const planAction = (p: Plan) => {
     if (p.available === false) {
       return <span className="badge awaiting_review">{tx("อยู่ระหว่างพัฒนา")}</span>;
     }
     if (p.free_once || p.price <= 0) {
-      if (!ent?.trial_available && sub?.plan_id !== "trial") {
-        return <span className="dim">{tx("รับไปแล้ว")}</span>;
+      const offer = trialOffer(sub, ent?.trial_available);
+      if (offer === "active-plan") {
+        return <span className="dim">{tx(ACTIVE_PLAN_NOTE)}</span>;
       }
-      if (sub?.plan_id === "trial") {
+      if (offer === "using-trial") {
         return <span className="dim">{tx("กำลังใช้แพ็กนี้")}</span>;
+      }
+      if (offer === "claimed") {
+        return <span className="dim">{tx("รับไปแล้ว")}</span>;
       }
       return (
         <button type="button" className="btn primary small" disabled={!!busy}
-          onClick={() => run("trial", () => api.claimTrial(), tx("เริ่มแพ็กทดลองแล้ว"))}>
+          onClick={onClaimTrial}>
           {busy === "trial" ? tx("กำลังเปิด...") : tx("เริ่มทดลองฟรี")}
         </button>
       );
@@ -167,7 +177,7 @@ export default function PromotionsPage() {
       {user.admin && <div className="alert info">{tx("บัญชีผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต")}</div>}
       {ent?.trial_available && (
         <div className="alert info" role="status">
-          {tx("ยังไม่ได้เริ่มแพ็กทดลอง — รับฟรี 2 เครดิตได้ครั้งเดียว")}
+          {tx("ยังไม่มีแพ็กทดลอง — กดรับฟรี 2 เครดิตได้ครั้งเดียว (ปกติได้ตอนเข้าสู่ระบบแล้ว)")}
         </div>
       )}
       <span className="dim">{tx("1 เครดิต = คลิป 1 นาที คิดตามความยาวจริง ตัดตอนเริ่มวิเคราะห์ ใช้เครดิตแพ็กเกจก่อน แล้วค่อยใช้เครดิตเติม เครดิตแพ็กเกจที่เหลือทบไปได้ 1 รอบเมื่อต่ออายุหรืออัปเกรด พากย์ซ้ำคิด 0.1 เครดิตต่อวินาทีของประโยคที่แก้ (ฟรีไม่เกิน 10% ของคลิป และประโยคที่ AI ติดธงฟรี)")}</span>
@@ -216,7 +226,7 @@ export default function PromotionsPage() {
               <span className="dim">{tx("ยังไม่มีแพ็กเกจ — รับทดลองหรือซื้อแพ็กก่อนจึงเติมเครดิตได้")}</span>
               {ent?.trial_available && (
                 <button type="button" className="btn primary small" disabled={!!busy}
-                  onClick={() => run("trial", () => api.claimTrial(), tx("เริ่มแพ็กทดลองแล้ว"))}>
+                  onClick={onClaimTrial}>
                   {tx("เริ่มทดลองฟรี")}
                 </button>
               )}

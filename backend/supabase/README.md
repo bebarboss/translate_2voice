@@ -8,6 +8,7 @@ Production รัน **Postgres บน VPS** (`deploy/docker-compose.yml` servic
 | ไฟล์ | ใช้ทำอะไร |
 | --- | --- |
 | `20261107000000_studio_accounts.sql` ฯลฯ | schema `studio` (บัญชี งาน โปรเจกต์) — คัดลอกไป `deploy/db/init/` แล้ว |
+| `20261112000000_ledger_trial_once.sql` | unique แพ็กทดลองครั้งเดียวต่อผู้ใช้ — รันมือบนฐานที่มีข้อมูลแล้ว ไม่ลบแถวซ้ำ |
 | `20261104000000_translation_memory.sql` ฯลฯ | ตาราง `public` (TM / quality / metrics) — คัดลอกไป `deploy/db/init/` แล้ว |
 
 ## ตั้งค่า

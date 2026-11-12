@@ -51,6 +51,10 @@ create table if not exists studio.ledger (
   credits integer not null default 0
 );
 create index if not exists ledger_user on studio.ledger (user_id, id);
+-- One free-trial grant per user. Existing databases do not re-run this file;
+-- apply backend/supabase/migrations/20261112000000_ledger_trial_once.sql by hand
+-- (it skips the index when duplicate kind=trial rows exist and does not delete them).
+create unique index if not exists ledger_trial_once on studio.ledger (user_id) where kind = 'trial';
 
 create table if not exists studio.topups (
   id text primary key,

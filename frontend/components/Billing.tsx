@@ -18,8 +18,14 @@ export const Alert = ({ m }: { m: Message }) =>
 export function useRunner(load: () => void) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState<Message>(null);
-  /** done: ข้อความเมื่อสำเร็จ หรือฟังก์ชันสร้างข้อความจากผลลัพธ์ */
-  const run = async <T,>(key: string, fn: () => Promise<T>, done: string | ((r: T) => string)) => {
+  /** done: ข้อความเมื่อสำเร็จ หรือฟังก์ชันสร้างข้อความจากผลลัพธ์
+   *  onError คืนข้อความที่เป็นมิตร (แสดงเป็น info) เมื่อไม่ต้องการกล่อง error ทั่วไป */
+  const run = async <T,>(
+    key: string,
+    fn: () => Promise<T>,
+    done: string | ((r: T) => string),
+    onError?: (e: unknown) => string | null,
+  ) => {
     setBusy(key);
     setMessage(null);
     try {
@@ -27,7 +33,13 @@ export function useRunner(load: () => void) {
       load();
       setMessage({ kind: "info", text: typeof done === "string" ? done : done(r) });
     } catch (e) {
-      setMessage({ kind: "error", text: (e as Error).message });
+      const friendly = onError?.(e);
+      if (friendly) {
+        load();
+        setMessage({ kind: "info", text: friendly });
+      } else {
+        setMessage({ kind: "error", text: (e as Error).message });
+      }
     } finally { setBusy(""); }
   };
   return { busy, message, setMessage, run };
