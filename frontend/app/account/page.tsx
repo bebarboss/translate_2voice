@@ -8,6 +8,7 @@ import { GearIcon, MicIcon, ShieldIcon, TagIcon, UserIcon } from "@/components/I
 import { api, fileUrl, type AccountType, type ActorMe, type User } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { chooseLang, chooseTheme, currentTheme, getLang, locale, tx, type Lang, type Theme } from "@/lib/i18n";
+import { redirectToSignIn } from "@/lib/auth-routes";
 import { useAuth } from "@/lib/useAuth";
 
 const KIND_LABEL: Record<string, string> = {
@@ -274,7 +275,7 @@ export default function AccountPage() {
     if (TABS.some((t) => t.id === h)) setTab(h as Tab);
   }, []);
   useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/account";
+    if (loaded && config?.auth && !user) redirectToSignIn();
   }, [loaded, config, user]);
   useEffect(() => {
     if (user) reloadActor();

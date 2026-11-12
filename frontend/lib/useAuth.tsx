@@ -40,7 +40,7 @@ async function fetchAuth(): Promise<Snapshot> {
     const user = config.auth ? await withTimeout(api.me().catch(() => null), AUTH_TIMEOUT_MS) : null;
     return { config, user, at: Date.now() };
   } catch {
-    // tunnel/API ค้าง → อย่าค้าง "กำลังโหลด" ทั้งหน้า; สมมติว่าต้องล็อกอินเพื่อพาไป /welcome|/login
+    // tunnel/API ค้าง → อย่าค้าง "กำลังโหลด" ทั้งหน้า; สมมติว่าต้องล็อกอินเพื่อพาไป /login
     return { config: { ...EMPTY, auth: true }, user: null, at: Date.now() };
   }
 }

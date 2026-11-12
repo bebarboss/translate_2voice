@@ -1146,6 +1146,8 @@ export const EN: Record<string, string> = {
   "ลบ{0} ย้ายประโยคไปให้{1}แล้ว": "Deleted {0} and moved their lines to {1}",
   "ลบ{0}แล้ว": "Deleted {0}",
   "แพ็กเกจและโปรโมชัน": "Plans & promotions",
+  "ดูแพ็กเกจได้เลย เข้าสู่ระบบเมื่อต้องการซื้อหรือเริ่มทดลอง": "Browse plans now. Sign in to buy or start a trial",
+  "เข้าสู่ระบบเพื่อซื้อ": "Sign in to buy",
   "เครดิตคงเหลือ": "Credits left",
   "ดูประวัติเครดิต": "Credit history",
   "ซื้อเครดิตเติม": "Buy top-up credits",

@@ -1,3 +1,4 @@
+import { redirectToSignIn } from "@/lib/auth-routes";
 import { tx } from "@/lib/i18n";
 // ชนิดข้อมูลและฟังก์ชันเรียก Dubbing API (ผ่าน proxy /api ของ Next.js)
 
@@ -409,11 +410,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    // ระบบบัญชีเปิดอยู่แต่ยังไม่ล็อกอิน (หรือหมดอายุ) → ไปหน้าเข้าสู่ระบบ แล้วกลับมาหน้าเดิม
-    if (res.status === 401 && (body as { detail?: string } | null)?.detail === "กรุณาเข้าสู่ระบบ"
-      && typeof window !== "undefined" && !/^\/(login|welcome)/.test(window.location.pathname)) {
-      // ยังไม่ได้เข้าสู่ระบบ → หน้าแรก (มีปุ่มสมัครและเข้าสู่ระบบ) แล้วกลับมาหน้านี้หลังเข้าสู่ระบบ
-      window.location.href = `/welcome?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+    // session หมดหรือยังไม่ล็อกอินบนหน้าแอป → /login?next= (หน้าสาธารณะและ 404 ไม่ถูกพาไป)
+    if (res.status === 401 && (body as { detail?: string } | null)?.detail === "กรุณาเข้าสู่ระบบ") {
+      redirectToSignIn();
     }
     // ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น → หน้ากรอกข้อมูล แล้วกลับมาหน้านี้
     if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy|actor-consent)/.test(window.location.pathname)) {
@@ -871,6 +870,9 @@ function upload<T>(
     xhr.onload = () => {
       let body: unknown = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* ไม่ใช่ JSON */ }
+      if (xhr.status === 401 && (body as { detail?: string } | null)?.detail === "กรุณาเข้าสู่ระบบ") {
+        redirectToSignIn();
+      }
       if (xhr.status >= 200 && xhr.status < 300) resolve(body as T);
       else reject(new ApiError(errorMessage(xhr.status, body), xhr.status));
     };

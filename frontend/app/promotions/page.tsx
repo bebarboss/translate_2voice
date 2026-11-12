@@ -4,9 +4,47 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, CardsSection, fmtCredits, fmtDate, OpenPayments, SlipBox, useRunner, useWallet } from "@/components/Billing";
 import { api, type PaymentOrder, type Plan } from "@/lib/api";
+import { signInPath } from "@/lib/auth-routes";
 import { fmtBaht } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { useAuth } from "@/lib/useAuth";
+
+/** ยังไม่ล็อกอินก็ดูแพ็กเกจได้ ซื้อหรือทดลองค่อยไปหน้าเข้าสู่ระบบ */
+function PublicPricing({ plans }: { plans: Plan[] }) {
+  const login = signInPath("/promotions");
+  return (
+    <main className="page" style={{ maxWidth: 960 }}>
+      <div className="page-head">
+        <div>
+          <h1>{tx("แพ็กเกจและโปรโมชัน")}</h1>
+          <span className="muted">{tx("ดูแพ็กเกจได้เลย เข้าสู่ระบบเมื่อต้องการซื้อหรือเริ่มทดลอง")}</span>
+        </div>
+        <Link href={login} className="btn primary small">{tx("เข้าสู่ระบบ")}</Link>
+      </div>
+      <section aria-labelledby="plans-title" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{tx("แพ็กเกจ")}</h2>
+        {plans.length === 0 ? <div className="empty">{tx("กำลังโหลด...")}</div> : (
+          <div className="plans">
+            {plans.map((p) => (
+              <article key={p.id} className={`card plan${p.available === false ? " dim" : ""}`}>
+                <span style={{ fontSize: 17, fontWeight: 600 }}>{tx(p.name)}</span>
+                <span style={{ fontSize: 26, fontWeight: 600 }}>
+                  {p.price <= 0 ? tx("ฟรี") : fmtBaht(p.price)}
+                  {p.price > 0 && <span className="dim"> / {p.days}  {tx("วัน")}</span>}
+                </span>
+                <span className="muted">{fmtCredits(p.minutes)}{p.max_clip_minutes != null ? ` · ${tx("คลิปยาวสุด {0} นาที", { 0: p.max_clip_minutes })}` : ""}</span>
+                <ul className="dim" style={{ margin: "8px 0", paddingLeft: 18, fontSize: 13, lineHeight: 1.45 }}>
+                  {(p.features?.length ? p.features : []).map((f) => <li key={f}>{tx(f)}</li>)}
+                </ul>
+                <Link href={login} className="btn small">{tx("เข้าสู่ระบบเพื่อซื้อ")}</Link>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
 
 /** แพ็กเกจและโปรโมชัน: ทดลอง / เริ่มต้น / มือโปร + เครดิตเติม */
 export default function PromotionsPage() {
@@ -68,14 +106,11 @@ export default function PromotionsPage() {
       return updated;
     }, (updated) => updated.note || tx("ส่งสลิปแล้ว"));
   };
-  useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/promotions";
-  }, [loaded, config, user]);
-
-  if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
-  if (!config?.billing || !user) {
+  if (!loaded || !config) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (!config.billing) {
     return <main className="page narrow"><div className="card"><span className="muted">{tx("เครดิตและแพ็กเกจยังไม่เปิดใช้งาน")}</span></div></main>;
   }
+  if (!user) return <PublicPricing plans={plans} />;
   const payments = config.payments;
   const sub = wallet?.subscription;
   const ent = wallet?.entitlements;

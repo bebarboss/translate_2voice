@@ -8,6 +8,7 @@ import UsageChart from "@/components/UsageChart";
 import { api, type ActorMe, type Job, type PaymentOrder, type Project, type UsageSummary, type Wallet } from "@/lib/api";
 import { TARGET_LABEL, fmtBaht, fmtDuration, fmtNum, fmtWhen, isActive, langName } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
+import { redirectToSignIn } from "@/lib/auth-routes";
 import { useAuth } from "@/lib/useAuth";
 
 const ATTENTION = new Set(["awaiting_review", "failed", "queued", "running"]);
@@ -41,7 +42,7 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (loaded && config?.auth && !user) window.location.href = "/welcome?next=/dashboard";
+    if (loaded && config?.auth && !user) redirectToSignIn();
   }, [loaded, config, user]);
 
   useEffect(() => {
