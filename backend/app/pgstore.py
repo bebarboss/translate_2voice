@@ -95,6 +95,25 @@ def _dsn() -> str:
     return dsn(schema="studio")
 
 
+def _insert_columns(rest: str) -> Optional[tuple[str, ...]]:
+    """คอลัมน์ใน INSERT (...) ถ้ามี และทุกชื่อเป็น identifier"""
+    body = rest.lstrip()
+    if not body.startswith("("):
+        return None
+    depth = 0
+    for index, ch in enumerate(body):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                cols = tuple(part.strip() for part in body[1:index].split(",") if part.strip())
+                if cols and all(_IDENT.match(col) for col in cols):
+                    return cols
+                return None
+    return None
+
+
 def _rewrite(sql: str) -> str:
     ignore = re.sub(r"\bINSERT\s+OR\s+IGNORE\b", "INSERT", sql, count=1, flags=re.IGNORECASE)
     if ignore != sql:
@@ -108,8 +127,10 @@ def _rewrite(sql: str) -> str:
         return (body + " ON CONFLICT (user_id) DO UPDATE SET plan_id = EXCLUDED.plan_id, "
                 "minutes_left = EXCLUDED.minutes_left, started_at = EXCLUDED.started_at, expires_at = EXCLUDED.expires_at")
     if table == "actor_payment":
-        cols = ("payee_name", "tax_id", "address", "bank", "account_no", "account_name", "updated_at")
-        sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols)
+        # รายชื่อจากคำสั่ง INSERT เพื่อให้คอลัมน์เข้ารหัสถูกอัปเดตด้วย ไม่ใช่แค่ค่าเดิม
+        parsed = _insert_columns(rest)
+        cols = parsed or ("payee_name", "tax_id", "address", "bank", "account_no", "account_name", "updated_at")
+        sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != "user_id")
         return body + f" ON CONFLICT (user_id) DO UPDATE SET {sets}"
     if table == "actors":
         cols = ("stage_name", "gender", "bio", "contact", "status", "created_at")

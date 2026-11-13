@@ -1,11 +1,13 @@
 """ข้อมูลรับเงินนักพากย์รับเฉพาะเลขอารบิก 0-9 และชื่อบนเวทีถูกตัดช่องว่างก่อนตรวจความยาว"""
+import base64
+import os
 import time
 from dataclasses import replace
 
 import pytest
 from pydantic import ValidationError
 
-from app import accounts, actors
+from app import accounts, actors, pii_crypto
 from app.config import settings
 from app.main import ActorApply, ActorPayment
 
@@ -24,6 +26,11 @@ def _fullwidth_digits(ascii_digits: str) -> str:
 
 @pytest.fixture
 def actor_db(tmp_path, monkeypatch):
+    monkeypatch.setenv("PII_ENC_KEYS", "1:" + base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setenv("PII_ENC_ACTIVE_VERSION", "1")
+    monkeypatch.setenv("PII_HMAC_KEY", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.delenv("PII_ENC_DEV_EPHEMERAL", raising=False)
+    pii_crypto.reset()
     monkeypatch.setattr(accounts, "_conn", None)
     monkeypatch.setattr(actors, "_ready", False)
     monkeypatch.setattr(accounts, "settings", replace(
@@ -33,6 +40,7 @@ def actor_db(tmp_path, monkeypatch):
         db.execute("INSERT INTO actors (user_id, stage_name, gender, bio, contact, status, created_at) "
                    "VALUES (?, 'สมชาย', '', '', '', 'approved', ?)", (UID, time.time()))
     yield
+    pii_crypto.reset()
     if accounts._conn is not None:
         accounts._conn.close()
 

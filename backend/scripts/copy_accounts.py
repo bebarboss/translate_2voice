@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent / "supabase" / "migrations"
 SQL_FILES = (
     "20261104010000_quality.sql",
     "20261107000000_studio_accounts.sql",
+    "20261112010000_actor_pii_columns.sql",
 )
 TABLES = (
     "users", "sessions", "subscriptions", "ledger", "topups", "cards", "slip_uses",
