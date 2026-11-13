@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import fastapi_docs_kwargs, settings
+from .media_file import media_file_response
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineAdd, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
@@ -237,12 +238,12 @@ def ensure_job_file(job_id: str, path: Path) -> Path:
         return path
 
 
-def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None) -> FileResponse:
+def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None,
+                inline: bool = False) -> FileResponse:
+    """inline=True เมื่อเบราว์เซอร์ต้องเล่นใน <video>/<audio> ไม่ใช่ดาวน์โหลด"""
     if job_id:
         path = ensure_job_file(job_id, path)
-    if not path.exists():
-        raise HTTPException(404, "ยังไม่มีไฟล์นี้ งานอาจยังไม่เสร็จ")
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return media_file_response(path, media_type, filename, inline=inline)
 
 
 async def save_upload(file: UploadFile, dest: Path, owner_dir: Path) -> None:
@@ -1209,7 +1210,7 @@ def retry_voice(voice_id: str):
 def get_voice_audio(voice_id: str):
     """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
     v = get_voice_or_404(voice_id)
-    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
+    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav", inline=True)
 
 
 IMAGE_TYPES = {b"\xff\xd8\xff": (".jpg", "image/jpeg"), b"\x89PNG\r\n\x1a\n": (".png", "image/png")}
@@ -1330,7 +1331,7 @@ def get_voice_mood_audio(voice_id: str, mood: Mood, request: Request):
     info = actors.voice_actors().get(voice_id)
     if (voice_id, mood) in actors.blocked_moods() and not sees_pending(request, info):
         raise HTTPException(404, "ไม่พบเสียงอารมณ์นี้")
-    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
+    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav", inline=True)
 
 
 # ---------------------------------------------------------------- ไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/)
@@ -2347,15 +2348,21 @@ def get_share_video(token: str):
     job = store.by_share_token(token)
     if job is None:
         raise HTTPException(404, "ไม่พบลิงก์นี้ หรือหมดอายุแล้ว")
-    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"), job_id=job.id)
+    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job.id, inline=True)
 
 
 # ---------------------------------------------------------------- ไฟล์
 @app.get("/jobs/{job_id}/result", dependencies=[Depends(require_key)])
-def get_result(job_id: str, subs: bool = False):
-    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ"""
+def get_result(job_id: str, subs: bool = False, download: bool = False):
+    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ
+
+    เล่นใน <video> ส่งแบบ inline (มือถือไม่เล่นไฟล์ attachment)
+    ปุ่มดาวน์โหลดส่ง download=1 เพื่อให้เบราว์เซอร์บันทึกไฟล์
+    """
     job = get_job_or_404(job_id)
-    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"), job_id=job_id)
+    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job_id, inline=not download)
 
 
 @app.get("/jobs/{job_id}/export", dependencies=[Depends(require_key)])
@@ -2407,7 +2414,7 @@ def get_source(job_id: str):
         raise HTTPException(404, "ยังดาวน์โหลดคลิปไม่เสร็จ")
     path = Path(job.input_path)
     media_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
-    return file_or_404(path, media_type, job.filename, job_id=job_id)
+    return file_or_404(path, media_type, job.filename, job_id=job_id, inline=True)
 
 
 @app.get("/jobs/{job_id}/subtitles", dependencies=[Depends(require_key)])
@@ -2435,10 +2442,11 @@ def list_stems(job_id: str):
 
 
 @app.get("/jobs/{job_id}/stems/{name}", dependencies=[Depends(require_key)])
-def get_stem(job_id: str, name: str):
+def get_stem(job_id: str, name: str, download: bool = False):
+    """เลเยอร์เสียง เล่นใน <audio> เป็น inline; ปุ่มดาวน์โหลดส่ง download=1"""
     get_job_or_404(job_id)
     if not STEM_NAME.match(name):
         raise HTTPException(400, "ชื่อเลเยอร์ไม่ถูกต้อง")
     d = store.dir(job_id)
     path = d / "stems" / f"{name}.wav" if name.startswith("speaker_") else d / f"{name}.wav"
-    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id)
+    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id, inline=not download)

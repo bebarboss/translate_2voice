@@ -866,6 +866,8 @@ export const EN: Record<string, string> = {
   "ซ่อมท่อนอัตโนมัติ": "auto-fixed lines",
   "ยังมีประโยคควรฟัง": "some lines still need a listen",
   "วิดีโอที่พากย์แล้ว": "Dubbed video",
+  "เล่นวิดีโอไม่ได้": "Couldn't play the video",
+  "ลองอีกครั้ง": "Try again",
   "เสียงที่เล่น": "Audio playing",
   "เสียงต้นฉบับ": "Original audio",
   "ตัวอย่างนี้ยังไม่ฝังซับ ซับจะฝังตอนดาวน์โหลด ·": "This preview has no burned-in subtitles; they are added when you download ·",
