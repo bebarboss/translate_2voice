@@ -126,6 +126,8 @@ class Job(BaseModel):
     clip_end: Optional[float] = None
     synth_stats: Optional[SynthStats] = None
     owner: Optional[str] = None  # id ผู้ใช้ที่สร้างงาน (เมื่อเปิดระบบบัญชี accounts.py)
+    # ref รายการตัดที่รอบนี้ต้องคืนถ้าล้ม (job_id หรือ job_id:redub:N) None = รอบนี้ไม่มีการตัดให้คืน
+    billing_ref: Optional[str] = None
     queue_position: Optional[int] = None  # ลำดับคิว (เฉพาะคำตอบของ API ตอนรอคิว ไม่ได้บันทึกลงไฟล์)
     error: Optional[str] = None
     # โหมดฟรี: วันหมดอายุไฟล์บน R2 (ISO) — อัปเกรดก่อนครบกำหนดจะย้ายออกจาก free/
