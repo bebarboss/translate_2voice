@@ -1,5 +1,7 @@
-const THAI_DIGITS = "๐๑๒๓๔๕๖๗๘๙";
-const FULLWIDTH_DIGITS = "０１２３４５６７๘９";
+/** Thai digits U+0E50..U+0E59 and fullwidth digits U+FF10..U+FF19.
+ *  Built from codepoints so a lookalike cannot be pasted in (Thai 8 is U+0E58, fullwidth 8 is U+FF18). */
+const THAI_DIGITS = Array.from({ length: 10 }, (_, i) => String.fromCharCode(0x0e50 + i)).join("");
+const FULLWIDTH_DIGITS = Array.from({ length: 10 }, (_, i) => String.fromCharCode(0xff10 + i)).join("");
 
 /** แปลงเลขไทยและเลขเต็มความกว้างเป็น 0-9 แล้วตัดช่องว่างกับขีด
  *  เซิร์ฟเวอร์ไม่แปลงเลขยูนิโค้ด จึงต้องทำก่อนส่ง */
