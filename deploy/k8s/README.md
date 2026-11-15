@@ -170,6 +170,8 @@ shred -u /tmp/pakdee-secret.yaml
 
 `pakdee-secrets` must also contain `ADMIN_EMAILS`, `PAYMENT_PROVIDER=stripe`, `R2_ENABLED=1`, `R2_BUCKET`, `R2_ACCOUNT_ID`, and `R2_ENDPOINT`. Those keys are listed as placeholders in `secret.example.yaml`. Do not put a real admin address in `config.env` or the ConfigMap. The Deployment loads the ConfigMap first and the Secret second, so a key present in both is taken from the Secret. Keeping these out of the ConfigMap means an empty ConfigMap value cannot clear them.
 
+Actor tax ids and bank account numbers use a separate Secret, `pakdee-pii`. The API deployment reads `PII_ENC_KEYS`, `PII_ENC_ACTIVE_VERSION`, and `PII_HMAC_KEY` from it with `secretKeyRef`. Create that Secret before rolling out the encryption image, or the pod will not start. Steps for generating keys, `age` backup, restore, and rotation are in [docs/pii-encryption.md](../../docs/pii-encryption.md). Do not commit the key values.
+
 The workflow pushes with `GITHUB_TOKEN`. The node pulls with a personal access token that has **read:packages** (classic) or a fine-grained token limited to these packages. Images stay private.
 
 ```bash

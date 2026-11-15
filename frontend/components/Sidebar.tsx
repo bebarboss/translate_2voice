@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Job, type Wallet } from "@/lib/api";
+import { COUNT_MISSING, Skel } from "@/components/LoadState";
 import { fmtNum } from "@/lib/format";
 import { tx } from "@/lib/i18n";
-import { useAuth } from "@/lib/useAuth";
+import { isSignedOut, useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
 import { BrandLink } from "./Brand";
 import { FolderIcon, GridIcon, HomeIcon, MenuIcon, MicIcon, PlusIcon, TimelineIcon, UserIcon, VideoIcon, WaveIcon, XIcon } from "./Icons";
@@ -26,8 +27,17 @@ const BARE = /^\/(welcome|login|onboarding|terms|privacy|actor-consent|share)/;
 /** เครดิตคงเหลือท้ายเมนู (เมื่อเปิดระบบเครดิต) โหลดใหม่เมื่อเปลี่ยนหน้า ทุก 20 วินาที และตอนกลับมาที่แท็บ */
 function CreditCard({ path }: { path: string }) {
   const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
+  const walletRef = useRef<Wallet | null>(null);
   useEffect(() => {
-    const load = () => { if (!document.hidden) api.wallet().then(setWallet).catch(() => {}); };
+    const load = () => {
+      if (document.hidden) return;
+      api.wallet().then((w) => {
+        walletRef.current = w;
+        setWallet(w);
+        setPhase("ready");
+      }).catch(() => setPhase(walletRef.current ? "ready" : "error"));
+    };
     load();
     const timer = setInterval(load, 20_000);
     document.addEventListener("visibilitychange", load);
@@ -42,10 +52,14 @@ function CreditCard({ path }: { path: string }) {
   return (
     <Link href="/promotions" className="credit-card">
       <span className="credit-top">
-        <b>{wallet ? tx("{0} เครดิต", { 0: fmtNum(total) }) : "..."}</b>
+        <b>
+          {phase === "loading" ? <Skel className="skel-count" />
+            : phase === "error" ? <span aria-label={tx("โหลดไม่สำเร็จ")}>{COUNT_MISSING}</span>
+              : tx("{0} เครดิต", { 0: fmtNum(total) })}
+        </b>
         <span className="credit-add">{tx("เติม")}</span>
       </span>
-      <span className="credit-bar" aria-hidden="true"><span style={{ width: `${(wallet ? fill : 0) * 100}%` }} /></span>
+      <span className="credit-bar" aria-hidden="true"><span style={{ width: `${(phase === "ready" && wallet ? fill : 0) * 100}%` }} /></span>
       <span className="credit-note">{tx("เติมเครดิตหรือซื้อแพ็กเกจ")}</span>
     </Link>
   );
@@ -55,7 +69,9 @@ function CreditCard({ path }: { path: string }) {
 export default function Sidebar() {
   const path = usePathname();
   const isActive = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
-  const { config, user, loaded } = useAuth();
+  const auth = useAuth();
+  const { config, user, loaded } = auth;
+  const signedOut = isSignedOut(auth);
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<Job[] | null>(null);
   const bare = BARE.test(path);
@@ -71,7 +87,7 @@ export default function Sidebar() {
     if (!canLoad) return;
     // รอหลัง auth เสร็จเล็กน้อย ไม่แย่งคิวกับ /me ตอนเปิดหน้า
     const t = window.setTimeout(() => {
-      api.listJobs().then((j) => setRecent(j.slice(0, RECENT))).catch(() => setRecent([]));
+      api.listJobs().then((j) => setRecent(j.slice(0, RECENT))).catch(() => { /* 5xx ไม่ใช่รายการว่าง คงงานล่าสุดเดิม */ });
     }, 100);
     return () => clearTimeout(t);
   }, [canLoad, path]);
@@ -128,7 +144,7 @@ export default function Sidebar() {
         </div>
         <div className="side-bottom">
           {config?.billing && user && !user.admin && <CreditCard path={path} />}
-          {config?.auth && !user ? (
+          {signedOut ? (
             <div className="row" style={{ justifyContent: "space-between" }}>
               <Link href="/login" className="btn small">{tx("เข้าสู่ระบบ")}</Link>
               <AccountMenu config={config} user={null} />

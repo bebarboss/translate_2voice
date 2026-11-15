@@ -10,6 +10,8 @@ openai>=1.30
 requests>=2.31
 # บัญชี เครดิต นักพากย์ บน Postgres (schema studio) เมื่อ DB_BACKEND=supabase
 psycopg[binary]>=3.2
+# เข้ารหัสเลขผู้เสียภาษีและเลขบัญชีของนักพากย์ (app/pii_crypto.py)
+cryptography>=42
 # ชำระเงิน Stripe Checkout (PAYMENT_PROVIDER=stripe)
 stripe>=11.0
 # Cloudflare R2 (S3-compatible) เก็บไฟล์สื่องานหลังเสร็จ (object_store.py)

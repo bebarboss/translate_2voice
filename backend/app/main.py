@@ -19,11 +19,12 @@ from urllib.parse import urlparse
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from . import accounts, actors, backup, consent, daily_metrics, memory, notify, projects, quality, runtime_settings, supabase_db
+from . import accounts, actors, backup, consent, daily_metrics, memory, notify, pii_crypto, projects, quality, runtime_settings, supabase_db
 from .account_api import require_admin, require_user, router as account_router
 from .config import fastapi_docs_kwargs, settings
+from .media_file import media_file_response
 from .jobs import ACTIVE, JobStore, Worker
 from .schemas import (Gender, Job, JobCreated, JobOptionsUpdate, JobStatus, LibraryVoice, LineAdd, LineDuplicate, LibraryVoiceUpdate, Mood, Project, TargetLang,
                       Retranslate, RuntimeSettings, RuntimeSettingsUpdate, SpeakerRename, SpeakerToLibrary, SpeakerVoice, Utterance, UtteranceEdit,
@@ -54,6 +55,8 @@ log.info("app module ready")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # ไม่มีคีย์ในโปรดักชันต้องหยุดก่อนรับคำขอ คีย์ชั่วคราวใช้ได้เฉพาะ PII_ENC_DEV_EPHEMERAL นอกคลัสเตอร์
+    pii_crypto.require_keys()
     worker.start()
     backup.start()
     daily_metrics.start()  # ทุก 23:59 Asia/Bangkok ประเมินงาน done ในวันนั้น เก็บลง DB
@@ -90,6 +93,12 @@ app.add_middleware(
 def _db_error(_: Request, exc: supabase_db.DBError):
     logging.getLogger("dubbing.db").error("Supabase: %s", exc)
     return JSONResponse({"detail": "บันทึกลงฐานข้อมูลไม่ได้ชั่วคราว ลองใหม่อีกครั้ง"}, status_code=503)
+
+
+@app.exception_handler(pii_crypto.PiiCryptoError)
+def _pii_error(_: Request, exc: pii_crypto.PiiCryptoError):
+    log.error("pii encryption failed: %s", exc)
+    return JSONResponse({"detail": str(exc)}, status_code=500)
 
 
 def require_key(x_api_key: Optional[str] = Header(default=None)) -> None:
@@ -237,12 +246,12 @@ def ensure_job_file(job_id: str, path: Path) -> Path:
         return path
 
 
-def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None) -> FileResponse:
+def file_or_404(path: Path, media_type: str, filename: str, *, job_id: Optional[str] = None,
+                inline: bool = False) -> FileResponse:
+    """inline=True เมื่อเบราว์เซอร์ต้องเล่นใน <video>/<audio> ไม่ใช่ดาวน์โหลด"""
     if job_id:
         path = ensure_job_file(job_id, path)
-    if not path.exists():
-        raise HTTPException(404, "ยังไม่มีไฟล์นี้ งานอาจยังไม่เสร็จ")
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return media_file_response(path, media_type, filename, inline=inline)
 
 
 async def save_upload(file: UploadFile, dest: Path, owner_dir: Path) -> None:
@@ -485,7 +494,7 @@ async def create_job(
         clip_start=trim_start,
         clip_end=trim_end,
     ))
-    worker.submit(job.id, "analyze")
+    worker.submit(job.id, "analyze", job.id)
     return JobCreated(id=job.id, status=JobStatus.queued)
 
 
@@ -557,7 +566,14 @@ def retry_job(job_id: str):
     if phase == "render" and not (store.dir(job_id) / "output.mp4").exists():
         phase = "synthesize"
     _check_quota(job.owner)
-    worker.submit(job_id, phase)
+    # วิเคราะห์คืนรายการตัดหลัก พากย์ใช้ ref ที่รอบที่ล้มเก็บไว้ (พากย์ซ้ำคือ job_id:redub:N) ฝังซับไม่มีการตัด
+    if phase == "analyze":
+        charge_ref = job_id
+    elif phase == "synthesize":
+        charge_ref = job.billing_ref
+    else:
+        charge_ref = None
+    worker.submit(job_id, phase, charge_ref)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -578,7 +594,7 @@ def render(job_id: str):
     out = ensure_job_file(job_id, store.dir(job_id) / "output.mp4")
     if job.status != JobStatus.done or not out.exists():
         raise HTTPException(409, "ฝังซับได้เมื่อพากย์เสร็จแล้วเท่านั้น")
-    worker.submit(job_id, "render")
+    worker.submit(job_id, "render", None)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -942,7 +958,7 @@ def retranslate(job_id: str, body: Retranslate):
     fields = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if fields:
         store.update(job_id, **fields)
-    worker.submit(job_id, "translate")
+    worker.submit(job_id, "translate", None)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -961,20 +977,27 @@ def synthesize(job_id: str, body: Optional[SynthesizeBody] = Body(None)):
     if not store.load_transcript(job_id):
         raise HTTPException(409, "งานนี้ยังไม่มีบท ต้องรอขั้นแปลเสร็จก่อน")
     # พากย์ซ้ำหลังงานเสร็จแล้ว: คิดเครดิตจากวินาทีที่แก้ (โควตาฟรี 10% + บรรทัดติดธง)
-    if job.owner and job.status == JobStatus.done and body and (body.edit_seconds or 0) > 0:
+    # charge_ref คือรายการที่จะคืนถ้ารอบนี้ล้ม — พากย์ซ้ำฟรีหรือไม่ตัดจะเป็น None เพื่อไม่ไปคืนงานเดิม
+    charge_ref = None
+    if job.status in (JobStatus.failed, JobStatus.cancelled):
+        charge_ref = job.billing_ref
+    elif job.owner and job.status == JobStatus.done and body and (body.edit_seconds or 0) > 0:
         try:
-            accounts.charge_redub(
+            quoted = accounts.charge_redub(
                 job.owner, job_id, body.edit_seconds or 0.0,
                 job.duration or 0.0, body.free_flagged_seconds or 0.0)
         except accounts.AccountError as e:
             raise HTTPException(e.status, str(e))
+        charge_ref = quoted.get("ref")
+    elif job.status == JobStatus.awaiting_review:
+        charge_ref = job_id
     try:
         from . import object_store
         object_store.hydrate_job(store.dir(job_id))
     except Exception:  # noqa: BLE001
         pass
     _check_quota(job.owner)
-    worker.submit(job_id, "synthesize")
+    worker.submit(job_id, "synthesize", charge_ref)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -1209,7 +1232,7 @@ def retry_voice(voice_id: str):
 def get_voice_audio(voice_id: str):
     """เสียงตัวอย่างที่ทำความสะอาดและตัดแล้ว (ใช้ปุ่มฟังตัวอย่าง)"""
     v = get_voice_or_404(voice_id)
-    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav")
+    return file_or_404(voice_store.ref_path(voice_id), "audio/wav", f"{v.name}.wav", inline=True)
 
 
 IMAGE_TYPES = {b"\xff\xd8\xff": (".jpg", "image/jpeg"), b"\x89PNG\r\n\x1a\n": (".png", "image/png")}
@@ -1330,7 +1353,7 @@ def get_voice_mood_audio(voice_id: str, mood: Mood, request: Request):
     info = actors.voice_actors().get(voice_id)
     if (voice_id, mood) in actors.blocked_moods() and not sees_pending(request, info):
         raise HTTPException(404, "ไม่พบเสียงอารมณ์นี้")
-    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav")
+    return file_or_404(voice_store.ref_path(voice_id, mood), "audio/wav", f"{v.name}-{mood}.wav", inline=True)
 
 
 # ---------------------------------------------------------------- ไทม์ไลน์จากโปรแกรมตัดต่อ (timeline/)
@@ -1531,7 +1554,7 @@ def start_timeline(job_id: str, request: Request):
         except accounts.AccountError as e:
             raise HTTPException(e.status, str(e))
     store.update(job_id, status=JobStatus.queued, stage="queued", progress=0.0, error=None)
-    worker.submit(job_id, "analyze")
+    worker.submit(job_id, "analyze", job_id)
     return JobCreated(id=job_id, status=JobStatus.queued)
 
 
@@ -1773,6 +1796,14 @@ class ActorApply(BaseModel):
     consent_version: str = Field(..., max_length=20, description="เวอร์ชันหนังสือยินยอมที่อ่านและกดยอมรับ")
     consent_items: list[str] = Field(default_factory=list, max_length=10, description="ข้อที่ติ๊กยอมรับ (ต้องครบทุกข้อ)")
 
+    @field_validator("stage_name", mode="before")
+    @classmethod
+    def _strip_stage_name(cls, v: object) -> object:
+        # ตัดช่องว่างก่อนตรวจความยาว ชื่อที่มีแต่ช่องว่างจึงไม่ผ่าน min_length
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
 
 class ConsentAccept(BaseModel):
     version: str = Field(..., max_length=20)
@@ -1784,13 +1815,27 @@ class Review(BaseModel):
     note: str = Field("", max_length=300)
 
 
+def _strip_digit_separators(v: object) -> object:
+    """ตัดช่องว่างและขีดออกก่อนตรวจรูปแบบ ไม่แปลงเลขไทยหรือเลขเต็มความกว้าง"""
+    if isinstance(v, str):
+        return re.sub(r"[\s-]", "", v)
+    return v
+
+
 class ActorPayment(BaseModel):
     payee_name: str = Field(..., max_length=100, description="ชื่อ-นามสกุลผู้รับเงินตามบัตรประชาชน")
-    tax_id: str = Field(..., max_length=20, description="เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก")
+    tax_id: str = Field(..., min_length=13, max_length=13, pattern=r"^[0-9]{13}$",
+                        description="เลขประจำตัวผู้เสียภาษี / เลขบัตรประชาชน 13 หลัก (0-9 เท่านั้น เว้นวรรคและขีดถูกลบก่อนตรวจ)")
     address: str = Field(..., max_length=300, description="ที่อยู่ตามบัตรประชาชน")
     bank: str = Field(..., max_length=40)
-    account_no: str = Field(..., max_length=30, description="เลขบัญชี หรือเบอร์/เลขพร้อมเพย์")
+    account_no: str = Field(..., min_length=10, max_length=15, pattern=r"^[0-9]{10,15}$",
+                            description="เลขบัญชี หรือเบอร์/เลขพร้อมเพย์ 10–15 หลัก (0-9 เท่านั้น เว้นวรรคและขีดถูกลบก่อนตรวจ)")
     account_name: str = Field(..., max_length=100)
+
+    @field_validator("tax_id", "account_no", mode="before")
+    @classmethod
+    def _normalize_digits(cls, v: object) -> object:
+        return _strip_digit_separators(v)
 
 
 class Payout(BaseModel):
@@ -2325,15 +2370,21 @@ def get_share_video(token: str):
     job = store.by_share_token(token)
     if job is None:
         raise HTTPException(404, "ไม่พบลิงก์นี้ หรือหมดอายุแล้ว")
-    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"), job_id=job.id)
+    return file_or_404(video_for_download(job, False), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job.id, inline=True)
 
 
 # ---------------------------------------------------------------- ไฟล์
 @app.get("/jobs/{job_id}/result", dependencies=[Depends(require_key)])
-def get_result(job_id: str, subs: bool = False):
-    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ"""
+def get_result(job_id: str, subs: bool = False, download: bool = False):
+    """วิดีโอพากย์แล้ว subs=true = รุ่นฝังซับ
+
+    เล่นใน <video> ส่งแบบ inline (มือถือไม่เล่นไฟล์ attachment)
+    ปุ่มดาวน์โหลดส่ง download=1 เพื่อให้เบราว์เซอร์บันทึกไฟล์
+    """
     job = get_job_or_404(job_id)
-    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"), job_id=job_id)
+    return file_or_404(video_for_download(job, subs), "video/mp4", out_name(job, ".mp4"),
+                       job_id=job_id, inline=not download)
 
 
 @app.get("/jobs/{job_id}/export", dependencies=[Depends(require_key)])
@@ -2385,7 +2436,7 @@ def get_source(job_id: str):
         raise HTTPException(404, "ยังดาวน์โหลดคลิปไม่เสร็จ")
     path = Path(job.input_path)
     media_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
-    return file_or_404(path, media_type, job.filename, job_id=job_id)
+    return file_or_404(path, media_type, job.filename, job_id=job_id, inline=True)
 
 
 @app.get("/jobs/{job_id}/subtitles", dependencies=[Depends(require_key)])
@@ -2413,10 +2464,11 @@ def list_stems(job_id: str):
 
 
 @app.get("/jobs/{job_id}/stems/{name}", dependencies=[Depends(require_key)])
-def get_stem(job_id: str, name: str):
+def get_stem(job_id: str, name: str, download: bool = False):
+    """เลเยอร์เสียง เล่นใน <audio> เป็น inline; ปุ่มดาวน์โหลดส่ง download=1"""
     get_job_or_404(job_id)
     if not STEM_NAME.match(name):
         raise HTTPException(400, "ชื่อเลเยอร์ไม่ถูกต้อง")
     d = store.dir(job_id)
     path = d / "stems" / f"{name}.wav" if name.startswith("speaker_") else d / f"{name}.wav"
-    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id)
+    return file_or_404(path, "audio/wav", f"{job_id}_{name}.wav", job_id=job_id, inline=not download)

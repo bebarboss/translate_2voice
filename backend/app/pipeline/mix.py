@@ -5,7 +5,7 @@ from typing import Callable, Optional
 import numpy as np
 import soundfile as sf
 
-from .audio import run
+from .audio import h264_video_args, run
 
 
 def _loud_runs(x: np.ndarray, sr: int, level: float = 0.02, min_len: float = 0.2,
@@ -171,7 +171,8 @@ def mux_video(video: Path, audio_wav: Path, out_mp4: Path, watermark: str = "") 
         text = watermark.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
         vf = (f"drawtext=text='{text}':fontsize=h/18:fontcolor=white@0.55:"
               f"borderw=2:bordercolor=black@0.35:x=w-tw-24:y=h-th-24")
-    reencode = base + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+    # เข้ารหัสใหม่เป็น H.264 Main + yuv420p (ค่าเริ่มต้นของ libx264 คือ High)
+    reencode = base + h264_video_args()
     if vf:
         reencode += ["-vf", vf]
     reencode += tail

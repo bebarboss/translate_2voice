@@ -44,7 +44,10 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
   if (session) headers.set("x-user-token", session);
   headers.set("ngrok-skip-browser-warning", "1"); // ngrok แบบฟรีจะไม่แทรกหน้าเตือน
 
-  const init: RequestInit & { duplex?: "half" } = { method: req.method, headers, redirect: "manual" };
+  // ไม่แคชคำตอบของ API: คำขอ Range ครั้งแรกของ Safari มีแค่ 2 ไบต์ ถ้าถูกจำไว้คลิปทั้งไฟล์จะพัง
+  const init: RequestInit & { duplex?: "half" } = {
+    method: req.method, headers, redirect: "manual", cache: "no-store",
+  };
   if (req.method !== "GET" && req.method !== "HEAD") {
     if (req.headers.get("content-type")?.startsWith("application/json")) {
       // JSON เล็ก ๆ อ่านทั้งก้อน: fetch ของ Node ตีคำตอบ 401 ของ body แบบสตรีมเป็น network error
@@ -70,7 +73,11 @@ async function proxy(req: NextRequest, ctx: Ctx): Promise<Response> {
     const value = res.headers.get(name);
     if (value) out.set(name, value);
   }
-  out.set("cache-control", "no-store");
+  const type = (res.headers.get("content-type") ?? "").toLowerCase();
+  // iOS Safari ไม่เล่น <video>/<audio> ที่ตอบ Cache-Control: no-store (แถบเวลาค้าง 0:00)
+  // JSON ยังห้ามแคช ไฟล์สื่อใช้ private ให้เครื่องเก็บช่วงที่ขอแบบ Range ได้
+  if (type.startsWith("video/") || type.startsWith("audio/")) out.set("cache-control", "private");
+  else out.set("cache-control", "no-store");
 
   // เข้าสู่ระบบด้วย Google: เก็บ token ลงคุกกี้ httpOnly ไม่ส่ง token ให้สคริปต์ในหน้าเว็บ
   const route = path.join("/");

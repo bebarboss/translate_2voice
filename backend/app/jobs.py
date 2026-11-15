@@ -23,6 +23,22 @@ log = logging.getLogger("dubbing.jobs")
 ACTIVE = (JobStatus.queued, JobStatus.running)
 
 
+def refund_ref_for_failure(job, phase: str) -> Optional[str]:
+    """ref ของรายการตัดที่รอบนี้ต้องคืน หรือ None ถ้ารอบนี้ไม่มีการตัด
+
+    พากย์ซ้ำเก็บ ref ไว้ที่ job.billing_ref (job_id:redub:N) งานวิเคราะห์ครั้งแรกใช้ job_id
+    ไม่เดาจาก job_id ตอนพากย์ซ้ำ — เดาแบบนั้นจะคืนรายการตัดเดิมแทนรอบที่ล้ม
+    """
+    if job is None or phase == "voice" or not getattr(job, "owner", None):
+        return None
+    ref = getattr(job, "billing_ref", None)
+    if ref:
+        return ref
+    if phase == "analyze":
+        return job.id
+    return None
+
+
 class Cancelled(Exception):
     """ผู้ใช้กดยกเลิกงานระหว่างทำงาน"""
 
@@ -301,9 +317,12 @@ class Worker:
             self._pending.append(Task(job_id, phase, owner, self._seq))
             self._cond.notify_all()
 
-    def submit(self, job_id: str, phase: str) -> None:
+    def submit(self, job_id: str, phase: str, charge_ref: Optional[str] = None) -> None:
+        """รับงานเข้าคิว charge_ref คือรายการตัดที่ต้องคืนถ้ารอบนี้ล้ม (None = ไม่คืน)"""
         self.store.clear_cancel(job_id)
-        job = self.store.update(job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None)
+        job = self.store.update(
+            job_id, status=JobStatus.queued, stage="queued", phase=phase, error=None,
+            billing_ref=charge_ref)
         self._put(job_id, phase, job.owner)
 
     def submit_voice(self, voice_id: str, mood: str = "") -> None:
@@ -385,24 +404,26 @@ class Worker:
             self.store.update(job_id, status=JobStatus.running)
             if phase == "render":
                 runner.run_render(self.store, job_id)
-                self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+                self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0, billing_ref=None)
                 event = "done"
                 self._archive_r2(job_id)
                 return
             if phase == "translate":  # แปลบทใหม่ แล้วรอให้ตรวจก่อนพากย์ใหม่เสมอ
                 runner.run_translate(self.store, job_id)
-                self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
+                self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review",
+                                  billing_ref=None)
                 return
             if phase == "analyze":
                 runner.run_analyze(self.store, job_id)
                 job = self.store.get(job_id)
                 if job and job.review:
-                    self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review")
+                    self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review",
+                                      billing_ref=None)
                     event = "review"
                     return
                 self.store.update(job_id, phase="synthesize")
             runner.run_synthesize(self.store, job_id, self.voices)
-            self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0)
+            self.store.update(job_id, status=JobStatus.done, stage="done", progress=1.0, billing_ref=None)
             event = "done"
             self._archive_r2(job_id)
         except Cancelled:
@@ -415,9 +436,10 @@ class Worker:
             if job and phase != "voice":
                 self.store.update(job_id, status=JobStatus.failed, error=str(exc)[:2000])
                 event = "failed"
-                if job.owner:  # งานล้มเหลวเพราะระบบ → คืนเครดิต (ครั้งเดียวต่องาน)
+                ref = refund_ref_for_failure(job, phase)
+                if ref:  # คืนเฉพาะรายการตัดของรอบที่ล้ม (job_id หรือ job_id:redub:N)
                     from . import accounts
-                    accounts.refund_job(job.owner, job_id)
+                    accounts.refund_job(job.owner, ref)
         finally:
             if phase != "voice":
                 self.store.clear_cancel(job_id)
