@@ -1078,7 +1078,6 @@ export const EN: Record<string, string> = {
   "เซิร์ฟเวอร์ขัดข้องชั่วคราว งานของคุณยังอยู่ครบ ลองใหม่อีกครั้งในอีกสักครู่": "The server is temporarily unavailable. Your jobs are still safe. Try again in a moment",
   "เซิร์ฟเวอร์ขัดข้องชั่วคราว ข้อมูลของคุณยังอยู่ครบ ลองใหม่อีกครั้งในอีกสักครู่": "The server is temporarily unavailable. Your data is still safe. Try again in a moment",
   "เซิร์ฟเวอร์ขัดข้องชั่วคราว เครดิตของคุณยังอยู่ครบ ลองใหม่อีกครั้งในอีกสักครู่": "The server is temporarily unavailable. Your credits are still safe. Try again in a moment",
-  "ลองอีกครั้ง": "Try again",
   "โหลดไม่สำเร็จ": "Couldn't load",
   "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้": "Cannot connect to the server",
   "เปิดรูปนี้ไม่ได้ ใช้ไฟล์ JPG, PNG หรือ WEBP": "Cannot open this image. Use a JPG, PNG or WEBP file",
