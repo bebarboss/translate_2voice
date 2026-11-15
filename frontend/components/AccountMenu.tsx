@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, type AuthConfig, type User } from "@/lib/api";
+import { clearStoredSession } from "@/lib/useAuth";
 import { chooseLang, chooseTheme, currentTheme, getLang, tx, type Lang, type Theme } from "@/lib/i18n";
 import { FlagIcon, GearIcon, ShieldIcon, TagIcon, UserIcon } from "./Icons";
 
@@ -44,6 +45,7 @@ export default function AccountMenu({ config, user }: { config: AuthConfig | nul
   }, [open]);
 
   const logout = async () => {
+    clearStoredSession();
     await api.logout().catch(() => undefined);
     window.location.href = "/login";
   };

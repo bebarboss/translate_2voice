@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Alert, CardsSection, fmtCredits, fmtDate, OpenPayments, SlipBox, useRunner, useWallet } from "@/components/Billing";
+import { ACCOUNT_LOAD_ERROR, CREDITS_LOAD_ERROR, LoadError, Skel, SkelLines } from "@/components/LoadState";
 import { ApiError, api, type PaymentOrder, type Plan } from "@/lib/api";
 import { signInPath } from "@/lib/auth-routes";
 import { fmtBaht } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { ACTIVE_PLAN_NOTE, trialClaimNotice, trialOffer } from "@/lib/trial-offer";
 import { useAuth } from "@/lib/useAuth";
+import type { LoadPhase } from "@/components/LoadState";
 
 /** ยังไม่ล็อกอินก็ดูแพ็กเกจได้ ซื้อหรือทดลองค่อยไปหน้าเข้าสู่ระบบ */
-function PublicPricing({ plans }: { plans: Plan[] }) {
+function PublicPricing({ plans, phase, onRetry }: { plans: Plan[]; phase: LoadPhase; onRetry: () => void }) {
   const login = signInPath("/promotions");
   return (
     <main className="page" style={{ maxWidth: 960 }}>
@@ -24,7 +26,8 @@ function PublicPricing({ plans }: { plans: Plan[] }) {
       </div>
       <section aria-labelledby="plans-title" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{tx("แพ็กเกจ")}</h2>
-        {plans.length === 0 ? <div className="empty">{tx("กำลังโหลด...")}</div> : (
+        {phase === "error" ? <LoadError title={CREDITS_LOAD_ERROR.title} description={CREDITS_LOAD_ERROR.description} onRetry={onRetry} />
+          : phase === "loading" ? <SkelLines rows={3} /> : (
           <div className="plans">
             {plans.map((p) => (
               <article key={p.id} className={`card plan${p.available === false ? " dim" : ""}`}>
@@ -49,8 +52,8 @@ function PublicPricing({ plans }: { plans: Plan[] }) {
 
 /** แพ็กเกจและโปรโมชัน: ทดลอง / เริ่มต้น / มือโปร + เครดิตเติม */
 export default function PromotionsPage() {
-  const { config, user, loaded } = useAuth();
-  const { wallet, plans, packs, error, reload } = useWallet();
+  const { config, user, loaded, unavailable, reload: reloadAuth } = useAuth();
+  const { wallet, plans, packs, error, phase, reload } = useWallet();
   const [pack, setPack] = useState(30);
   const [order, setOrder] = useState<PaymentOrder | null>(null);
   const [open, setOpen] = useState<PaymentOrder[]>([]);
@@ -108,10 +111,17 @@ export default function PromotionsPage() {
     }, (updated) => updated.note || tx("ส่งสลิปแล้ว"));
   };
   if (!loaded || !config) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reloadAuth(); }} />
+      </main>
+    );
+  }
   if (!config.billing) {
     return <main className="page narrow"><div className="card"><span className="muted">{tx("เครดิตและแพ็กเกจยังไม่เปิดใช้งาน")}</span></div></main>;
   }
-  if (!user) return <PublicPricing plans={plans} />;
+  if (!user) return <PublicPricing plans={plans} phase={phase} onRetry={reload} />;
   const payments = config.payments;
   const sub = wallet?.subscription;
   const ent = wallet?.entitlements;
@@ -166,13 +176,15 @@ export default function PromotionsPage() {
         <div>
           <h1>{tx("แพ็กเกจและโปรโมชัน")}</h1>
           <span className="muted">
-            {tx("เครดิตคงเหลือ")} {wallet ? fmtCredits(wallet.credits + (sub?.minutes_left ?? 0)) : "..."}
+            {tx("เครดิตคงเหลือ")} {phase === "loading" ? <Skel width="5em" /> : phase === "error" || !wallet ? "–" : fmtCredits(wallet.credits + (sub?.minutes_left ?? 0))}
             {sub && current && ` · ${tx("{0} · หมดอายุ {1}", { 0: current.name, 1: fmtDate(sub.expires_at) })}`}
           </span>
         </div>
         <Link href="/account" className="btn small">{tx("ดูประวัติเครดิต")}</Link>
       </div>
-      {error && <div className="alert error" role="alert">{error}</div>}
+      {phase === "error" && !wallet
+        ? <LoadError title={CREDITS_LOAD_ERROR.title} description={CREDITS_LOAD_ERROR.description} onRetry={reload} />
+        : error && <div className="alert error" role="alert">{error}</div>}
       {flash && <div className="alert info" role="status">{flash}</div>}
       {user.admin && <div className="alert info">{tx("บัญชีผู้ดูแลระบบพากย์ได้ไม่จำกัด ไม่ถูกตัดเครดิต")}</div>}
       {ent?.trial_available && (
@@ -188,6 +200,7 @@ export default function PromotionsPage() {
 
       <section aria-labelledby="plans-title" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <h2 id="plans-title" style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>{tx("แพ็กเกจ")}</h2>
+        {phase === "loading" ? <SkelLines rows={3} /> : (
         <div className="plans">
           {plans.map((p) => (
             <article key={p.id} className={`card plan${p.id === sub?.plan_id ? " current" : ""}${p.available === false ? " dim" : ""}`}>
@@ -215,6 +228,7 @@ export default function PromotionsPage() {
             </article>
           ))}
         </div>
+        )}
       </section>
 
       {wallet && (

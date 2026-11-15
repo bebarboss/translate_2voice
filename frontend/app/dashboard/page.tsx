@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PlusIcon } from "@/components/Icons";
+import { ACCOUNT_LOAD_ERROR, CREDITS_LOAD_ERROR, DASH_LOAD_ERROR, LoadError, LoadValue, PROJECTS_LOAD_ERROR, Skel, SkelLines, useLoad } from "@/components/LoadState";
 import StatusBadge from "@/components/StatusBadge";
 import UsageChart from "@/components/UsageChart";
-import { api, type ActorMe, type Job, type PaymentOrder, type Project, type UsageSummary, type Wallet } from "@/lib/api";
+import { api, type ActorMe, type Job, type PaymentOrder, type UsageSummary } from "@/lib/api";
 import { TARGET_LABEL, fmtBaht, fmtDuration, fmtNum, fmtWhen, isActive, langName } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { redirectToSignIn } from "@/lib/auth-routes";
-import { useAuth } from "@/lib/useAuth";
+import { isSignedOut, useAuth } from "@/lib/useAuth";
 
 const ATTENTION = new Set(["awaiting_review", "failed", "queued", "running"]);
 type DashMode = "work" | "earn" | "payout";
@@ -31,38 +32,41 @@ function attentionRank(job: Job): number {
 
 /** ภาพรวมของผู้ใช้: งานที่ต้องดูแล งานล่าสุด โปรเจกต์ และเครดิต */
 export default function DashboardPage() {
-  const { config, user, loaded } = useAuth();
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [projects, setProjects] = useState<Project[] | null>(null);
-  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const auth = useAuth();
+  const { config, user, loaded, unavailable, reload } = auth;
+  const signedOut = isSignedOut(auth);
+  const authed = loaded && !signedOut && !!user;
+  const showWallet = authed && !!config?.billing && !!user && !user.admin;
+  const jobsQ = useLoad(() => api.listJobs(), authed);
+  const projectsQ = useLoad(() => api.listProjects(), authed);
+  const walletQ = useLoad(() => api.wallet(), showWallet);
   const [slips, setSlips] = useState<PaymentOrder[]>([]);
   const [actorMe, setActorMe] = useState<ActorMe | null>(null);
   const [payoutRows, setPayoutRows] = useState<UsageSummary[] | null>(null);
   const [mode, setMode] = useState<DashMode>("work");
-  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (loaded && config?.auth && !user) redirectToSignIn();
-  }, [loaded, config, user]);
+    if (loaded && signedOut) redirectToSignIn();
+  }, [loaded, signedOut]);
 
   useEffect(() => {
-    if (!loaded || (config?.auth && !user)) return;
-    let stop = false;
-    const load = () => {
-      api.listJobs().then((list) => { if (!stop) { setJobs(list); setError(""); } })
-        .catch((e) => { if (!stop) { setError(e.message); setJobs((prev) => prev ?? []); } });
-      api.listProjects().then((list) => { if (!stop) setProjects(list); }).catch(() => { if (!stop) setProjects([]); });
-      if (config?.billing && user && !user.admin) api.wallet().then((w) => { if (!stop) setWallet(w); }).catch(() => {});
-      if (config?.payment_provider === "slip" && user) {
-        api.myPayments().then((list) => {
-          if (!stop) setSlips(list.filter((o) => o.status === "pending" || o.status === "review" || o.status === "rejected"));
-        }).catch(() => {});
-      }
+    if (!authed) return;
+    const loadSlips = () => {
+      if (config?.payment_provider !== "slip" || !user) return;
+      api.myPayments().then((list) => {
+        setSlips(list.filter((o) => o.status === "pending" || o.status === "review" || o.status === "rejected"));
+      }).catch(() => { /* สลิปไม่ใช่ตัวนับหลัก คงรายการเดิม */ });
     };
-    load();
-    const timer = setInterval(load, 8000);
-    return () => { stop = true; clearInterval(timer); };
-  }, [loaded, config, user]);
+    const refresh = () => {
+      jobsQ.refresh();
+      projectsQ.refresh();
+      if (showWallet) walletQ.refresh();
+      loadSlips();
+    };
+    loadSlips();
+    const timer = setInterval(refresh, 8000);
+    return () => clearInterval(timer);
+  }, [authed, config?.payment_provider, user, showWallet, jobsQ.refresh, projectsQ.refresh, walletQ.refresh]);
 
   useEffect(() => {
     if (!user) return;
@@ -80,17 +84,29 @@ export default function DashboardPage() {
     return () => { stop = true; clearInterval(timer); };
   }, [user]);
 
-  if (!loaded || (config?.auth && !user)) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (!loaded || signedOut) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
+  if (unavailable && !user) {
+    return (
+      <main className="page">
+        <LoadError title={ACCOUNT_LOAD_ERROR.title} description={ACCOUNT_LOAD_ERROR.description} onRetry={() => { void reload(); }} />
+      </main>
+    );
+  }
 
+  const jobs = jobsQ.data;
+  const projects = projectsQ.data;
+  const wallet = walletQ.data;
+  const jobsReady = jobsQ.phase === "ready" && !!jobs;
   const list = jobs ?? [];
-  const attention = list.filter((j) => ATTENTION.has(j.status)).sort((a, b) => attentionRank(a) - attentionRank(b)).slice(0, 6);
+  const attention = jobsReady ? list.filter((j) => ATTENTION.has(j.status)).sort((a, b) => attentionRank(a) - attentionRank(b)).slice(0, 6) : [];
   const attentionIds = new Set(attention.map((j) => j.id));
-  const recent = list.filter((j) => !attentionIds.has(j.id)).slice(0, 5);
-  const review = list.filter((j) => j.status === "awaiting_review").length;
-  const active = list.filter((j) => isActive(j)).length;
-  const done = list.filter((j) => j.status === "done");
+  const recent = jobsReady ? list.filter((j) => !attentionIds.has(j.id)).slice(0, 5) : [];
+  const review = jobsReady ? list.filter((j) => j.status === "awaiting_review").length : 0;
+  const active = jobsReady ? list.filter((j) => isActive(j)).length : 0;
+  const done = jobsReady ? list.filter((j) => j.status === "done") : [];
   const dubbed = done.reduce((sum, j) => sum + (j.duration ?? 0), 0);
   const credits = wallet ? wallet.credits + (wallet.subscription?.minutes_left ?? 0) : null;
+  const retryOverview = () => { jobsQ.reload(); projectsQ.reload(); if (showWallet) walletQ.reload(); };
   const name = user?.name?.trim();
   const actor = actorMe?.actor ?? null;
   const actorOn = actor?.status === "approved";
@@ -119,9 +135,11 @@ export default function DashboardPage() {
           <span className="muted">
             {shown === "earn" ? (actor?.stage_name ? `${actor.stage_name} · ${tx("ค่าตอบแทนของฉัน")}` : tx("ค่าตอบแทนของฉัน"))
               : shown === "payout" ? tx("ค้างจ่ายนักพากย์เดือนนี้")
-                : review > 0 ? tx("{0} งานรอตรวจบท", { 0: review })
-                  : active > 0 ? tx("{0} งานกำลังทำ", { 0: active })
-                    : tx("ส่งคลิปใหม่ หรือเปิดงานที่ทำค้างไว้")}
+                : jobsQ.phase === "loading" ? <Skel width="12em" />
+                  : jobsQ.phase === "error" ? null
+                    : review > 0 ? tx("{0} งานรอตรวจบท", { 0: review })
+                      : active > 0 ? tx("{0} งานกำลังทำ", { 0: active })
+                        : tx("ส่งคลิปใหม่ หรือเปิดงานที่ทำค้างไว้")}
           </span>
         </div>
         {shown === "earn" ? <Link href="/actor" className="btn primary">{tx("เปิดหน้านักพากย์")}</Link>
@@ -143,36 +161,41 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {error && <div className="alert error" role="alert">{error}</div>}
+      {shown === "work" && jobsQ.phase === "error" && (
+        <LoadError title={DASH_LOAD_ERROR.title} description={DASH_LOAD_ERROR.description} onRetry={retryOverview} />
+      )}
+      {shown === "work" && jobsQ.phase !== "error" && showWallet && walletQ.phase === "error" && (
+        <LoadError title={CREDITS_LOAD_ERROR.title} description={CREDITS_LOAD_ERROR.description} onRetry={walletQ.reload} />
+      )}
 
       {shown === "work" && (
       <section className="dash-stats" aria-label={tx("สรุปงาน")}>
         <Link href="/jobs" className="card dash-stat">
-          <b>{jobs ? list.length : "…"}</b>
+          <b><LoadValue phase={jobsQ.phase} width="2.2em">{list.length}</LoadValue></b>
           <span>{tx("งานทั้งหมด")}</span>
         </Link>
         <Link href="/jobs" className={`card dash-stat${review ? " hot" : ""}`}>
-          <b>{jobs ? review : "…"}</b>
+          <b><LoadValue phase={jobsQ.phase} width="1.4em">{review}</LoadValue></b>
           <span>{tx("รอตรวจบท")}</span>
         </Link>
         <Link href="/jobs" className="card dash-stat">
-          <b>{jobs ? active : "…"}</b>
+          <b><LoadValue phase={jobsQ.phase} width="1.4em">{active}</LoadValue></b>
           <span>{tx("กำลังทำ")}</span>
         </Link>
         <Link href="/jobs" className="card dash-stat">
-          <b>{jobs ? done.length : "…"}</b>
+          <b><LoadValue phase={jobsQ.phase} width="1.4em">{done.length}</LoadValue></b>
           <span>{tx("เสร็จแล้ว")}{dubbed > 0 ? ` · ${tx("รวม {0}", { 0: fmtDuration(dubbed) })}` : ""}</span>
         </Link>
         {config?.billing && user && (
           <Link href={user.admin ? "/account" : "/promotions"} className="card dash-stat credit">
-            <b>{user.admin ? tx("ไม่จำกัด") : credits == null ? "…" : fmtNum(credits)}</b>
+            <b>{user.admin ? tx("ไม่จำกัด") : <LoadValue phase={walletQ.phase} width="2.4em">{fmtNum(credits ?? 0)}</LoadValue>}</b>
             <span>{user.admin ? tx("บัญชีผู้ดูแล") : tx("เครดิตคงเหลือ")}</span>
           </Link>
         )}
       </section>
       )}
 
-      {shown === "work" && jobs && (
+      {shown === "work" && jobsReady && (
         <UsageChart jobs={list} ledger={wallet?.ledger ?? null} credits={!!config?.billing && !!user && !user.admin} />
       )}
 
@@ -286,13 +309,13 @@ export default function DashboardPage() {
         </>
       )}
 
-      {shown === "work" && <div className="dash-split">
+      {shown === "work" && jobsQ.phase !== "error" && <div className="dash-split">
         <section className="card dash-block" aria-labelledby="recent-title">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h2 id="recent-title">{tx("งานล่าสุด")}</h2>
             <Link href="/jobs" className="btn small">{tx("ดูงานทั้งหมด")}</Link>
           </div>
-          {jobs === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
+          {jobsQ.phase === "loading" ? <SkelLines rows={3} />
             : recent.length === 0 && attention.length === 0 ? (
               <div className="empty">
                 {tx("ยังไม่มีงาน")}
@@ -317,8 +340,10 @@ export default function DashboardPage() {
               <h2 id="projects-title">{tx("โปรเจกต์")}</h2>
               <Link href="/projects" className="btn small">{tx("ทั้งหมด")}</Link>
             </div>
-            {projects === null ? <div className="empty">{tx("กำลังโหลด...")}</div>
-              : projects.length === 0 ? <div className="empty">{tx("ยังไม่มีโปรเจกต์")}</div>
+            {projectsQ.phase === "loading" ? <SkelLines rows={3} />
+              : projectsQ.phase === "error" ? (
+                <LoadError title={PROJECTS_LOAD_ERROR.title} description={PROJECTS_LOAD_ERROR.description} onRetry={projectsQ.reload} />
+              ) : !projects || projects.length === 0 ? <div className="empty">{tx("ยังไม่มีโปรเจกต์")}</div>
                 : projects.slice(0, 4).map((p) => (
                   <Link key={p.id} href={`/projects/${p.id}`} className="dash-row">
                     <span className="dash-main">

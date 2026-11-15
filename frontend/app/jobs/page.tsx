@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type Job, type JobStatus } from "@/lib/api";
 import { TARGET_LABEL, fmtDuration, fmtWhen, isActive, langName } from "@/lib/format";
 import StatusBadge from "@/components/StatusBadge";
 import JobCard from "@/components/JobCard";
 import { GridIcon, ListIcon, PlusIcon, SearchIcon } from "@/components/Icons";
+import { JOBS_LOAD_ERROR, LoadCount, LoadError, SkelLines, useLoad } from "@/components/LoadState";
 
 import { tx } from "@/lib/i18n";
 type Filter = "all" | "active" | "awaiting_review" | "done" | "failed";
@@ -30,8 +31,8 @@ type View = "grid" | "list";
 const VIEW_KEY = "jobs-view";
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [error, setError] = useState("");
+  const { data: jobs, phase, reload, refresh } = useLoad(() => api.listJobs());
+  const [actionError, setActionError] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -44,21 +45,17 @@ export default function JobsPage() {
     try { localStorage.setItem(VIEW_KEY, v); } catch { /* ไม่จำก็ได้ */ }
   };
 
-  const load = useCallback(() => {
-    api.listJobs().then((j) => { setJobs(j); setError(""); }).catch((e) => setError(e.message));
-  }, []);
-
   useEffect(() => {
-    load();
-    const t = setInterval(load, 4000);
+    const t = setInterval(() => refresh(), 4000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [refresh]);
 
   const counts = useMemo(() => {
+    if (phase !== "ready" || !jobs) return null;
     const c: Record<Filter, number> = { all: 0, active: 0, awaiting_review: 0, done: 0, failed: 0 };
-    for (const j of jobs ?? []) for (const f of FILTERS) if (f.match(j.status)) c[f.key]++;
+    for (const j of jobs) for (const f of FILTERS) if (f.match(j.status)) c[f.key]++;
     return c;
-  }, [jobs]);
+  }, [jobs, phase]);
 
   const shown = useMemo(() => {
     const f = FILTERS.find((x) => x.key === filter)!;
@@ -68,7 +65,8 @@ export default function JobsPage() {
 
   const act = async (id: string, fn: () => Promise<unknown>) => {
     setBusyId(id);
-    try { await fn(); load(); } catch (e) { setError((e as Error).message); } finally { setBusyId(""); }
+    setActionError("");
+    try { await fn(); reload(); } catch (e) { setActionError((e as Error).message); } finally { setBusyId(""); }
   };
 
   return (
@@ -89,7 +87,7 @@ export default function JobsPage() {
         <div className="chips" role="group" aria-label={tx("กรองตามสถานะ")}>
           {FILTERS.map((f) => (
             <button key={f.key} type="button" className="chip filter" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
-              {tx(f.label)} <span className="n">{counts[f.key]}</span>
+              {tx(f.label)} <span className="n"><LoadCount phase={phase} value={counts ? counts[f.key] : undefined} /></span>
             </button>
           ))}
         </div>
@@ -99,9 +97,11 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {error && <div className="alert error" role="alert">{error}</div>}
+      {actionError && <div className="alert error" role="alert">{actionError}</div>}
 
-      {view === "grid" && jobs !== null && shown.length > 0 ? (
+      {phase === "loading" ? <SkelLines rows={4} /> : phase === "error" ? (
+        <LoadError title={JOBS_LOAD_ERROR.title} description={JOBS_LOAD_ERROR.description} onRetry={reload} />
+      ) : view === "grid" && shown.length > 0 ? (
         <div className="job-grid">
           {shown.map((j) => (
             <JobCard key={j.id} job={j} busy={busyId === j.id}
@@ -112,9 +112,7 @@ export default function JobsPage() {
         </div>
       ) : (
       <div className="table-wrap">
-        {jobs === null ? (
-          <div className="empty">{tx("กำลังโหลด...")}</div>
-        ) : shown.length === 0 ? (
+        {shown.length === 0 ? (
           <div className="empty">{tx("ไม่มีงานในหมวดนี้")}</div>
         ) : (
           <table>
