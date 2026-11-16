@@ -64,7 +64,8 @@ STORY_CONTENT_TYPE = True
 TRANSLATE_NEIGHBORS = True
 FIT_NEIGHBORS = True
 TRANSLATE_REVIEW = True
-LIP_SYNC_SAME_LANG = True
+LIP_SYNC_SAME_LANG = False  # ปิด: ไทยเป็นไทยใช้เสียงจากคลัง/อารมณ์เหมือนภาษาอื่น (เปิด = โคลนเสียงต้นฉบับ)
+SAME_LANG_REWRITE = True  # ต้นฉบับภาษาเดียวกับปลายทาง: เรียบเรียงเป็นบทพูดแทนแก้คำผิดอย่างเดียว
 TRANSCRIPT_GATE = True
 AI_FIX_SUSPECTS = True
 AI_DUB_JUDGE = True

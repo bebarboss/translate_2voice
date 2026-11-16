@@ -208,12 +208,6 @@ def test_retranslate_failure_keeps_text_and_labels(flags, monkeypatch):
     assert utts[1].target == "แปล" and "ไม่ต่อ" in utts[1].check_note
 
 
-def test_same_language_skips_review(flags, monkeypatch):
-    calls = fake_chat(monkeypatch, lambda s, u: {})
-    translate.review_translation(lines(2), "th", "th", hints={"content_type": "continuous"})
-    assert not calls
-
-
 # ---- เกตเนื้อหาเลื่อนข้ามท่อน (part bleed)
 def test_source_anchors_numbers_and_latin():
     assert translate._source_anchors("AI has 1,200 users.") == {"ai", "has", "users", "1200"}
@@ -287,3 +281,61 @@ def test_groups_prompt_includes_part_index(flags):
     parts = payload_of(user)["sentences"][0]["parts"]
     assert [p["index"] for p in parts] == [1, 2]
     assert "ห้ามย้าย" in user
+
+
+# ---- ไทยเป็นไทย (ภาษาเดียวกัน) ใช้เส้นทางเดียวกับภาษาอื่น
+def thai_lines(n):
+    return [Utterance(id=i, speaker="a", start=i * 3.0, end=i * 3.0 + 2.0, source=f"ประโยคที่{i}", target="") for i in range(n)]
+
+
+def test_same_lang_rule_only_when_languages_match(flags):
+    utts = thai_lines(1)
+    hints = translate._with_order(utts, {})
+    system, _ = translate._groups_prompt([utts], "th", "th", [], "", hints)
+    assert translate.SAME_LANG_RULE_TH in system
+    system, _ = translate._groups_prompt([utts], "zh", "th", [], "", hints)
+    assert translate.SAME_LANG_RULE_TH not in system
+    system, _ = translate._groups_prompt([utts], "en", "en", [], "", hints)
+    assert translate.SAME_LANG_RULE_EN in system
+
+
+def test_same_lang_rewrites_through_translate_path(flags, monkeypatch):
+    calls = fake_chat(monkeypatch, echo_translation)
+    utts = thai_lines(2)
+    translate.translate_utterances(utts, "th", "th")
+    assert [u.target for u in utts] == ["ใหม่", "ใหม่"]
+    assert translate.SAME_LANG_RULE_TH in calls[0][0]
+
+
+def test_same_lang_rewrite_off_only_proofreads(flags, monkeypatch):
+    flags(same_lang_rewrite=False)
+    seen = []
+    monkeypatch.setattr(translate, "proofread", lambda *a, **k: seen.append(1))
+    calls = fake_chat(monkeypatch, echo_translation)
+    utts = thai_lines(2)
+    translate.translate_utterances(utts, "th", "th")
+    assert seen and not calls
+    assert [u.target for u in utts] == ["ประโยคที่0", "ประโยคที่1"]
+
+
+def test_same_lang_failed_rewrite_keeps_source(flags, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("quota")
+    monkeypatch.setattr(translate, "_chat", boom)
+    utts = thai_lines(1)
+    try:
+        translate.translate_utterances(utts, "th", "th")
+    except RuntimeError:
+        pass
+    assert utts[0].target == "ประโยคที่0"  # บทต้นฉบับถูกเติมไว้ก่อน ไม่เหลือบทว่าง
+
+
+def test_same_lang_review_is_not_skipped(flags, monkeypatch):
+    seen = []
+    monkeypatch.setattr(translate, "_term_issues", lambda *a, **k: seen.append("terms") or {1: "ชื่ออาจผิด"})
+    utts = thai_lines(2)
+    for u in utts:
+        u.target = u.source
+    translate.review_translation(utts, "th", "th", 1.1, "", {"content_type": "teaser"})
+    assert seen == ["terms"]
+    assert utts[1].check_note == "ชื่ออาจผิด"

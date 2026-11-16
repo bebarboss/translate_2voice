@@ -223,6 +223,7 @@ class Settings:
     pause_pack_max_sec: float = audio.PAUSE_PACK_MAX_SEC
     pause_pack_ratio: float = audio.PAUSE_PACK_RATIO
     lip_sync_same_lang: bool = d.LIP_SYNC_SAME_LANG
+    same_lang_rewrite: bool = d.SAME_LANG_REWRITE
     transcript_gate: bool = d.TRANSCRIPT_GATE
     ai_fix_suspects: bool = d.AI_FIX_SUSPECTS
     ai_dub_judge: bool = d.AI_DUB_JUDGE

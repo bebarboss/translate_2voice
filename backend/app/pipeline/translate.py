@@ -124,6 +124,19 @@ Do not split one character's continuous speech, repetitions, or self-talk. Use t
 The pieces of a line, concatenated in order, must equal the original text exactly (same characters, no edits). One piece = no speaker change.
 Reply with JSON only: {"lines":[{"id":1,"pieces":["...","..."]}]}"""
 
+SAME_LANG_RULE_TH = """
+
+กรณีพิเศษ: ต้นฉบับ (source_language) เป็นภาษาไทยอยู่แล้ว ไม่ต้องแปล ให้เรียบเรียง text ของแต่ละท่อนเป็นบทพากย์ภาษาไทยที่พูดเป็นธรรมชาติตามกฎข้างต้น
+แก้คำที่ถอดเสียงผิดให้ตรงกับ glossary และ title รักษาความหมาย ชื่อ ตัวเลข คำปฏิเสธ และจำนวนท่อนให้เหมือนเดิมทุกอย่าง ห้ามเพิ่มหรือตัดใจความ
+ท่อนที่พูดเป็นธรรมชาติอยู่แล้วให้คงข้อความเดิม"""
+
+SAME_LANG_RULE_EN = """
+
+Special case: the source language is already English, so do not translate. Rewrite each part's text into natural spoken English for a voice actor,
+following the rules above. Fix obvious mis-hearings using the glossary and title. Keep the meaning, names, numbers, negations and the number of parts exactly;
+never add or drop content. Keep parts that already sound natural unchanged."""
+
+
 PROOFREAD_PROMPT_TH = """คุณคือผู้ตรวจบทถอดเสียงภาษาไทย บทนี้ได้จากระบบถอดเสียงอัตโนมัติ (Whisper) ซึ่งมักสะกดผิดตามเสียงที่ได้ยิน
 เช่น พยัญชนะหรือสระเพี้ยน (หิบะทะลม → หิมะถล่ม, ปืนคลั้ง → ปืนครั้ง) คำติดกัน หรือมีตัวอักษรอังกฤษหลุดกลางคำ
 กฎ:
@@ -569,14 +582,15 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                  for i, u in enumerate(g)]}
                       for g in groups],
     }
+    same = same_lang(lang, target)  # ต้นฉบับภาษาเดียวกับปลายทาง: เรียบเรียงเป็นบทพูด ไม่แปล
     if target == "en":
-        return SYSTEM_PROMPT_EN, (
+        return SYSTEM_PROMPT_EN + (SAME_LANG_RULE_EN if same else ""), (
             "Translate the sentences in \"sentences\" into English (\"title\" is the video title, \"previous_lines\" and \"next_lines\" "
             "are the lines around them, all for context only, do not translate or return them). "
             "One translated string per source part, in order — each part only from that part's text; never move numbers/names across parts.\n"
             'Reply as {"sentences":[{"id":1,"parts":["part 1","part 2"]}]}\n\n'
             + json.dumps(payload, ensure_ascii=False))
-    return SYSTEM_PROMPT_TH, (
+    return SYSTEM_PROMPT_TH + (SAME_LANG_RULE_TH if same else ""), (
         "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines และ next_lines คือบทก่อนหน้าและถัดไป ไว้ดูบริบท ห้ามแปลซ้ำหรือใส่ในคำตอบ) "
         "ตอบ parts ให้ครบหนึ่งต่อหนึ่งตามลำดับ — แต่ละท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามย้ายตัวเลข/ชื่อ/ใจความข้ามท่อน\n"
         'ตอบรูปแบบ {"sentences":[{"id":1,"parts":["ท่อนที่ 1","ท่อนที่ 2"]}]}\n\n'
@@ -1003,11 +1017,14 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
         for u in utts:
             if (u.source or "").strip() and not (u.target or "").strip():
                 u.target = u.source
-        if settings.typhoon_api_key and not settings.mock_pipeline:
+        if not (settings.typhoon_api_key and not settings.mock_pipeline):
+            return
+        if not settings.same_lang_rewrite:
             proofread(utts, target, on_progress, check_cancel, title)
             # proofread ห้ามเหลือบทว่าง
             ensure_same_lang_targets(utts, lang, target)
-        return
+            return
+        # เรียบเรียงเป็นบทพูดเหมือนภาษาอื่น (ใช้เส้นทางแปลเดิม พร้อมกฎ SAME_LANG_RULE) ท่อนที่ล้มคงบทต้นฉบับไว้
 
     # โมเดลแปลบนเครื่องต้องใช้การ์ดจอ โหมด modal จึงแปลด้วย Typhoon API เสมอ
     if target == "th" and lang == "en" and settings.translate_en_local and settings.worker != "modal":
@@ -1623,9 +1640,7 @@ def review_translation(utts: list[Utterance], lang: str, target: str = "th", max
     """ตรวจบทหลังแปล บรรทัดที่ควรให้คนดูติดป้ายไว้ใน check_note
     - continuous: หาบรรทัดที่ความหมายไม่ต่อกัน แปลใหม่ไม่เกิน REVIEW_ROUNDS รอบ ยังไม่ผ่านจึงติดป้าย
     - อื่น ๆ (teaser หรือไม่รู้ประเภท): ตรวจชื่อและศัพท์อย่างเดียว ติดป้ายโดยไม่แก้บท เพราะฉากไม่ต้องต่อกัน"""
-    if same_lang(lang, target):
-        ensure_same_lang_targets(utts, lang, target)
-        return
+    ensure_same_lang_targets(utts, lang, target)  # ภาษาเดียวกันก็ตรวจเหมือนภาษาอื่น (แปลใหม่ = เรียบเรียงใหม่)
     hints = _with_order(utts, hints)
     order = [u for g in hints["sentences"] for u in g]
     if hints.get("content_type") != "continuous":
