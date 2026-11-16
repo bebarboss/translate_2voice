@@ -3,17 +3,24 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, fileUrl, type Job, type Utterance } from "@/lib/api";
-import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, stripPauseMarks } from "@/lib/format";
-import { useTranscript } from "@/lib/useTranscript";
+import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor, stripPauseMarks } from "@/lib/format";
+import { isChanged, useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
 import ProjectPanel from "./ProjectPanel";
 import RetranslatePanel from "./RetranslatePanel";
 import SpeakerLanes from "./SpeakerLanes";
 import StatusBadge from "./StatusBadge";
 import { suggestedVoiceMap, UseSuggested, VoiceCastPicker, VoiceChoice, useVoiceCast } from "./VoiceCast";
-import { ArrowLeft, MicIcon } from "./Icons";
+import { ArrowLeft, MicIcon, NextLineIcon, PauseIcon, PlayIcon, PrevLineIcon, SkipStartIcon } from "./Icons";
 
 import { tx } from "@/lib/i18n";
+
+type LineFilter = "all" | "check" | "listen" | "long" | "overlap" | "edited";
+const FILTERS: { key: LineFilter; label: string }[] = [
+  { key: "all", label: "ทั้งหมด" }, { key: "check", label: "ควรตรวจ" }, { key: "listen", label: "ควรฟัง" },
+  { key: "long", label: "ยาวเกินเวลา" }, { key: "overlap", label: "พูดซ้อน" }, { key: "edited", label: "แก้แล้ว" },
+];
+
 export default function ReviewView({ job, onChanged, onCancelEdit }: {
   job: Job;
   onChanged: () => void;
@@ -28,7 +35,8 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   const [t, setT] = useState(0);
   const [duration, setDuration] = useState(job.duration ?? 0);
   const [follow, setFollow] = useState(true);
-  const [triageOnly, setTriageOnly] = useState(true); // โชว์เฉพาะท่อนที่ควรตรวจ (ลดงานมือ)
+  const [filter, setFilter] = useState<LineFilter | null>(null); // null = ค่าเริ่มต้น: ควรตรวจ ถ้ามี ไม่งั้นทั้งหมด
+  const [playing, setPlaying] = useState(false);
   const [picked, setPicked] = useState<number | null>(null); // บล็อกที่คลิกเลือก (ลากขอบได้) ล้างเมื่อเล่นวิดีโอ
   const [maxSpeedup, setMaxSpeedup] = useState(1.10);
   const [redubQuote, setRedubQuote] = useState<{ credits: number; free: boolean; enough: boolean } | null>(null);
@@ -189,13 +197,22 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     return !!text.trim() && estimateSeconds(text, job.target_lang) > dur * maxSpeedup;
   };
   const longCount = sorted.filter(tooLong).length;
-  const flagged = useMemo(() => sorted.filter((u) => {
-    const d = tr.draftOf(u);
-    return !d.target.trim() || !!u.unclear || !!(u.check_note || "").trim()
-      || !!(u.heard || "").trim() || tooLong(u);
-  }), [sorted, tr.drafts, maxSpeedup, job.target_lang]);
-  // triage: โชว์เฉพาะท่อนเสี่ยง — ถ้าไม่มีเลย โชว์ทั้งหมด
-  const listLines = triageOnly && flagged.length > 0 ? flagged : sorted;
+  const checkOf = (u: Utterance) => !tr.draftOf(u).target.trim() || !!u.unclear || !!(u.check_note || "").trim() || !!(u.unclear_reason || "").trim();
+  const matches: Record<LineFilter, (u: Utterance) => boolean> = {
+    all: () => true,
+    check: checkOf,
+    listen: (u) => !!(u.heard || "").trim(),
+    long: tooLong,
+    overlap: (u) => tr.overlaps.ids.has(u.id),
+    edited: (u) => isChanged(u, tr.draftOf(u)),
+  };
+  const counts = Object.fromEntries(FILTERS.map((f) => [f.key, sorted.filter(matches[f.key]).length])) as Record<LineFilter, number>;
+  const activeFilter: LineFilter = filter ?? (counts.check > 0 ? "check" : "all");
+  const listLines = sorted.filter(matches[activeFilter]);
+  const selected = sorted.find((u) => u.id === (picked ?? speaking?.id ?? active?.id ?? sorted[0]?.id)) ?? null;
+  const togglePlay = () => { const m = mediaRef.current; if (m) void (m.paused ? m.play() : m.pause()); };
+  const prevLine = () => { const u = [...sorted].reverse().find((x) => x.start < t - 0.4); seek(u ? u.start : 0); };
+  const nextLine = () => { const u = sorted.find((x) => x.start > t + 0.05); if (u) seek(u.start); };
 
   return (
     <main className="page wide">
@@ -244,76 +261,135 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
         speakerOf={(id) => tr.sorted.find((x) => x.id === id)?.speaker} label={tr.label}
         onSpeaker={(id, s) => { const u = tr.sorted.find((x) => x.id === id); if (u) { tr.changeSpeaker(u, s); setPicked(id); } }} />
 
-      <div className="split">
-        <section className="main" aria-label={tx("วิดีโอ")}>
+      <div className="playbar" role="toolbar" aria-label={tx("ควบคุมการเล่น")}>
+        <button type="button" className="icon-only" onClick={() => seek(0)} aria-label={tx("กลับไปต้นคลิป")}><SkipStartIcon /></button>
+        <button type="button" className="icon-only" onClick={prevLine} aria-label={tx("ท่อนก่อนหน้า")}><PrevLineIcon /></button>
+        <button type="button" className="icon-only play" onClick={togglePlay} aria-label={playing ? tx("หยุด") : tx("เล่น")}>
+          {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+        </button>
+        <button type="button" className="icon-only" onClick={nextLine} aria-label={tx("ท่อนถัดไป")}><NextLineIcon /></button>
+        <span className="timecode mono">{fmtTime(t)}<small> / {fmtTime(total)}</small></span>
+        <label className="chip follow">
+          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+          {tx("เลื่อนตามคลิป")}
+        </label>
+      </div>
+
+      <div className="editor-grid">
+        <section className="editor-col video-col" aria-label={tx("วิดีโอ")}>
           <div className="video-box">
             {job.timeline ? (
-              <audio ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} controls preload="metadata"
-                style={{ width: "100%", margin: "24px 16px" }}
+              <audio ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} preload="metadata" hidden
                 onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
                 onSeeked={(e) => setT(e.currentTarget.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                onPlay={() => setPicked(null)} />
+                onPlay={() => { setPicked(null); setPlaying(true); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
             ) : (
-              <video ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} controls preload="metadata" playsInline
+              <video ref={(el) => { mediaRef.current = el; }} src={fileUrl.source(job.id)} preload="metadata" playsInline onClick={togglePlay}
                 onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
                 onSeeked={(e) => setT(e.currentTarget.currentTime)}
                 onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-                onPlay={() => setPicked(null)} />
+                onPlay={() => { setPicked(null); setPlaying(true); }} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
             )}
             {speaking && tr.draftOf(speaking).target && (
               <div className="caption"><span>{stripPauseMarks(tr.draftOf(speaking).target)}</span></div>
             )}
           </div>
-          <div className="row dim" style={{ justifyContent: "space-between" }}>
-            <span>{job.timeline
-              ? tx("เสียงต้นฉบับจากไทม์ไลน์ · แก้บทด้านขวา แล้วกดเริ่มพากย์")
-              : <>{tx("วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("ที่กำลังแก้")}</>}</span>
-            <span className="mono">{fmtTime(t)} / {fmtTime(total)}</span>
-          </div>
-
-          <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
-            onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
-            voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceDraft[s] ?? null} compact />}
-            voiceHead={<UseSuggested vc={vc} value={voiceDraft} onApply={(c) => setVoiceDraft((d) => ({ ...d, ...c }))} />} />
-
-          <VoiceCastPicker vc={vc} job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft} onChange={pickVoice} />
+          <p className="dim video-note">{job.timeline
+            ? tx("เสียงต้นฉบับจากไทม์ไลน์ · แก้บทด้านขวา แล้วกดเริ่มพากย์")
+            : <>{tx("วิดีโอนี้เป็นเสียงต้นฉบับ ซับบนภาพคือบทพากย์")}{tx(TARGET_LABEL[job.target_lang])}{tx("ที่กำลังแก้")}</>}</p>
         </section>
 
-        <aside className="side card" aria-label={tx("บทพากย์")} style={{ padding: 0, gap: 0, overflow: "hidden" }}>
-          <div className="row" style={{ justifyContent: "space-between", padding: "14px 16px", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 8 }}>
-            <h2 style={{ fontSize: 16, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
-              {tx("บทพากย์")}
-              {longCount > 0 && <span className="badge warn" style={{ marginLeft: 6 }}>{tx("ยาวเกินเวลา")} {longCount}</span>}
-              {flagged.length > 0 && (
-                <span className="badge awaiting_review" style={{ marginLeft: 6 }}>
-                  {tx("ควรตรวจ {0}/{1}", { 0: flagged.length, 1: sorted.length })}
-                </span>
-              )}
-            </h2>
-            <div className="row" style={{ gap: 8 }}>
-              <label className="chip triage" title={tx("โชว์เฉพาะท่อนว่าง / ป้ายควรตรวจ / ไม่ชัด / ยาวเกิน — ท่อนอื่นข้ามได้")}>
-                <input type="checkbox" checked={triageOnly} onChange={(e) => setTriageOnly(e.target.checked)} />
-                {tx("เฉพาะที่ควรตรวจ")}
-              </label>
-              <label className="chip">
-                <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
-                {tx("เลื่อนตามคลิป")}
-              </label>
+        <aside className="editor-col lines-col" aria-label={tx("บทพากย์")}>
+          <div className="col-head">
+            <h2>{tx("บทพากย์")}</h2>
+            <div className="chips" role="group" aria-label={tx("กรองบท")}>
+              {FILTERS.map((f) => (
+                <button key={f.key} type="button" className="chip filter" aria-pressed={activeFilter === f.key} onClick={() => setFilter(f.key)}>
+                  {tx(f.label)} <span className="n mono">{counts[f.key]}</span>
+                </button>
+              ))}
             </div>
           </div>
           <div className="lines" ref={listRef}>
             {lines === null ? <div className="empty">{tx("กำลังโหลดบท...")}</div>
               : sorted.length === 0 ? <div className="empty">{tx("ไม่พบบทพูดในคลิปนี้")}</div>
-              : listLines.map((u, idx) => (
-                <LineCard key={u.id} u={u} tr={tr} isLast={idx === listLines.length - 1} retake={!!onCancelEdit}
-                  active={active?.id === u.id} speaking={speaking?.id === u.id} tooLong={tooLong(u)}
-                  onSeek={seek} onFocusText={() => { if (mediaRef.current?.paused) seek(u.start); }}
-                  boxRef={(el) => { lineRefs.current[u.id] = el; }} />
-              ))}
+              : listLines.length === 0 ? <div className="empty">{tx("ไม่มีบทในหมวดนี้")}</div>
+              : listLines.map((u) => {
+                const d = tr.draftOf(u);
+                return (
+                  <button key={u.id} type="button" ref={(el) => { lineRefs.current[u.id] = el as unknown as HTMLDivElement | null; }}
+                    className={`line-row${selected?.id === u.id ? " selected" : ""}${speaking?.id === u.id ? " speaking" : ""}`}
+                    aria-pressed={selected?.id === u.id}
+                    onClick={() => { setPicked(u.id); seek(u.start); }}>
+                    <span className="lr-top">
+                      <span className="mono lr-time">{fmtTime(u.start)}</span>
+                      <i className="swatch" style={{ background: speakerColor(d.speaker, tr.speakers) }} />
+                      <span className="lr-name">{tr.label(d.speaker)}</span>
+                      <span className="lr-badges">
+                        {isChanged(u, d) && <span className="badge ok">{tx("แก้แล้ว")}</span>}
+                        {tr.overlaps.ids.has(u.id) && <span className="badge info">{tx("พูดซ้อน")}</span>}
+                        {tooLong(u) && <span className="badge warn">{tx("ยาวเกินเวลา")}</span>}
+                        {checkOf(u) && <span className="badge warn">{tx("ควรตรวจ")}</span>}
+                        {!!(u.heard || "").trim() && <span className="badge warn">{tx("ควรฟัง")}</span>}
+                      </span>
+                    </span>
+                    <span className="lr-target">{stripPauseMarks(d.target) || tx("(ยังไม่มีบทพากย์)")}</span>
+                    <span className="lr-src">{u.source}</span>
+                  </button>
+                );
+              })}
           </div>
         </aside>
+
+        <aside className="editor-col inspector" aria-label={tx("ท่อนที่เลือก")}>
+          {!selected ? <div className="empty">{tx("เลือกท่อนจากรายการบทเพื่อแก้")}</div> : (() => {
+            const d = tr.draftOf(selected);
+            const dur = Math.max(0.3, d.end - d.start);
+            const ratio = d.target.trim() ? estimateSeconds(d.target, job.target_lang) / dur : 0;
+            const fitTone = ratio <= 1 ? "ok" : ratio <= 1.25 ? "warn" : "bad";
+            const moods = tr.moodsOf(d.speaker);
+            return (
+              <>
+                <div className="col-head insp-head">
+                  <i className="swatch lg" style={{ background: speakerColor(d.speaker, tr.speakers) }} />
+                  <h2>{tr.label(d.speaker)}</h2>
+                  <span className="mono dim">{fmtTime(d.start)}–{fmtTime(d.end)}</span>
+                </div>
+                <div className="insp-body">
+                  <div className="insp-voice">
+                    <span className="label">{tx("เสียงพากย์ของ{0}", { 0: tr.label(d.speaker) })}</span>
+                    <VoiceChoice vc={vc} speaker={d.speaker} label={tr.label(d.speaker)} selected={voiceDraft[d.speaker] ?? null} />
+                  </div>
+                  <div className="insp-fit" title={tx("ความยาวบทพากย์เทียบกับช่องเวลาของท่อนนี้")}>
+                    <span className="row" style={{ justifyContent: "space-between" }}>
+                      <span className="label">{tx("ความพอดีกับช่องเวลา")}</span>
+                      <b className={`mono fit-${fitTone}`}>{ratio ? `${Math.round(ratio * 100)}%` : "—"}</b>
+                    </span>
+                    <span className="fit-bar" role="img" aria-label={`${Math.round(ratio * 100)}%`}>
+                      <span className={`fit-fill fit-${fitTone}`} style={{ width: `${Math.min(ratio, 1.5) / 1.5 * 100}%` }} />
+                      <span className="fit-mark" />
+                    </span>
+                  </div>
+                  {moods.length === 0 && (
+                    <p className="dim insp-note">{tx("เสียงนี้มีอารมณ์เดียว จึงไม่มีตัวเลือกอารมณ์ เลือกเสียงที่มีหลายอารมณ์ในคลังเพื่อกำหนดอารมณ์รายท่อน")}</p>
+                  )}
+                  <LineCard key={selected.id} u={selected} tr={tr} isLast={sorted[sorted.length - 1]?.id === selected.id} retake={!!onCancelEdit}
+                    active speaking={speaking?.id === selected.id} tooLong={tooLong(selected)}
+                    onSeek={seek} onFocusText={() => { if (mediaRef.current?.paused) seek(selected.start); }} />
+                </div>
+              </>
+            );
+          })()}
+        </aside>
       </div>
+
+      <SpeakerLanes job={job} tr={tr} total={total} t={t} highlight={picked ?? speaking?.id ?? null}
+        onPick={(u) => { setPicked(u.id); seek(u.start); }} onRetimed={(sec) => seek(Math.max(0, sec - 1))} onSeek={seek}
+        voiceSlot={(s) => <VoiceChoice vc={vc} speaker={s} label={tr.label(s)} selected={voiceDraft[s] ?? null} compact />}
+        voiceHead={<UseSuggested vc={vc} value={voiceDraft} onApply={(c) => setVoiceDraft((d) => ({ ...d, ...c }))} />} />
+
+      <VoiceCastPicker vc={vc} job={{ ...job, speakers, speaker_names: tr.names }} value={voiceDraft} onChange={pickVoice} />
     </main>
   );
 }

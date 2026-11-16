@@ -108,3 +108,12 @@ export const ChevronDown = ({ size = 14, color = "currentColor" }: P) => svg(siz
 
 export const HelpIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7" /><path d="M12 17h.01" /></>);
+
+export const SkipStartIcon = ({ size = 16, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M6 5v14" /><path d="M19 5l-9 7 9 7z" /></>);
+
+export const PrevLineIcon = ({ size = 16, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M11 6l-6 6 6 6" /><path d="M18 6l-6 6 6 6" /></>);
+
+export const NextLineIcon = ({ size = 16, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M13 6l6 6-6 6" /><path d="M6 6l6 6-6 6" /></>);
