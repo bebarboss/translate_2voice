@@ -34,6 +34,8 @@ image = (
         f"pip install --no-deps --force-reinstall torchcodec==0.17.0 --index-url {TORCH_INDEX}",
         # BS-RoFormer แยกเสียงพูด (audio.separate_vocals) ล็อกแพ็กเกจที่มีอยู่แล้วไว้ ให้ติดตั้งเฉพาะที่ขาด
         "pip install audio-separator==0.48.0 -c /tmp/constraints.txt",
+        # library.clean_voice (เรียกบน Modal) import voice_library -> supabase_db -> psycopg ต้องมีแพ็กเกจนี้ แม้บน Modal จะไม่ต่อฐานข้อมูล
+        "pip install 'psycopg[binary]>=3.2'",
         # audio-separator ดึง torchvision จาก PyPI (CUDA คนละรุ่นกับ torch) ทำให้ pyannote พัง ต้องใช้รุ่น cu126 ที่คู่กับ torch 2.14.1
         f"pip install --no-deps --force-reinstall torchvision==0.29.1 --index-url {TORCH_INDEX}",
     )
