@@ -516,7 +516,7 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 | `STORY_CONTENT_TYPE` | เปิด | ให้ story ระบุชนิดคลิป |
 | `TRANSLATE_NEIGHBORS` | เปิด | ส่งบริบท 3 ก่อนหน้า 2 ถัดไปตอนแปล |
 | `FIT_NEIGHBORS` | เปิด | ส่งประโยคข้างเคียงตอนย่อ/ขยาย |
-| `TRANSLATE_REVIEW` | เปิด | ขั้นตรวจหลังแปล |
+| `TRANSLATE_REVIEW` | ปิด | ขั้นตรวจหลังแปล (เปิดโดยแก้ `defaults.py`) |
 | `TRANSLATE_BATCH_SIZE` | 20 | จำนวนประโยคต่อชุด |
 
 ค่าคงที่ในโค้ด: `CONTEXT_BEFORE=3`, `CONTEXT_AFTER=2`, `REVIEW_ROUNDS=2`, `TERMS_BATCH_SIZE=60`
@@ -670,7 +670,7 @@ Postgres รันเป็น StatefulSet ใน k3s (`db:5432` ภายใน
 | แปล | `TYPHOON_API_KEY`, `TYPHOON_BASE_URL`, `TYPHOON_MODEL`, `TYPHOON_TEMPERATURE`, `TRANSLATE_*`, `STORY_*`, `FIT_*` |
 | ความยาวบท | `THAI_CHARS_PER_SEC`, `THAI_SYLLABLES_PER_SEC`, `EN_WORDS_PER_SEC`, `MAX_LINE_SEC`, `MAX_SPEEDUP`, `MAX_SLOWDOWN` |
 | ผู้พูด | `VOICE_MATCH`, `VOICE_MIN_SIM`, `DIAR_*`, `TURN_SPLIT`, `OVERLAP_RECOVER` |
-| ถอดเสียงซ้ำ | `RETRANSCRIBE_NOISY` (ค่าเริ่มต้นใน `defaults.py` ที่ deploy แล้วคือเปิด) |
+| ถอดเสียงซ้ำ | `RETRANSCRIBE_NOISY` (ปิดเป็นค่าเริ่มต้น) |
 | ตรวจเสียงพากย์ | `DUB_CHECK`, `DUB_CHECK_MIN`, `DUB_CHECK_RETRIES`, `MIN_COVERAGE_SYNTHESIZE` |
 | ผสมเสียง | `VOICE_GAIN`, `BGM_GAIN` |
 
@@ -751,12 +751,10 @@ kubectl -n pakdee exec deployment/api -c api -- python -m app.pii_backfill --bat
 2. **ประโยคถูกตัดกลางคัน** การแปลจัดกลุ่มที่ช่องว่าง 1.5 วินาที แต่การพากย์ที่ 0.6 วินาที ประโยคที่ยังพูดไม่จบอาจถูกแยก
    ทางแก้ที่เสนอ: ขยายการจัดกลุ่มสำหรับประโยคที่ยังไม่จบ
 3. **การตรวจหลังแปลยังไม่ปลอดภัยพอ** ถ้าแปลใหม่แล้วไม่ผ่านการตรวจซ้ำ ควรย้อนกลับไปใช้คำแปลเดิม
-4. **ค่าเริ่มต้นที่ deploy ไม่ตรงกับที่เจ้าของต้องการ** `RETRANSCRIBE_NOISY` และ `TRANSLATE_REVIEW` เปิดอยู่ใน production ทั้งที่ต้องการปิดทั้งสองอย่าง
-   ทางแก้: ตั้งเป็น 0 ใน `deploy/k8s/config.env` แล้ว restart api
+4. **ค่าเปิด/ปิดบางตัวอ่านจาก `defaults.py` เท่านั้น ไม่อ่านจากตัวแปรสภาพแวดล้อม** เช่น `TRANSLATE_REVIEW` และ `RETRANSCRIBE_NOISY` (ตั้งเป็น 0 ใน `.env` หรือ ConfigMap ไม่มีผล) ต้องแก้ไฟล์แล้ว build ใหม่ ตอนนี้ปิดทั้งสองตัวแล้ว
 5. **อารมณ์ของต้นฉบับไม่แสดงบนหน้าตรวจบท** และไม่มีข้อความอธิบายเมื่อเสียงที่เลือกไม่มีตัวอย่างอารมณ์
 
 #### งานค้าง
-- [ ] ตั้ง `RETRANSCRIBE_NOISY=0` และ `TRANSLATE_REVIEW=0` ใน ConfigMap ของ production (หรือตัดสินใจเปิดใช้)
 - [ ] แก้ TTS เงียบและประโยคถูกตัด (ข้อ 1–2)
 - [ ] ให้ review คงคำแปลเดิมเมื่อแปลใหม่ไม่ผ่าน (ข้อ 3)
 - [ ] ลบคอลัมน์ plaintext (`tax_id`, `account_no`) ในรอบถัดไปหลังยืนยันการอ่านจากคอลัมน์เข้ารหัสได้ครบ
