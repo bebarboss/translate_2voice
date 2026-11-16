@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, type Plan } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { BrandLink } from "@/components/Brand";
 import { XIcon } from "@/components/Icons";
@@ -104,8 +104,14 @@ export default function LoginPage() {
   useEffect(() => { setSignup(new URLSearchParams(window.location.search).get("mode") === "signup"); }, []);
 
   const [bonus, setBonus] = useState(0);
+  const [trial, setTrial] = useState<Plan | null>(null); // แพ็กทดลอง: อ่านค่าจริงจาก API ไม่ใส่ตัวเลขเอง
   useEffect(() => {
-    if (config?.billing) api.plans().then((p) => setBonus(p.card_bonus)).catch(() => {});
+    if (config?.billing) {
+      api.plans().then((p) => {
+        setBonus(p.card_bonus);
+        setTrial(p.plans.find((x) => x.id === "trial" || x.free_once) ?? null);
+      }).catch(() => {});
+    }
   }, [config?.billing]);
 
   const clientId = config?.google_client_id ?? "";
@@ -156,6 +162,16 @@ export default function LoginPage() {
           : <div className="alert error" role="alert">{tx("ยังไม่ได้ตั้งค่าการเข้าสู่ระบบด้วย Google ติดต่อผู้ดูแลระบบ")}</div>}
         {busy && <span className="dim" role="status">{tx("กำลังเข้าสู่ระบบ...")}</span>}
         {error && <div className="alert error" role="alert">{error}</div>}
+        {config.billing && trial && (
+          <div className="auth-trial">
+            <b>{tx("แพ็กทดลองให้อัตโนมัติเมื่อเข้าสู่ระบบครั้งแรก")}</b>
+            <span className="mono">
+              {[tx("{0} เครดิต", { 0: trial.minutes }), tx("{0} วัน", { 0: trial.days }),
+                trial.max_clip_minutes ? tx("คลิปไม่เกิน {0} นาที", { 0: trial.max_clip_minutes }) : "",
+                trial.watermark ? tx("มีลายน้ำ") : ""].filter(Boolean).join(" · ")}
+            </span>
+          </div>
+        )}
         <p className="auth-note">{tx("ใช้บัญชี Google (Gmail) เท่านั้น ครั้งแรกระบบสร้างบัญชีให้อัตโนมัติ ไม่ต้องตั้งรหัสผ่าน")}</p>
       </>
     );

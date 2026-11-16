@@ -1146,3 +1146,6 @@ b.fit-bad { color: var(--danger); }
 @keyframes seg-pulse { 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .step-segs span.now { animation: none; } }
 .proc-notify { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.auth-trial { width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent); border-radius: 12px; background: var(--brand-soft); text-align: left; }
+.auth-trial b { font-size: 13.5px; font-weight: 600; color: var(--text); }
+.auth-trial .mono { font-size: 12.5px; color: var(--brand); }
