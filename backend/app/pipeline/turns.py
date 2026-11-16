@@ -17,6 +17,7 @@ from .common import Word
 log = logging.getLogger("dubbing.turns")
 
 MIN_PIECE_SEC = 0.6  # ชิ้นสั้นกว่านี้วัดลายเสียงไม่ได้ ต่อเข้ากับชิ้นก่อนหน้า
+INTERJECTION_SAME_SIM = 0.5  # ชิ้นซ้ายกับขวาของคำสั้นที่แทรกกลางเหมือนกันเกินนี้ = คนเดียวกันพูดต่อ
 
 
 def piece_times(u: Utterance, words: list[Word], pieces: list[str]) -> list[tuple[float, float, str]]:
@@ -37,6 +38,22 @@ def piece_times(u: Utterance, words: list[Word], pieces: list[str]) -> list[tupl
     return [(bounds[k], bounds[k + 1], p.strip()) for k, p in enumerate(pieces)]
 
 
+def interjections(pv: dict, n: int, same_sim: float = INTERJECTION_SAME_SIM) -> set[int]:
+    """ชิ้นสั้นที่แทรกกลางคำพูดของคนเดียว (เช่น "Issues?" ระหว่างประโยคเดียวกันของอีกคน)
+    ชิ้นนี้วัดลายเสียงไม่ได้ จึงเทียบกับลายเสียงไม่ได้ แต่ถ้าชิ้นซ้ายกับขวาเป็นคนเดียวกัน
+    และ AI เสนอว่าตรงกลางเป็นอีกคน ก็ควรตัดชิ้นนั้นออกมา คืนเลขชิ้นที่เป็นคำแทรก"""
+    from . import voices
+
+    out: set[int] = set()
+    for k in range(1, n - 1):
+        if getattr(pv.get(k), "emb", None) is not None:
+            continue
+        sim = voices.similarity(pv.get(k - 1), pv.get(k + 1))
+        if sim is not None and sim >= same_sim:
+            out.add(k)
+    return out
+
+
 def resplit_core(utterances: list[Utterance], words: list[Word], proposals: dict[int, list[str]],
                  wav: np.ndarray, sr: int, num_speakers) -> tuple[list[Utterance], int]:
     """ตัดท่อนตามจุดที่เสนอซึ่งลายเสียงสองฝั่งต่างกัน (คล้ายกันต่ำกว่า TURN_SPLIT_SIM) แล้วจัดกลุ่มผู้พูดใหม่
@@ -44,6 +61,7 @@ def resplit_core(utterances: list[Utterance], words: list[Word], proposals: dict
     from . import voices
 
     out: list[Utterance] = []
+    interj: list[Utterance] = []  # คำสั้นที่แทรกกลางคำพูดของอีกคน
     cuts = 0
     for u in sorted(utterances, key=lambda x: x.start):
         parts = piece_times(u, words, proposals.get(u.id) or []) if u.id in proposals else []
@@ -52,19 +70,25 @@ def resplit_core(utterances: list[Utterance], words: list[Word], proposals: dict
             continue
         fake = [Utterance(id=k, speaker="", start=a, end=b, source="") for k, (a, b, _) in enumerate(parts)]
         pv = voices.profile(fake, wav, sr, min_sec=MIN_PIECE_SEC)
+        inter = interjections(pv, len(parts))
+        forced = {k for i in inter for k in (i, i + 1)}  # ตัดก่อนและหลังคำแทรก
+        inter_parts = {parts[i] for i in inter}
         cur = [parts[0]]
         groups = []
         for k in range(1, len(parts)):
             sim = voices.similarity(pv[k - 1], pv[k])
-            if sim is not None and sim < settings.turn_split_sim:
+            if (sim is not None and sim < settings.turn_split_sim) or k in forced:
                 groups.append(cur)
                 cur = []
             cur.append(parts[k])
         groups.append(cur)
         cuts += len(groups) - 1
         for g in groups:
-            out.append(u.model_copy(update={"start": round(g[0][0], 3), "end": round(g[-1][1], 3),
-                                            "source": "".join(t for _, _, t in g).strip()}))
+            piece = u.model_copy(update={"start": round(g[0][0], 3), "end": round(g[-1][1], 3),
+                                         "source": "".join(t for _, _, t in g).strip()})
+            out.append(piece)
+            if len(g) == 1 and g[0] in inter_parts:
+                interj.append(piece)
     for i, u in enumerate(out, 1):
         u.id = i
     if not cuts:
@@ -83,4 +107,14 @@ def resplit_core(utterances: list[Utterance], words: list[Word], proposals: dict
             scores = {s: x for s, x in scores.items() if x is not None}
             if scores:
                 u.speaker = max(scores, key=scores.get)
+    # คำแทรกวัดลายเสียงไม่ได้: ถ้ามีสองคน และสองข้างเป็นคนเดียวกัน ให้เป็นอีกคน
+    names = {u.speaker for u in out}
+    if len(names) == 2:
+        for piece in interj:
+            i = next((n for n, u in enumerate(out) if u is piece), None)
+            if i is None or i == 0 or i == len(out) - 1:
+                continue
+            before, after = out[i - 1].speaker, out[i + 1].speaker
+            if before == after:
+                piece.speaker = next(iter(names - {before}))
     return out, cuts
