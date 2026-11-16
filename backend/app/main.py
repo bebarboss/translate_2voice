@@ -1,6 +1,7 @@
 """Dubbing API — ส่งคลิปต่างประเทศเข้ามา ได้คลิปพากย์ไทยหรืออังกฤษกลับไป"""
 import hashlib
 import hmac
+import json
 import logging
 import math
 import mimetypes
@@ -2123,6 +2124,43 @@ def admin_job_metrics_daily_run(day: str = "", _=Depends(require_admin)):
 
     run_day = date_cls.fromisoformat(day) if day else dt.now(BKK).date()
     return daily_metrics.run_for_date(run_day, store=store)
+
+
+@app.get("/admin/evaluate/jobs", dependencies=[Depends(require_key)])
+def admin_evaluate_jobs(limit: int = 30, _=Depends(require_admin)):
+    """คลิปที่พากย์เสร็จ (ใหม่ก่อน) พร้อมคะแนนล่าสุดถ้าเคยประเมินแล้ว"""
+    done = sorted((j for j in store.all() if j.status == JobStatus.done), key=lambda j: j.updated_at, reverse=True)
+    out = []
+    for j in done[:max(1, min(limit, 200))]:
+        path = store.dir(j.id) / "metrics.json"
+        overall = None
+        if path.exists():
+            try:
+                overall = json.loads(path.read_text(encoding="utf-8")).get("overall")
+            except (OSError, ValueError):
+                pass
+        out.append({"id": j.id, "filename": j.filename, "target_lang": j.target_lang,
+                    "updated_at": j.updated_at.isoformat(), "overall": overall})
+    return out
+
+
+@app.post("/admin/jobs/{job_id}/evaluate", dependencies=[Depends(require_key)])
+def admin_evaluate_job(job_id: str, _=Depends(require_admin)):
+    """ประเมินคลิปที่พากย์เสร็จทันที (ไฟล์ล้วน ไม่เรียกโมเดล ไม่เสียเครดิต) เขียน metrics.json แล้วคืนคะแนนแต่ละด้าน"""
+    from . import job_metrics
+
+    job = store.get(job_id)
+    if not job:
+        raise HTTPException(404, "ไม่พบงานนี้")
+    if job.status != JobStatus.done:
+        raise HTTPException(409, "ประเมินได้เฉพาะงานที่พากย์เสร็จแล้ว")
+    try:
+        metrics = job_metrics.write_metrics(store.dir(job_id))
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).exception("evaluate %s failed", job_id)
+        raise HTTPException(500, f"ประเมินไม่สำเร็จ: {exc}") from exc
+    return {"id": job_id, "filename": job.filename, "overall": metrics.get("overall"), "n_lines": metrics.get("n_lines"),
+            "needs_asr_heal": bool(metrics.get("needs_asr_heal")), "components": job_metrics.component_values(metrics)}
 
 
 @app.get("/admin/quality/lines", dependencies=[Depends(require_key)])

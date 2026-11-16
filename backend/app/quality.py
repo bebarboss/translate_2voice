@@ -106,7 +106,8 @@ def summary(days: int = 30) -> dict:
         return {"available": False, "days": days, "total": _agg([]), "weeks": [], "langs": []}
 
     def week(r: dict) -> str:
-        d = datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")).date()
+        v = r["updated_at"]  # Postgres คืน datetime, PostgREST คืนข้อความ ISO
+        d = (v if isinstance(v, datetime) else datetime.fromisoformat(str(v).replace("Z", "+00:00"))).date()
         return (d - timedelta(days=d.weekday())).isoformat()
 
     def groups(key) -> list[dict]:

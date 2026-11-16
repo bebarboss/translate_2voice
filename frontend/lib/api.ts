@@ -461,6 +461,8 @@ export const api = {
   backups: () => request<Backups>("/admin/backups"),
   backupNow: () => request<{ name: string; bytes: number }>("/admin/backups", { method: "POST" }),
   quality: (days = 30) => request<Quality>(`/admin/quality?days=${days}`),
+  evaluateJobs: (limit = 30) => request<EvalJob[]>(`/admin/evaluate/jobs?limit=${limit}`),
+  evaluateJob: (id: string) => request<EvalResult>(`/admin/jobs/${encodeURIComponent(id)}/evaluate`, { method: "POST" }),
   qualityLines: (days = 30, kind: QualityKind = "", limit = 50) =>
     request<QualityLine[]>(`/admin/quality/lines?days=${days}&kind=${kind}&limit=${limit}`),
   plans: () => request<{ plans: Plan[]; credit_price: number; credit_packs: number[]; card_bonus: number }>("/billing/plans"),
@@ -660,6 +662,13 @@ export const api = {
 export type QualityStats = {
   jobs: number; lines: number; text_edited: number; speaker_changed: number; retimed: number;
   added: number; removed: number; edit_distance: number; synth_runs: number; translations: number;
+};
+/** คลิปที่พากย์เสร็จ + คะแนนรวมล่าสุด (null = ยังไม่เคยประเมิน) */
+export type EvalJob = { id: string; filename: string; target_lang: string; updated_at: string; overall: number | null };
+/** คะแนน 0-1 แต่ละด้าน (null = วัดไม่ได้กับงานนี้) */
+export type EvalResult = {
+  id: string; filename: string; overall: number | null; n_lines: number; needs_asr_heal: boolean;
+  components: Record<string, number | null>;
 };
 export type Quality = {
   available: boolean; days: number; total: QualityStats;

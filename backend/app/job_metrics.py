@@ -831,6 +831,26 @@ def score_job(job_dir: Path, *, dub_check_min: float = 0.6) -> dict[str, Any]:
     }
 
 
+EVAL_COMPONENTS = ("speech_coverage", "dub_match", "timing_fit", "length_vs_source", "translate_fidelity",
+                   "prosody_match", "lip_overflow", "term_consistency", "speaker_confusion")
+
+
+def component_values(metrics: dict) -> dict[str, Optional[float]]:
+    """ค่าของแต่ละด้านในรูป 0-1 (ว่าง = วัดไม่ได้กับงานนี้) ใช้โชว์ในหน้าผู้ดูแล"""
+    def num(block, key):
+        v = (block or {}).get(key)
+        return round(float(v), 4) if isinstance(v, (int, float)) else None
+
+    dub = metrics.get("dub_match") or {}
+    ratio = num(metrics.get("timing_fit"), "mean_ratio")
+    return {
+        "speech_coverage": num(metrics.get("speech_coverage"), "coverage"),
+        "dub_match": num(dub, "mean") if dub.get("mean") is not None else (1.0 if dub.get("ok") is True else None),
+        "timing_fit": None if ratio is None else round(max(0.0, 1.0 - abs(ratio - 1.0)), 4),
+        **{k: num(metrics.get(k), "score") for k in EVAL_COMPONENTS[3:]},
+    }
+
+
 def write_metrics(job_dir: Path, metrics: Optional[dict] = None, *, dub_check_min: float = 0.6) -> dict:
     """คำนวณแล้วเขียน metrics.json"""
     job_dir = Path(job_dir)

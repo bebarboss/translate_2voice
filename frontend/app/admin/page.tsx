@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Alert, fmtCredits, fmtDate, useRunner } from "@/components/Billing";
-import { api, fileUrl, type AccountType, type AdminUser, type Backups, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine, type VoiceReport } from "@/lib/api";
+import { api, fileUrl, type AccountType, type AdminUser, type Backups, type EvalJob, type EvalResult, type PaymentOrder, type Plan, type Quality, type QualityKind, type QualityLine, type VoiceReport } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { locale, tx } from "@/lib/i18n";
 import { ACCOUNT_LOAD_ERROR, LoadError } from "@/components/LoadState";
@@ -45,6 +45,85 @@ function BackupSection() {
 /** ผู้ดูแล: ผู้ใช้แก้อะไรจากที่ AI ทำบ่อยแค่ไหน (วัดผลหลังปรับระบบ) และบรรทัดที่แก้ล่าสุด (ชุดทดสอบ) */
 const KIND_LABEL: Record<string, string> = { text: "คำแปล", speaker: "ผู้พูด", time: "เวลา" };
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+
+const EVAL_LABELS: Record<string, string> = {
+  speech_coverage: "ครอบคลุมเสียงพูด",
+  dub_match: "พากย์ตรงบท",
+  timing_fit: "ความยาวพอดีช่อง",
+  length_vs_source: "ความยาวเทียบต้นฉบับ",
+  translate_fidelity: "ความตรงของคำแปล",
+  prosody_match: "น้ำเสียงเทียบต้นฉบับ",
+  lip_overflow: "ไม่ล้นเวลาปาก",
+  term_consistency: "ศัพท์สม่ำเสมอ",
+  speaker_confusion: "ไม่สลับผู้พูด",
+};
+const evalPct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+
+/** กดปุ่มเพื่อประเมินคลิปที่พากย์เสร็จทีละคลิป (คำนวณจากไฟล์ ไม่เสียเครดิต) */
+function EvaluateSection() {
+  const [jobs, setJobs] = useState<EvalJob[] | null>(null);
+  const [results, setResults] = useState<Record<string, EvalResult>>({});
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => { api.evaluateJobs(20).then(setJobs).catch((e) => setError(e.message)); }, []);
+  const run = (id: string) => {
+    setBusy(id);
+    setError("");
+    api.evaluateJob(id)
+      .then((r) => {
+        setResults((m) => ({ ...m, [id]: r }));
+        setJobs((js) => js && js.map((j) => (j.id === id ? { ...j, overall: r.overall } : j)));
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(""));
+  };
+  return (
+    <section className="card" aria-labelledby="eval-title">
+      <h2 id="eval-title" style={{ margin: 0 }}>{tx("ประเมินคลิป")}</h2>
+      <span className="muted" style={{ fontSize: 14 }}>
+        {tx("วัดคุณภาพคลิปที่พากย์เสร็จจากไฟล์ของงาน (ครอบคลุมเสียงพูด พากย์ตรงบท จังหวะ ความยาว ศัพท์ ผู้พูด) ไม่เสียเครดิตและไม่เรียก AI")}
+      </span>
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {jobs && jobs.length === 0 && <div className="empty">{tx("ยังไม่มีคลิปที่พากย์เสร็จ")}</div>}
+      {jobs && jobs.length > 0 && (
+        <table className="ledger" style={{ minWidth: 0 }}>
+          <thead><tr><th>{tx("คลิป")}</th><th>{tx("เสร็จเมื่อ")}</th><th>{tx("คะแนนรวม")}</th><th></th></tr></thead>
+          <tbody>
+            {jobs.map((j) => {
+              const r = results[j.id];
+              return (
+                <Fragment key={j.id}>
+                  <tr>
+                    <td><Link href={`/jobs/${j.id}`}>{j.filename || j.id}</Link></td>
+                    <td className="mono">{fmtDate(Date.parse(j.updated_at) / 1000)}</td>
+                    <td className="mono">{evalPct(j.overall)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button type="button" className="btn small" disabled={busy !== ""} onClick={() => run(j.id)}>
+                        {busy === j.id ? tx("กำลังประเมิน…") : j.overall == null ? tx("ประเมิน") : tx("ประเมินใหม่")}
+                      </button>
+                    </td>
+                  </tr>
+                  {r && (
+                    <tr>
+                      <td colSpan={4}>
+                        <div className="row" style={{ gap: 20, flexWrap: "wrap" }}>
+                          {Object.keys(EVAL_LABELS).map((k) => (
+                            <div key={k}><div className="dim">{tx(EVAL_LABELS[k])}</div><b className="mono">{evalPct(r.components[k])}</b></div>
+                          ))}
+                        </div>
+                        {r.needs_asr_heal && <div className="alert info" style={{ marginTop: 8 }}>{tx("เสียงพูดในต้นฉบับถูกถอดเป็นบทไม่ครบ ควรตรวจบทที่ตกหล่น")}</div>}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
 
 function QualitySection() {
   const [days, setDays] = useState(30);
@@ -458,6 +537,7 @@ export default function AdminPage() {
       <FeedbackSection />
       <UsersSection me={user.id} billing={config.billing} />
       {config.billing && <PaymentsSection />}
+      <EvaluateSection />
       <QualitySection />
       <BackupSection />
     </main>
