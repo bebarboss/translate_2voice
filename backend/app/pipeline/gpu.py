@@ -351,6 +351,14 @@ def untranscribed_speech(utterances: list[Utterance], orig: np.ndarray, sr: int,
     return out
 
 
+SILENT_RETRIES = 3
+SILENT_PEAK = 0.02  # เสียงที่ดังสุดไม่ถึงนี้ถือว่าเงียบ
+
+
+def is_audible(v) -> bool:
+    return bool(len(v)) and bool(np.isfinite(v).all()) and float(np.abs(v).max()) > SILENT_PEAK
+
+
 def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
                checks: Optional[dict] = None) -> np.ndarray:
     """พากย์หนึ่งช่วง โมเดลปรับจังหวะพูดให้พอดีฉากเองตอนสร้างเสียง ไม่ต้องเร่งความเร็วทีหลัง
@@ -364,14 +372,22 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
         speak_text = pronounce_thai(speak_text, use_ai=bool(settings.typhoon_api_key) and settings.ai_speak_latin)
 
     # F5-TTS สุ่มได้เสียงเงียบเป็นครั้งคราว → สร้างใหม่ (สูงสุด 3 รอบ)
+    # บทสั้นมากถูกบีบให้พูดในเวลาฉากที่สั้นนิดเดียว (fix_duration) ซึ่งเป็นต้นเหตุหลักของเสียงเงียบ
+    # รอบสุดท้ายจึงไม่กำหนดความยาว ให้โมเดลพูดด้วยความยาวธรรมชาติ ตัดความเงียบท้ายเสียงทีหลังได้
     def once():
-        for _ in range(3):
+        for attempt in range(SILENT_RETRIES):
             v = synthesize(ref_path, line["ref_text"], speak_text, speed, steps, line["target_lang"],
-                           slot=line["slot"], max_speedup=line["max_speedup"], max_slowdown=line["max_slowdown"])
-            if len(v) and np.isfinite(v).all() and np.abs(v).max() > 0.02:
+                           slot=line["slot"] if attempt < SILENT_RETRIES - 1 else None,
+                           max_speedup=line["max_speedup"], max_slowdown=line["max_slowdown"])
+            if is_audible(v):
                 break
-            log.warning("line %s: silent TTS output, retrying", line["id"])
+            log.warning("line %s: silent TTS output (attempt %d/%d), retrying", line["id"], attempt + 1, SILENT_RETRIES)
+        else:
+            log.error("line %s: TTS output still silent after %d attempts", line["id"], SILENT_RETRIES)
+            silent_lines.add(line["id"])
         return np.nan_to_num(v)
+
+    silent_lines: set = set()
 
     voice = once()
     # บางรอบ F5-TTS พูดหลุดจากเสียงตัวอย่าง (ผู้หญิงกลายเป็นเสียงต่ำ เด็กกลายเป็นผู้ใหญ่)
@@ -405,6 +421,8 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
         score, text, voice = max(tries, key=lambda x: x[0])
         if checks is not None:
             checks[line["id"]] = [round(score, 3), text]
+    if checks is not None and line["id"] in silent_lines and not is_audible(voice):
+        checks[line["id"]] = [0.0, ""]  # ยังเงียบหลังลองครบ: ให้ขึ้นเป็นบรรทัดที่พากย์ไม่ตรงบท ผู้ใช้จะได้เห็นและสั่งพากย์ใหม่
     return voice
 
 
