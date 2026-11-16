@@ -206,22 +206,42 @@ def test_speaker_confusion_self_overlap(tmp_path):
     assert m["score"] is not None and m["score"] < 1.0
 
 
-def test_prosody_match_scores_similar_loudness(tmp_path):
+def _prosody_job(tmp_path, n_lines, dub_amp=0.3):
     import soundfile as sf
 
     sr = 16000
-    sf.write(tmp_path / "vocals.wav", _tone(sr, 1.5, amp=0.3), sr)
-    utts = [Utterance(id=1, speaker="a", start=0.0, end=1.5, source="hi", target="สวัสดี")]
+    sf.write(tmp_path / "vocals.wav", _tone(sr, 1.5 * n_lines + 1, amp=0.3), sr)
+    utts = [Utterance(id=i + 1, speaker="a", start=i * 1.6, end=i * 1.6 + 1.5, source="hi", target="สวัสดี")
+            for i in range(n_lines)]
     tts = tmp_path / "tts"
     tts.mkdir()
-    sf.write(tts / "0001.wav", _tone(24000, 1.5, amp=0.3), 24000)
+    for u in utts:
+        sf.write(tts / f"{u.id:04d}.wav", _tone(24000, 1.5, amp=dub_amp), 24000)
     (tmp_path / "transcript.json").write_text(
         json.dumps([u.model_dump() for u in utts], ensure_ascii=False), encoding="utf-8"
     )
+    return utts
+
+
+def test_prosody_match_scores_similar_loudness(tmp_path):
+    utts = _prosody_job(tmp_path, 3)
     m = prosody_match(tmp_path, utts)
-    assert m["n"] == 1
-    assert m["score"] is not None
+    assert m["n"] == 3
+    assert m["score"] is not None and m["score"] > 0.9
     assert m["loud_mean_db_gap"] is not None
+
+
+def test_prosody_ignores_constant_loudness_offset(tmp_path):
+    # พากย์ดังกว่าต้นฉบับคงที่ ~14 dB (ไฟล์ TTS ปรับระดับแล้ว) ต้องไม่ถูกลงโทษ
+    utts = _prosody_job(tmp_path, 4, dub_amp=0.3 * 5)
+    m = prosody_match(tmp_path, utts)
+    assert m["score"] is not None and m["score"] > 0.9
+
+
+def test_prosody_needs_enough_lines_to_judge(tmp_path):
+    utts = _prosody_job(tmp_path, 1)
+    m = prosody_match(tmp_path, utts)
+    assert m["n"] == 1 and m["score"] is None
 
 
 def test_knob_bounds_and_nudge(monkeypatch, tmp_path):

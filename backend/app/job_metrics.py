@@ -160,26 +160,46 @@ def dub_match_from_utts(utts: list[Utterance], *, min_score: float = 0.6) -> dic
     }
 
 
-def timing_fit(job_dir: Path, utts: list[Utterance], *, sr_hint: int = 24000) -> dict[str, Any]:
-    """เทียบความยาวไฟล์ tts/NNNN.wav กับช่องปาก"""
-    import soundfile as sf
-
+def tts_units(job_dir: Path, utts: list[Utterance], max_gap: float = 0.6) -> list[dict]:
+    """หน่วยที่ถูกพากย์จริง: ท่อนที่พากย์รวมเป็นประโยคเดียวเก็บเสียงไว้ในไฟล์ของท่อนแรก (tts/NNNN.wav)
+    ท่อนถัดไปในประโยคเดียวกันไม่มีไฟล์ของตัวเอง จึงต่อเข้าหน่วยก่อนหน้า (คนเดิมและเว้นไม่เกิน max_gap วินาที)
+    ถ้าไม่ต่อ ไฟล์รวมจะถูกเทียบกับช่องของท่อนเดียว ได้ว่าล้นเวลาและท่อนที่เหลือถูกนับว่าตกหล่นทั้งที่พากย์แล้ว
+    คืน [{"lead", "members", "path"|None, "start", "end"}] path = None คือไม่มีเสียงเลย"""
     tts_dir = job_dir / "tts"
+    units: list[dict] = []
+    for u in sorted(utts, key=lambda x: x.start):
+        path = tts_dir / f"{u.id:04d}.wav"
+        prev = units[-1] if units else None
+        if path.exists():
+            units.append({"lead": u, "members": [u], "path": path})
+        elif prev is not None and prev["members"][-1].speaker == u.speaker and u.start - prev["members"][-1].end <= max_gap:
+            prev["members"].append(u)
+        else:
+            units.append({"lead": u, "members": [u], "path": None})
+    for x in units:
+        x["start"], x["end"] = float(x["members"][0].start), float(x["members"][-1].end)
+    return units
+
+
+def _wav_seconds(path: Path, sr_hint: int = 24000) -> Optional[float]:
+    import soundfile as sf
+    try:
+        info = sf.info(str(path))
+        return float(info.frames) / float(info.samplerate or sr_hint)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def timing_fit(job_dir: Path, utts: list[Utterance], *, sr_hint: int = 24000) -> dict[str, Any]:
+    """เทียบความยาวเสียงพากย์กับช่องปากของหน่วยที่พากย์ (ประโยคที่พากย์รวมนับเป็นหน่วยเดียว)"""
     ratios: list[float] = []
     missing = 0
-    for u in utts:
-        slot = max(0.05, float(u.end) - float(u.start))
-        path = tts_dir / f"{u.id:04d}.wav"
-        if not path.exists():
-            missing += 1
+    for x in tts_units(job_dir, utts):
+        dur = _wav_seconds(x["path"], sr_hint) if x["path"] else None
+        if dur is None:
+            missing += len(x["members"])
             continue
-        try:
-            info = sf.info(str(path))
-            dur = float(info.frames) / float(info.samplerate or sr_hint)
-        except Exception:  # noqa: BLE001
-            missing += 1
-            continue
-        ratios.append(dur / slot)
+        ratios.append(dur / max(0.05, x["end"] - x["start"]))
     if not ratios:
         return {"mean_ratio": None, "n": 0, "missing": missing, "ok": None}
     mean = sum(ratios) / len(ratios)
@@ -465,10 +485,30 @@ def _hz_to_st(hz: float) -> float:
     return 12.0 * np.log2(max(hz, 1e-6) / 440.0)
 
 
-def prosody_match(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
-    """ความดัง + pitch ของพากย์เทียบต้นฉบับรายท่อน (0–1)"""
-    import soundfile as sf
+PROSODY_MIN_SAMPLES = 3  # ต้องมีตัวอย่างพอถึงจะตัดส่วนต่างคงที่ออกได้ ไม่งั้นทุกค่าจะกลายเป็นศูนย์เอง
 
+
+def _relative_gaps(pairs: list[tuple[str, float]]) -> list[float]:
+    """ส่วนต่างของค่า (พากย์ − ต้นฉบับ) หลังตัดส่วนต่างคงที่ของแต่ละกลุ่มออก
+    pairs = [(กลุ่ม, ส่วนต่าง)] กลุ่มที่มีตัวอย่างน้อยกว่า PROSODY_MIN_SAMPLES ไม่นับ"""
+    by: dict[str, list[float]] = {}
+    for key, gap in pairs:
+        by.setdefault(key, []).append(gap)
+    out: list[float] = []
+    for gaps in by.values():
+        if len(gaps) >= PROSODY_MIN_SAMPLES:
+            mid = float(np.median(gaps))
+            out += [abs(g - mid) for g in gaps]
+    return out
+
+
+def prosody_match(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
+    """จังหวะขึ้นลงของความดังและ pitch ของพากย์เทียบต้นฉบับรายหน่วย (0–1)
+
+    ไฟล์ TTS ผ่านการปรับระดับเสียงแล้ว (ดังกว่าเสียงต้นฉบับที่แยกออกมาเกือบคงที่) และเสียงจากคลังมี pitch คนละระดับกับต้นฉบับ
+    การเทียบค่าตรง ๆ จึงลงโทษการเลือกเสียง ไม่ใช่คุณภาพการพากย์ ที่นี่เทียบเฉพาะส่วนที่ผันแปรรายหน่วย
+    (ความดังตัดส่วนต่างคงที่ทั้งงาน pitch ตัดส่วนต่างคงที่ของผู้พูดแต่ละคน)
+    """
     vocals = job_dir / "vocals.wav"
     if not vocals.exists():
         vocals = job_dir / "audio.wav"
@@ -481,40 +521,34 @@ def prosody_match(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"score": None, "n": 0, "error": str(exc), "ok": None}
 
-    loud_gaps: list[float] = []
-    pitch_gaps: list[float] = []
+    loud: list[tuple[str, float]] = []
+    pitch: list[tuple[str, float]] = []
     n = 0
-    for u in utts:
-        path = tts_dir / f"{u.id:04d}.wav"
-        if not path.exists():
+    for x in tts_units(job_dir, utts):
+        if not x["path"]:
             continue
-        a, b = int(u.start * osr), int(u.end * osr)
+        a, b = int(x["start"] * osr), int(x["end"] * osr)
         src = orig[max(0, a): max(0, b)]
         try:
-            dub, dsr = sf.read(str(path), dtype="float32", always_2d=False)
-            if getattr(dub, "ndim", 1) > 1:
-                dub = dub.mean(axis=1)
+            dub, dsr = _load_wav(x["path"])
         except Exception:  # noqa: BLE001
             continue
         n += 1
-        sdb, ddb = _rms_db(np.asarray(src, dtype=np.float32)), _rms_db(np.asarray(dub, dtype=np.float32))
+        who = x["lead"].speaker
+        sdb, ddb = _rms_db(np.asarray(src, dtype=np.float32)), _rms_db(dub)
         if sdb is not None and ddb is not None:
-            loud_gaps.append(abs(sdb - ddb))
-        sp = _pitch_hz(np.asarray(src, dtype=np.float32), osr)
-        dp = _pitch_hz(np.asarray(dub, dtype=np.float32), int(dsr))
+            loud.append(("all", ddb - sdb))
+        sp, dp = _pitch_hz(np.asarray(src, dtype=np.float32), osr), _pitch_hz(dub, dsr)
         if sp and dp:
-            pitch_gaps.append(abs(_hz_to_st(sp) - _hz_to_st(dp)))
+            pitch.append((who, _hz_to_st(dp) - _hz_to_st(sp)))
 
     if n == 0:
         return {"score": None, "n": 0, "ok": None}
 
-    # ดังห่าง ≤6 dB → ดี; pitch ห่าง ≤4 st → ดี
-    loud_score = None
-    if loud_gaps:
-        loud_score = float(np.mean([max(0.0, 1.0 - g / 12.0) for g in loud_gaps]))
-    pitch_score = None
-    if pitch_gaps:
-        pitch_score = float(np.mean([max(0.0, 1.0 - g / 8.0) for g in pitch_gaps]))
+    loud_gaps, pitch_gaps = _relative_gaps(loud), _relative_gaps(pitch)
+    # ความดังห่าง ≤6 dB → ดี; pitch ห่าง ≤4 st → ดี
+    loud_score = float(np.mean([max(0.0, 1.0 - g / 12.0) for g in loud_gaps])) if loud_gaps else None
+    pitch_score = float(np.mean([max(0.0, 1.0 - g / 8.0) for g in pitch_gaps])) if pitch_gaps else None
     parts = [x for x in (loud_score, pitch_score) if x is not None]
     score = round(sum(parts) / len(parts), 4) if parts else None
     return {
@@ -524,43 +558,38 @@ def prosody_match(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
         "pitch_mean_st_gap": round(float(np.mean(pitch_gaps)), 3) if pitch_gaps else None,
         "n_loud": len(loud_gaps),
         "n_pitch": len(pitch_gaps),
+        "relative": True,
         "ok": score is not None and score >= 0.65,
     }
 
 
 def lip_overflow(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
-    """เสียงพากย์ล้นทับท่อนถัดไป หรือสั้นกว่าปากมาก (เงียบตอนปากยังขยับ)"""
-    import soundfile as sf
-
+    """เสียงพากย์ล้นทับหน่วยถัดไป หรือสั้นกว่าปากมาก (เงียบตอนปากยังขยับ) นับต่อหน่วยที่พากย์"""
     if not utts:
         return {"score": None, "n": 0, "ok": None}
-    order = sorted(utts, key=lambda u: u.start)
-    tts_dir = job_dir / "tts"
+    units = tts_units(job_dir, utts)
     overflow = 0
     underfill = 0
     scored = 0
     worst = 0.0
-    for i, u in enumerate(order):
-        path = tts_dir / f"{u.id:04d}.wav"
-        slot = max(0.05, float(u.end) - float(u.start))
-        next_start = order[i + 1].start if i + 1 < len(order) else u.end + 99.0
-        gap_to_next = max(0.0, next_start - u.start)
-        if path.exists():
-            try:
-                info = sf.info(str(path))
-                dub_dur = float(info.frames) / float(info.samplerate or 24000)
-            except Exception:  # noqa: BLE001
+    for i, x in enumerate(units):
+        slot = max(0.05, x["end"] - x["start"])
+        next_start = units[i + 1]["start"] if i + 1 < len(units) else x["end"] + 99.0
+        gap_to_next = max(0.0, next_start - x["start"])
+        dub_dur = _wav_seconds(x["path"]) if x["path"] else None
+        if dub_dur is None:
+            if x["path"]:
                 continue
-        else:
             # ไม่มีไฟล์ → ประมาณจากบท
             try:
                 from .pipeline.translate import estimate_seconds
                 meta = _load_job_meta(job_dir)
-                dub_dur = estimate_seconds(u.target or "", meta.get("target_lang") or "th")
+                text = " ".join(m.target or "" for m in x["members"])
+                dub_dur = estimate_seconds(text, meta.get("target_lang") or "th")
             except Exception:  # noqa: BLE001
                 continue
         scored += 1
-        # ล้น: เสียงยาวเกินช่องถึงท่อนถัดไป (เผื่อ 50ms)
+        # ล้น: เสียงยาวเกินช่องถึงหน่วยถัดไป (เผื่อ 50ms)
         limit = min(slot * 1.08, gap_to_next + 0.05)
         over = max(0.0, dub_dur - limit)
         if over > 0.12:
@@ -669,6 +698,9 @@ def term_consistency(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
                 variants[f"src:{s[:20]}"] = uniq
 
     inconsistent = sum(1 for forms in variants.values() if len(forms) > 1)
+    has_names = any(len((n or "").strip()) >= 2 for n in (names or {}).values())
+    if not (glossary or has_names or any(len(t) >= 2 for t in by_src.values())):
+        return {"score": None, "inconsistent_terms": 0, "glossary_misses": 0, "source_drift": 0, "ok": None}
     n_terms = max(1, len(variants) + (1 if glossary else 0))
     pen = (inconsistent + misses * 0.25 + drift) / max(1.0, n_terms + drift)
     score = round(max(0.0, 1.0 - min(1.0, pen)), 4)
