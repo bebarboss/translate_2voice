@@ -63,7 +63,7 @@ STORY_ANALYSIS = True
 STORY_CONTENT_TYPE = True
 TRANSLATE_NEIGHBORS = True
 FIT_NEIGHBORS = True
-TRANSLATE_REVIEW = True
+TRANSLATE_REVIEW = False  # ปิดไว้: ขั้นตรวจหลังแปลเรียกโมเดลเพิ่ม เสียค่า API เพิ่ม เปิดเมื่อพร้อมใช้
 LIP_SYNC_SAME_LANG = False  # ปิด: ไทยเป็นไทยใช้เสียงจากคลัง/อารมณ์เหมือนภาษาอื่น (เปิด = โคลนเสียงต้นฉบับ)
 SAME_LANG_REWRITE = True  # ต้นฉบับภาษาเดียวกับปลายทาง: เรียบเรียงเป็นบทพูดแทนแก้คำผิดอย่างเดียว
 TRANSCRIPT_GATE = True
@@ -78,7 +78,7 @@ DIAR_REFINE = True
 DIAR_EXCLUSIVE = True
 DIAR_MERGE_SIM = 0.75  # รวมกลุ่มผู้พูดเมื่อลายนิ้วมือเหมือนกันประมาณ 75% ขึ้นไป
 OVERLAP_RECOVER = True
-RETRANSCRIBE_NOISY = True
+RETRANSCRIBE_NOISY = False  # ปิดไว้: ไม่ถอดเสียงรอบสองในท่อนที่เพลงทับ
 MIN_COVERAGE_SYNTHESIZE = 0.70
 TURN_SPLIT = True
 TURN_SPLIT_SIM = 0.4
