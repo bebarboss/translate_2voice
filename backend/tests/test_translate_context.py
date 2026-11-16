@@ -339,3 +339,19 @@ def test_same_lang_review_is_not_skipped(flags, monkeypatch):
     translate.review_translation(utts, "th", "th", 1.1, "", {"content_type": "teaser"})
     assert seen == ["terms"]
     assert utts[1].check_note == "ชื่ออาจผิด"
+
+
+def test_duplicate_translations_in_one_sentence_are_flagged():
+    # งาน 31bda7bb3be6: ท่อน 2 กับ 3 ลงท้ายซ้ำ / งาน 484bb7e34db3: ท่อน 9 ใช้ใจความของท่อน 10
+    dup = ["เหมือนที่คิดไว้เมื่อก่อน ใช่เลย แบบนี้มันเหมือนฝันเลย", "เหมือนที่ฉันคิดไว้เมื่อก่อน ใช่เลย แบบนี้มันเหมือนฝันเลย"]
+    assert translate.part_duplicate_indices(dup) == [0, 1]
+    shifted = ["ถ้ามันถูกใช้ผิดในแบบนี้ สังคมเราเป็นยังไง ต้องคิดว่ามันส่งผลต่อชีวิตคนทั่วไปอย่างไร",
+               "เช่น โอเค โอเค ถ้ามันถูกใช้ในทางนี้ แล้วมันหมายความว่าอะไรต่อสังคมของเรา?"]
+    assert translate.part_duplicate_indices(shifted) == [0, 1]
+
+
+def test_distinct_translations_are_not_flagged():
+    ok = ["แต่ต้องมีส่วนร่วมในบทสนทนานั้นด้วย คุณไม่จำเป็นต้องเป็นคนเทคนิคมากก็ได้",
+          "ในบทสนทนานั้น ใช่ไหม ใช่ไหม ฉันว่าแค่เราพูดถึงมันก็ถือว่า"]
+    assert translate.part_duplicate_indices(ok) == []
+    assert translate.part_duplicate_indices(["สวัสดี"]) == []

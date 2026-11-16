@@ -442,8 +442,29 @@ def part_incomplete_finish_indices(sources: list[str], targets: list[str]) -> li
     return bad
 
 
+DUPLICATE_PART_DICE = 0.38  # คำแปลสองท่อนในประโยคเดียวกันคล้ายกันเกินนี้ = โมเดลใส่ใจความซ้ำ (ท่อนปกติที่ใช้คำร่วมกันได้ราว 0.3)
+
+
+def _bigrams(text: str) -> set[str]:
+    t = re.sub(r"[\s/.,?!\"'()\-–—…]+", "", text or "")
+    return {t[i:i + 2] for i in range(len(t) - 1)}
+
+
+def part_duplicate_indices(targets: list[str]) -> list[int]:
+    """ท่อนที่คำแปลซ้ำกับท่อนก่อนหน้าในประโยคเดียวกัน (โมเดลย้ายใจความข้ามท่อนจนสองท่อนพูดเรื่องเดียวกัน)
+    คืนดัชนีของท่อนทั้งคู่ เพราะไม่รู้ว่าท่อนไหนเป็นท่อนที่ผิด ให้แปลใหม่ทั้งคู่"""
+    grams = [_bigrams(t) for t in targets]
+    bad: set[int] = set()
+    for i in range(len(targets) - 1):
+        a, b = grams[i], grams[i + 1]
+        if a and b and 2 * len(a & b) / (len(a) + len(b)) >= DUPLICATE_PART_DICE:
+            bad.update((i, i + 1))
+    return sorted(bad)
+
+
 def part_bleed_indices(sources: list[str], targets: list[str]) -> list[int]:
-    """ดัชนีท่อนที่คำแปลดึงตัวเลข/ชื่อ/ใจความจากต้นฉบับท่อนอื่น หรือจบประโยคทั้งที่ต้นฉบับยังไม่จบ"""
+    """ดัชนีท่อนที่คำแปลดึงตัวเลข/ชื่อ/ใจความจากต้นฉบับท่อนอื่น หรือจบประโยคทั้งที่ต้นฉบับยังไม่จบ
+    หรือคำแปลซ้ำกับท่อนข้างเคียง"""
     if len(sources) != len(targets) or len(sources) < 2:
         return []
     anchors = [_source_anchors(s) for s in sources]
@@ -457,7 +478,7 @@ def part_bleed_indices(sources: list[str], targets: list[str]) -> list[int]:
         leaked -= own
         if any(_target_mentions_anchor(tgt, a) for a in leaked):
             bad.append(i)
-    for i in part_incomplete_finish_indices(sources, targets):
+    for i in part_incomplete_finish_indices(sources, targets) + part_duplicate_indices(targets):
         if i not in bad:
             bad.append(i)
     return sorted(bad)
