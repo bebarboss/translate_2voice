@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import "@fontsource/ibm-plex-sans-thai/400.css";
-import "@fontsource/ibm-plex-sans-thai/500.css";
-import "@fontsource/ibm-plex-sans-thai/600.css";
-import "@fontsource/ibm-plex-sans-thai/700.css";
-import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/anuphan/400.css";
+import "@fontsource/anuphan/500.css";
+import "@fontsource/anuphan/600.css";
+import "@fontsource/anuphan/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "./globals.css";
 import LangInit from "@/components/LangInit";
 import ProfileGate from "@/components/ProfileGate";
