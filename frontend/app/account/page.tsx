@@ -87,7 +87,7 @@ function PrefsTab({ user: initial }: { user: User }) {
             ))}
           </div>
         </Row>
-        <Row title={tx("ธีม")} desc={tx("อัตโนมัติ = ตามการตั้งค่าของเครื่อง")}>
+        <Row title={tx("ธีม")} desc={tx("อัตโนมัติ = โทนมืด (ค่าเริ่มต้น)")}>
           <div className="seg" role="group" aria-label={tx("ธีม")}>
             {([["system", "อัตโนมัติ"], ["dark", "มืด"], ["light", "สว่าง"]] as [Theme, string][]).map(([k, label]) => (
               <button key={k} type="button" aria-pressed={theme === k} onClick={() => { chooseTheme(k); setTheme(k); }}>{tx(label)}</button>

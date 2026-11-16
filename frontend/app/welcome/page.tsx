@@ -2,8 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import "@fontsource/ibm-plex-sans-thai/300.css";
-import "@fontsource/ibm-plex-sans-thai/700.css";
+import "@fontsource/anuphan/300.css";
 import { BrandLink, BRAND_NAME } from "@/components/Brand";
 import { MicIcon } from "@/components/Icons";
 import { useAuth } from "@/lib/useAuth";
@@ -12,14 +11,14 @@ import { chooseLang, getLang, tx } from "@/lib/i18n";
 /** หน้าแรกก่อนเข้าสู่ระบบ: บอกว่าระบบทำอะไร แล้วพาไปสมัครหรือเข้าสู่ระบบ */
 
 const LANES = [
-  { name: "โนบิตะ", color: "#6AB0FF", blocks: [[2, 14], [22, 34], [58, 71], [86, 95]] },
-  { name: "โดราเอมอน", color: "#4FD1B5", blocks: [[15, 21], [36, 52], [73, 84]] },
-  { name: "ชิซุกะ", color: "#C99BFF", blocks: [[44, 57], [64, 72]] },
+  { name: "กานต์", color: "#5CC8F2", blocks: [[2, 14], [22, 34], [58, 71], [86, 95]] },
+  { name: "ฟ้าใส", color: "#F59AC0", blocks: [[15, 21], [36, 52], [73, 84]] },
+  { name: "ลุงต๊อก", color: "#C9E58F", blocks: [[44, 57], [64, 72]] },
 ];
 const LINES = [
-  { who: "โนบิตะ", color: "#6AB0FF", text: "ทำการบ้านให้เสร็จก่อน แล้วไปแคมป์กันนะ!" },
-  { who: "โดราเอมอน", color: "#4FD1B5", text: "เอาล่ะ ออกเดินทางไปผจญภัยใต้ทะเลกันเลย" },
-  { who: "ชิซุกะ", color: "#C99BFF", text: "มีแต่เรื่องแปลก ๆ อยากไขปริศนาด้วยกันไหม?" },
+  { who: "กานต์", color: "#5CC8F2", text: "รีบหน่อยนะ เดี๋ยวพลาดรถเที่ยวสุดท้าย!" },
+  { who: "ฟ้าใส", color: "#F59AC0", text: "ไม่ต้องห่วง ฉันเช็กเวลาไว้แล้ว" },
+  { who: "ลุงต๊อก", color: "#C9E58F", text: "ขึ้นมาเลย เดี๋ยวลุงพาไปส่งเอง" },
 ];
 
 const FEATURES = [
@@ -109,7 +108,7 @@ export default function WelcomePage() {
             <p className="lp-tagline">{tx("นกแก้วช่วยแยกตัวละคร แปล และพากย์คลิปต่างประเทศเป็นไทย")}</p>
             <div className="lp-cta">
               <Link href={start} className="lp-pill lp-pill-dark lp-pill-lg">
-                <MicIcon size={18} color="#fff" /> {signedIn || !authOn ? tx("เริ่มพากย์คลิป") : tx("เริ่มพากย์คลิปแรก")}
+                <MicIcon size={18} /> {signedIn || !authOn ? tx("เริ่มพากย์คลิป") : tx("เริ่มพากย์คลิปแรก")}
               </Link>
               {authOn && !signedIn
                 ? <Link href={login} className="lp-pill lp-pill-light lp-pill-lg">{tx("เข้าสู่ระบบ")}</Link>
@@ -149,7 +148,7 @@ export default function WelcomePage() {
             </p>
             <div className="lp-cta">
               <Link href={actorHref} className="lp-pill lp-pill-dark lp-pill-lg">
-                <MicIcon size={18} color="#fff" /> {tx("สมัครเป็นนักพากย์")}
+                <MicIcon size={18} /> {tx("สมัครเป็นนักพากย์")}
               </Link>
             </div>
           </div>

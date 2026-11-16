@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, fileUrl, type Job } from "@/lib/api";
+import { useAuth } from "@/lib/useAuth";
 import { TARGET_LABEL, isActive, langName, speakerColor, speakerLabel, stageLabel, stepsFor } from "@/lib/format";
 import StatusBadge from "./StatusBadge";
 import { CheckIcon } from "./Icons";
@@ -23,6 +24,18 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
   const steps = stepsFor(job);
   const currentIdx = steps.indexOf(job.stage);
   const active = isActive(job);
+  const auth = useAuth();
+  const canNotify = !!auth.config?.auth && !!auth.user;
+  const [notifyOn, setNotifyOn] = useState<boolean | null>(null);
+  const notify = notifyOn ?? auth.user?.notify_email ?? false;
+  const toggleNotify = () => {
+    const next = !notify;
+    setNotifyOn(next);
+    api.setNotify(next).then((u) => setNotifyOn(u.notify_email)).catch(() => setNotifyOn(!next));
+  };
+  const stepState = (i: number) => (job.status === "queued" ? "todo"
+    : currentIdx < 0 ? (job.stage === "analyzed" || job.stage === "done" ? "done" : "todo")
+    : i < currentIdx ? "done" : i === currentIdx ? (active ? "now" : "todo") : "todo");
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -64,6 +77,9 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
                 aria-valuemin={0} aria-valuemax={100} aria-label={tx("ความคืบหน้ารวม")}>
                 <div style={{ width: `${job.progress * 100}%` }} />
               </div>
+              <div className="step-segs" aria-hidden="true">
+                {steps.map((s, i) => <span key={s} className={stepState(i)} />)}
+              </div>
             </div>
           )}
 
@@ -73,9 +89,7 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
 
           <ol className="steps">
             {steps.map((s, i) => {
-              const state = job.status === "queued" ? "todo"
-                : currentIdx < 0 ? (job.stage === "analyzed" || job.stage === "done" ? "done" : "todo")
-                : i < currentIdx ? "done" : i === currentIdx ? (active ? "now" : "todo") : "todo";
+              const state = stepState(i);
               return (
                 <li key={s} className={state}>
                   <span className="dot">{state === "done" && <CheckIcon />}</span>
@@ -90,6 +104,13 @@ export default function ProcessingView({ job, onChanged }: { job: Job; onChanged
           </ol>
 
           {error && <div className="alert error" role="alert">{error}</div>}
+
+          {active && canNotify && (
+            <label className="check proc-notify">
+              <span className="t">{tx("แจ้งเตือนทางอีเมลเมื่อเสร็จ")}<small>{tx("ปิดหน้านี้ได้ ระบบจะส่งอีเมลเมื่องานรอตรวจบทหรือพากย์เสร็จ")}</small></span>
+              <input type="checkbox" className="switch" role="switch" aria-label={tx("แจ้งเตือนทางอีเมลเมื่อเสร็จ")} checked={notify} onChange={toggleNotify} />
+            </label>
+          )}
 
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="dim">
