@@ -322,4 +322,4 @@ python scripts/r2_sync_jobs.py --purge   # หลังมั่นใจว่�
 | API ต่อ DB ไม่ได้ | `DATABASE_URL` โฮสต์ต้องเป็น `db`, รหัสผ่านตรง `POSTGRES_PASSWORD`, `docker compose logs db` |
 | ตารางหายหลัง recreate | volume `pg_data` ถูกลบ — restore จาก dump |
 
-ดูภาพรวมระบบเพิ่มที่ [project-overview.md](project-overview.md)
+ดูภาพรวมระบบเพิ่มที่ [pakdee-guide.md](pakdee-guide.md)

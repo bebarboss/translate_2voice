@@ -2,7 +2,7 @@
 
 Pakdee (พากย์ดี) — ระบบพากย์คลิปละครต่างประเทศเป็นภาษาไทยหรืออังกฤษ ด้วยเสียงที่โคลนจากนักแสดงต้นฉบับ ตัวละครแบรนด์เป็นนกแก้ว แบ่งเป็นสองส่วน
 
-**คู่มือผู้ใช้:** [docs/user-manual.md](docs/user-manual.md)  
+**คู่มือผู้ใช้:** [docs/pakdee-guide.md](docs/pakdee-guide.md)  
 **Deploy บน VPS:** [deploy/k8s/README.md](deploy/k8s/README.md) (k3s) · [docs/deploy-vps.md](docs/deploy-vps.md) (Docker Compose, ใช้ย้อนกลับ)
 
 - **Backend** (`backend/`) — FastAPI รันโมเดลบนการ์ดจอเครื่องตัวเอง หรือส่งเฉพาะขั้นที่ใช้การ์ดจอไป Modal (`WORKER=modal`)
