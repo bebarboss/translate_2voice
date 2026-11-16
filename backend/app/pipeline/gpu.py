@@ -210,6 +210,8 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
         for i, u in enumerate(utterances, 1):
             u.id = i
         speakers = sorted({*speakers, *(u.speaker for u in hidden)})
+    if recheck is None and (unclear or (turns and utterances)):
+        recheck = {}  # RETRANSCRIBE_NOISY ปิด: ยังไม่มีผล recheck แต่ต้องมี dict ไว้เก็บป้ายด้านล่าง
     if unclear:
         from .transcribe import mark_unclear
         recheck["unclear_lines"] = mark_unclear(utterances, unclear)
