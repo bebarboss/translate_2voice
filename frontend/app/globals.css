@@ -1138,3 +1138,11 @@ b.fit-bad { color: var(--danger); }
   .playbar .follow { margin-left: 0; }
   .timecode { font-size: 22px; }
 }
+
+.step-segs { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; }
+.step-segs span { height: 6px; border-radius: 99px; background: var(--border-2); }
+.step-segs span.done { background: var(--brand); }
+.step-segs span.now { background: var(--brand); opacity: .55; animation: seg-pulse 1.4s ease-in-out infinite; }
+@keyframes seg-pulse { 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .step-segs span.now { animation: none; } }
+.proc-notify { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
