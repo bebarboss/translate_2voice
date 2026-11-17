@@ -50,6 +50,27 @@ def structure_unchanged(job_dir: Path, utterances: list) -> bool:
         for u in utterances for a in [ai[u.id]])
 
 
+def user_text_ids(job_dir: Path, utterances: list) -> set[int]:
+    """บรรทัดที่ผู้ใช้เขียนหรือแก้ข้อความพากย์เอง: ไม่มีในบทของ AI (กล่องใหม่/สำเนา) หรือข้อความต่างจากที่ AI ทำไว้
+    บรรทัดเหล่านี้ห้าม AI ย่อ/ขยายบทอัตโนมัติ ไม่งั้นข้อความที่พิมพ์ถูกเขียนทับด้วยคำแปลจากต้นฉบับ
+    ไม่มีไฟล์ของ AI: ถือเฉพาะกล่องที่ไม่มีต้นฉบับ (พิมพ์เองแน่นอน)"""
+    try:
+        snap = json.loads((job_dir / AI_FILE).read_text(encoding="utf-8"))
+        ai = {int(k): v for k, v in snap["lines"].items()}
+    except (OSError, ValueError, KeyError, AttributeError):
+        ai = None
+    out: set[int] = set()
+    for u in utterances:
+        if not (u.target or "").strip():
+            continue
+        if ai is None:
+            if not (u.source or "").strip():
+                out.add(u.id)
+        elif u.id not in ai or _clean(ai[u.id]["target"]) != _clean(u.target):
+            out.add(u.id)
+    return out
+
+
 def _clean(text: str) -> str:
     return strip_marks(text or "").strip()
 

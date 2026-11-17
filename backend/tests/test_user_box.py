@@ -49,3 +49,23 @@ def test_structure_unknown_without_baseline_is_not_trusted(tmp_path):
     assert not quality.structure_unchanged(tmp_path, [_u(1, 0.0, 3.0)])
     (tmp_path / quality.AI_FILE).write_text("not json", encoding="utf-8")
     assert not quality.structure_unchanged(tmp_path, [_u(1, 0.0, 3.0)])
+
+
+def test_user_text_ids_marks_added_and_edited_lines_only(tmp_path):
+    base = [_u(1, 0.0, 3.0, target="คำแปลของ AI"), _u(2, 4.0, 6.0, target="อีกบรรทัด")]
+    quality.snapshot(tmp_path, base)
+    now = [base[0].model_copy(), base[1].model_copy(update={"target": "ฉันพิมพ์แก้เอง"}),
+           _u(3, 8.0, 12.0, target="สวัสดี ฉันชื่อบอส"),               # สำเนา/กล่องใหม่
+           _u(4, 13.0, 14.0, target="")]                                # ไม่มีข้อความ ไม่ต้องล็อก
+    assert quality.user_text_ids(tmp_path, now) == {2, 3}
+
+
+def test_user_text_ids_ignores_pause_marks_and_whitespace(tmp_path):
+    base = [_u(1, 0.0, 3.0, target="สวัสดี / ครับ")]
+    quality.snapshot(tmp_path, base)
+    assert quality.user_text_ids(tmp_path, [base[0].model_copy(update={"target": " สวัสดี  ครับ "})]) == set()
+
+
+def test_user_text_ids_without_baseline_only_trusts_blank_source_boxes(tmp_path):
+    now = [_u(1, 0.0, 3.0, target="x"), _u(2, 5.0, 7.0, source="", target="พิมพ์เอง")]
+    assert quality.user_text_ids(tmp_path, now) == {2}

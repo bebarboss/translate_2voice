@@ -638,6 +638,12 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         by_speaker[u.speaker].append(u)
 
     can_shorten = bool(settings.typhoon_api_key) and not settings.mock_pipeline
+    # ข้อความที่ผู้ใช้พิมพ์/แก้เอง พากย์ตามที่พิมพ์ ห้ามย่อหรือขยายด้วย AI (ไม่งั้นถูกเขียนทับด้วยคำแปลจากต้นฉบับ)
+    from .. import quality as quality_mod
+    user_text = quality_mod.user_text_ids(d, utterances)
+    can_rewrite = lambda p: can_shorten and not any(u.id in user_text for u in p.g)  # noqa: E731
+    if user_text:
+        log.info("job %s: keeping typed text of lines %s (no auto shorten/lengthen)", job_id, sorted(user_text))
     match_prosody = settings.prosody_match and not settings.mock_pipeline
     orig, orig_sr = sf.read(vocals, dtype="float32")
     orig = orig.mean(axis=1) if orig.ndim > 1 else orig
@@ -862,13 +868,13 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         again = []
         for p in batch:
             dur = len(p.voice) / sr
-            if can_shorten and dur > p.slot * 1.02:
+            if can_rewrite(p) and dur > p.slot * 1.02:
                 cancel()
                 before = p.text()
                 shorten(p.g, target, target_ratio=0.88)
                 if p.text() != before:
                     again.append(p)
-            elif can_shorten and p.slot >= 1.2 and dur < p.slot * 0.65:
+            elif can_rewrite(p) and p.slot >= 1.2 and dur < p.slot * 0.65:
                 cancel()
                 before = p.text()
                 lengthen(p.g, target, tolerance=min(p.max_speedup, settings.fit_tolerance))
@@ -881,7 +887,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         # รอบสอง: ยังล้นชัด → ย่อแรงขึ้นอีกครั้ง
         again2 = []
         for p in again:
-            if can_shorten and len(p.voice) / sr > p.slot * 1.05:
+            if can_rewrite(p) and len(p.voice) / sr > p.slot * 1.05:
                 cancel()
                 before = p.text()
                 shorten(p.g, target, target_ratio=0.75)
@@ -893,7 +899,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         # รอบสาม: ยังล้นหนักหลังแพ็ก/ย่อ → ย่อแรงสุดแล้วพากย์อีกครั้ง (กัน lip_overflow)
         again3 = []
         for p in batch:
-            if can_shorten and len(p.voice) / sr > p.slot * 1.12:
+            if can_rewrite(p) and len(p.voice) / sr > p.slot * 1.12:
                 cancel()
                 before = p.text()
                 shorten(p.g, target, target_ratio=0.65)
@@ -930,7 +936,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                     u.heard, u.heard_score = "", None
                 accepted += 1
                 continue
-            if action == "shorten" and can_shorten:
+            if action == "shorten" and can_rewrite(p):
                 before = p.text()
                 shorten(p.g, target, target_ratio=0.85)
                 if p.text() != before:
