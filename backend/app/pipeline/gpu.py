@@ -46,6 +46,7 @@ REMOTE_FIELDS = (
     "diar_refine", "diar_exclusive", "diar_merge_sim", "voice_max_input_min", "voice_drift", "voice_retries", "overlap_recover", "turn_split_sim",
     "retranscribe_noisy", "auto_heal_asr", "second_denoise",
     "dub_check", "dub_check_min", "dub_check_retries",
+    "tts_min_sec", "tts_retry_stretch", "silence_rms_min", "silence_active_min",
 )
 
 
@@ -355,8 +356,21 @@ SILENT_RETRIES = 3
 SILENT_PEAK = 0.02  # เสียงที่ดังสุดไม่ถึงนี้ถือว่าเงียบ
 
 
+def silence_stats(v, sr: int = 24000) -> tuple[float, float, float]:
+    """(peak, RMS ดังสุดของเฟรม 20 ms เป็น dBFS, สัดส่วนเฟรมที่ RMS สูงกว่า SILENCE_RMS_MIN)
+    เสียงเงียบสนิทหรือเป็นแค่ฮัมแผ่ว ๆ มี peak ผ่านเกณฑ์ได้แต่แทบไม่มีเฟรมที่เป็นเสียงพูด"""
+    v = np.asarray(v, dtype=np.float32).reshape(-1)
+    if not len(v) or not np.isfinite(v).all():
+        return 0.0, -120.0, 0.0
+    n = max(1, int(sr * 0.02))
+    frames = v[: len(v) // n * n].reshape(-1, n) if len(v) >= n else v.reshape(1, -1)
+    db = 20 * np.log10(np.sqrt((frames ** 2).mean(axis=1)) + 1e-9)
+    return float(np.abs(v).max()), float(db.max()), float((db > settings.silence_rms_min).mean())
+
+
 def is_audible(v) -> bool:
-    return bool(len(v)) and bool(np.isfinite(v).all()) and float(np.abs(v).max()) > SILENT_PEAK
+    peak, _, active = silence_stats(v)
+    return peak > SILENT_PEAK and active >= settings.silence_active_min
 
 
 def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
@@ -374,14 +388,25 @@ def speak_line(synthesize, ref_path: Path, line: dict, steps: int, speed: float,
     # F5-TTS สุ่มได้เสียงเงียบเป็นครั้งคราว → สร้างใหม่ (สูงสุด 3 รอบ)
     # บทสั้นมากถูกบีบให้พูดในเวลาฉากที่สั้นนิดเดียว (fix_duration) ซึ่งเป็นต้นเหตุหลักของเสียงเงียบ
     # รอบสุดท้ายจึงไม่กำหนดความยาว ให้โมเดลพูดด้วยความยาวธรรมชาติ ตัดความเงียบท้ายเสียงทีหลังได้
+    # บันไดแก้: ทุกครั้งที่สร้างเสียงให้ line นี้ (รวมรอบตรวจบท/ระดับเสียง) ขอความยาวเพิ่มทีละขั้น (calls → attempt)
+    # รอบสุดท้ายของ once() ไม่กำหนดความยาว ให้โมเดลพูดความยาวธรรมชาติ
+    calls = [0]
+
     def once():
         for attempt in range(SILENT_RETRIES):
+            n, calls[0] = calls[0], calls[0] + 1
+            slot = line["slot"] if attempt < SILENT_RETRIES - 1 else None
             v = synthesize(ref_path, line["ref_text"], speak_text, speed, steps, line["target_lang"],
-                           slot=line["slot"] if attempt < SILENT_RETRIES - 1 else None,
-                           max_speedup=line["max_speedup"], max_slowdown=line["max_slowdown"])
-            if is_audible(v):
+                           slot=slot, max_speedup=line["max_speedup"], max_slowdown=line["max_slowdown"],
+                           attempt=n, limit=line.get("limit"))
+            peak, rms, active = silence_stats(v)
+            ok = is_audible(v)
+            if n or not ok:  # รอบแรกที่ผ่านเป็นกรณีปกติ ไม่ต้อง log
+                log.info("tts-ladder line=%s call=%d slot=%s peak=%.3f rms=%.1fdB active=%.2f -> %s",
+                         line["id"], n, None if slot is None else round(slot, 2), peak, rms, active,
+                         "ok" if ok else "silent, next step")
+            if ok:
                 break
-            log.warning("line %s: silent TTS output (attempt %d/%d), retrying", line["id"], attempt + 1, SILENT_RETRIES)
         else:
             log.error("line %s: TTS output still silent after %d attempts", line["id"], SILENT_RETRIES)
             silent_lines.add(line["id"])

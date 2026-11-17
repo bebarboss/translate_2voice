@@ -58,6 +58,20 @@ def _fit(natural: float, slot: float, max_speedup: float, max_slowdown: float) -
     return max(0.3, min(max(slot, natural / max_speedup), natural * max_slowdown))
 
 
+def request_seconds(natural: float, slot: float, max_speedup: float, max_slowdown: float,
+                    attempt: int = 0, limit: Optional[float] = None) -> float:
+    """ความยาวเสียงที่ขอจาก F5-TTS รอบที่ attempt (0 = รอบแรก)
+
+    รอบแรก: เท่า _fit แต่ไม่ต่ำกว่า TTS_MIN_SEC (ประโยคสั้นมากที่ขอเวลาน้อยเกินโมเดลพูดไม่ทัน ได้เสียงเงียบ)
+    รอบลองใหม่: ยืดขึ้น TTS_RETRY_STRETCH เท่าต่อรอบ ไม่เกินช่องที่วางเสียงได้จริง (limit) หรือความยาวธรรมชาติ × max_slowdown
+    (ต้องเกินเพดาน max_slowdown ของ _fit ได้ เพราะเพดานนั้นคือสาเหตุของเสียงเงียบ)"""
+    base = max(_fit(natural, slot, max_speedup, max_slowdown), settings.tts_min_sec)
+    if attempt <= 0:
+        return base
+    cap = max(base, limit or 0.0, natural * max_slowdown)
+    return min(base * settings.tts_retry_stretch ** attempt, cap)
+
+
 def thai_seconds(text: str) -> float:
     """เวลาพูดปกติของบทไทย นับพยางค์ (คำละตินนับตามกลุ่มสระ) หารด้วยความเร็วพูดปกติ
 
@@ -80,8 +94,9 @@ def thai_seconds(text: str) -> float:
 
 def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0,
                steps: int = 32, target_lang: str = "th", slot: Optional[float] = None,
-               max_speedup: float = 1.10, max_slowdown: float = 1.2) -> np.ndarray:
-    """พากย์ประโยคเดียว ถ้าให้ slot มา โมเดลจะปรับจังหวะพูดให้พอดีเวลาฉากเอง (fix_duration)
+               max_speedup: float = 1.10, max_slowdown: float = 1.2,
+               attempt: int = 0, limit: Optional[float] = None) -> np.ndarray:
+    """พากย์ประโยคเดียว (attempt/limit: รอบลองใหม่ขอความยาวเพิ่ม ดู request_seconds) ถ้าให้ slot มา โมเดลจะปรับจังหวะพูดให้พอดีเวลาฉากเอง (fix_duration)
     ได้เสียงที่เป็นธรรมชาติกว่าการเร่งความเร็วหรือตัดเสียงทีหลัง"""
     gen_text = _end_punct(gen_text)
     if target_lang == "en":
@@ -93,7 +108,7 @@ def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0
         if slot:
             ref_sec = sf.info(ref_file).duration
             natural = ref_sec * len(gen_text.encode()) / max(len(ref_text_p.encode()), 1) / speed
-            fix = ref_sec + _fit(natural, slot, max_speedup, max_slowdown)
+            fix = ref_sec + request_seconds(natural, slot, max_speedup, max_slowdown, attempt, limit)
         wav, sr, _ = _load_en().infer(
             ref_file=str(ref_audio), ref_text=ref_text.strip(), gen_text=gen_text, show_info=_quiet,
             nfe_step=steps, cfg_strength=settings.f5_cfg, speed=speed, fix_duration=fix)
@@ -111,7 +126,8 @@ def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0
     ref_file, ref_text_p = preprocess_ref_audio_text(str(ref_audio), ref_text.strip(), show_info=_quiet)
     fix = None
     if slot:
-        fix = sf.info(ref_file).duration + _fit(thai_seconds(gen_text) / speed, slot, max_speedup, max_slowdown)
+        fix = sf.info(ref_file).duration + request_seconds(
+            thai_seconds(gen_text) / speed, slot, max_speedup, max_slowdown, attempt, limit)
     wav, _, _ = infer_process(
         ref_file, ref_text_p, gen_text, model.f5_model, model.vocoder, mel_spec_type=model.vocoder_name,
         show_info=_quiet, nfe_step=steps, cfg_strength=settings.f5_cfg, speed=speed, fix_duration=fix,

@@ -77,7 +77,8 @@ def fit_lengths(utts: list[Utterance], target: str = "th", max_speedup: float = 
 
 def synthesize(ref_audio: Path, ref_text: str, gen_text: str, speed: float = 1.0,
                steps: int = 32, target_lang: str = "th", slot: Optional[float] = None,
-               max_speedup: float = 1.10, max_slowdown: float = 1.2) -> np.ndarray:
+               max_speedup: float = 1.10, max_slowdown: float = 1.2,
+               attempt: int = 0, limit: Optional[float] = None) -> np.ndarray:
     time.sleep(DELAY / 4)
     seconds = max(0.4, estimate_seconds(gen_text, target_lang))
     if slot:

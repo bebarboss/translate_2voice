@@ -485,6 +485,56 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     return merged
 
 
+SILENT_LABEL = "(เสียงเงียบ)"  # ใส่ใน Utterance.heard เมื่อพากย์ครบทุกขั้นแล้วเสียงยังเงียบ → ป้าย "ควรฟัง"
+
+
+def _merge_candidate(groups: list, i: int, *, max_gap: float = 1.5, max_span: float = 12.0,
+                     blocked: frozenset = frozenset(), voices_: Optional[dict] = None,
+                     mood=lambda u: "", part=lambda u: None) -> Optional[int]:
+    """ดัชนีกลุ่มข้างเคียงที่ใกล้ที่สุดที่รวมกับ groups[i] ได้ (ผู้พูดหลักคนเดียวกัน อารมณ์/คลิปเดียวกัน เสียงไม่ต่างกันชัด
+    เว้นไม่เกิน max_gap รวมแล้วไม่เกิน max_span ไม่ยุ่งกับข้อความที่ผู้ใช้พิมพ์เอง) ไม่มี → None
+    ใช้เมื่อประโยคสั้นพากย์แล้วเสียงยังเงียบ: พากย์รวมกับประโยคข้างเคียงให้โมเดลมีเนื้อความพอ"""
+    from .voices import clearly_different, of_run
+
+    g, best = groups[i], None
+    for j in (i - 1, i + 1):
+        if not 0 <= j < len(groups):
+            continue
+        h = groups[j]
+        a, b = (h, g) if j < i else (g, h)
+        gap = b[0].start - a[-1].end
+        if (_group_speaker(h) != _group_speaker(g) or gap > max_gap or b[-1].end - a[0].start > max_span
+                or any(u.id in blocked for u in h) or mood(h[0]) != mood(g[0]) or part(h[0]) != part(g[0])
+                or clearly_different(of_run(h, voices_), of_run(g, voices_))):
+            continue
+        if best is None or gap < best[0]:
+            best = (gap, j)
+    return best[1] if best else None
+
+
+def heard_label(found: list) -> tuple[bool, str]:
+    """ผลตรวจเสียงพากย์ของทุกช่วงในประโยค [[คะแนน, ที่ได้ยิน]] → (เงียบไหม, ข้อความที่ใส่ใน Utterance.heard)
+    คะแนน 0 และไม่ได้ยินอะไรเลย = เงียบ → "(เสียงเงียบ)" ไม่งั้นเป็นข้อความของช่วงที่คะแนนต่ำสุด"""
+    if not found:
+        return False, ""
+    if any(x[0] == 0.0 and not x[1] for x in found):
+        return True, SILENT_LABEL
+    return False, min(found, key=lambda x: x[0])[1]
+
+
+def _apply_merge(groups: list, done: dict, plans: list, lo: int, hi: int) -> None:
+    """รวมกลุ่ม lo..hi (ติดกัน) เป็นกลุ่มเดียว แล้วเลื่อนดัชนีของกลุ่มหลังจากนั้นถอยหนึ่งที่ (groups, done, plans แก้ในที่)
+    เสียงสำเร็จและแผนของสองกลุ่มที่ถูกรวมถูกทิ้ง (ต้องพากย์รวมใหม่) ของกลุ่มอื่นอยู่ครบและยังชี้กลุ่มเดิม"""
+    groups[lo:hi + 1] = [groups[lo] + groups[hi]]
+    shifted = {(k if k < lo else k - 1): v for k, v in done.items() if k < lo or k > hi}
+    done.clear()
+    done.update(shifted)
+    plans[:] = [x for x in plans if x.i not in (lo, hi)]
+    for x in plans:
+        if x.i > hi:
+            x.i -= 1
+
+
 def keep_seconds(limit_sec: float, voice_sec: float, typed: bool) -> float:
     """ความยาวเสียงพากย์ที่เก็บไว้ในไฟล์: ปกติตัดที่ limit_sec (ไม่ให้ล้นทับประโยคถัดไป)
     ข้อความที่ผู้ใช้พิมพ์เองเก็บทั้งหมด ผู้ใช้วางกล่องและเลือกเองแล้ว (ตัดทิ้งจะเหลือเสียงสั้นนิดเดียวจนฟังไม่ออก
@@ -538,6 +588,7 @@ class _Plan:
     ref_key: list
     chunks: list = field(default_factory=list)
     voice: Optional[np.ndarray] = None
+    silent: bool = False  # พากย์ครบทุกขั้นแล้วเสียงยังเงียบ (ดู gpu.speak_line)
 
     def text(self) -> str:
         return " ".join(u.target.strip() for u in self.g)
@@ -648,7 +699,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     # ข้อความที่ผู้ใช้พิมพ์/แก้เอง พากย์ตามที่พิมพ์ ห้ามย่อหรือขยายด้วย AI (ไม่งั้นถูกเขียนทับด้วยคำแปลจากต้นฉบับ)
     from .. import quality as quality_mod
     user_text = quality_mod.user_text_ids(d, utterances)
-    can_rewrite = lambda p: can_shorten and not any(u.id in user_text for u in p.g)  # noqa: E731
+    # เสียงเงียบ: ความยาวของเสียงไม่มีความหมาย ห้ามเอาไปตัดสินว่าบทสั้น/ยาวแล้วเขียนบทใหม่
+    can_rewrite = lambda p: can_shorten and not p.silent and not any(u.id in user_text for u in p.g)  # noqa: E731
     if user_text:
         log.info("job %s: keeping typed text of lines %s (no auto shorten/lengthen)", job_id, sorted(user_text))
     match_prosody = settings.prosody_match and not settings.mock_pipeline
@@ -749,7 +801,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     plans: list[_Plan] = []
     done: dict[int, np.ndarray] = {}  # ลำดับกลุ่ม → เสียงพากย์ที่เสร็จแล้ว
     reused = 0
-    for i, g in enumerate(groups):
+
+    def make_plan(i: int, g: list) -> _Plan:
         first, last = g[0], g[-1]
         speaker = _group_speaker(g)
         # ฉากเศร้า/เนิบยอมให้พูดช้าลงได้อีกเล็กน้อย — เร่งเสียงไม่เกินเพดาน 10% (ย่อบทแทน)
@@ -783,7 +836,10 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             if end is not None:
                 limit_sec = max(slot, min(limit_sec, end - first.start))
 
-        p = _Plan(i, g, speaker, slot, limit_sec, max_speedup, max_slowdown, ref, ref_text, ref_key)
+        return _Plan(i, g, speaker, slot, limit_sec, max_speedup, max_slowdown, ref, ref_text, ref_key)
+
+    for i, g in enumerate(groups):
+        p = make_plan(i, g)
         # ประโยคที่บท ตัวละคร และเวลาเหมือนรอบก่อน → ใช้เสียงเดิม ไม่ต้องพากย์ใหม่
         cached = _load_cached(tts_dir, first.id, key_for(p, p.text()))
         if cached is not None:
@@ -810,7 +866,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                     chunk_slot = max(c.end - c.start, 0.3)
                 lines.append({
                     "id": f"{p.g[0].id}:{k}", "text": c.text, **p.ref, "ref_text": p.ref_text,
-                    "target_lang": target, "slot": chunk_slot, "max_speedup": p.max_speedup,
+                    "target_lang": target, "slot": chunk_slot, "limit": p.limit_sec, "max_speedup": p.max_speedup,
                     "max_slowdown": p.max_slowdown, "check_pitch": voice_map is not None, "check_text": True,
                 })
         progress = (lambda f: stage("tts", lo + (hi - lo) * f)) if gpu.remote() else None
@@ -823,8 +879,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             found = [checks[f"{first.id}:{k}"] for k in range(len(p.chunks)) if f"{first.id}:{k}" in checks]
             worst = min(found, key=lambda x: x[0]) if found else None
             bad = worst is not None and worst[0] < settings.dub_check_min
+            p.silent, heard = heard_label(found)
             for u in p.g:
-                u.heard, u.heard_score = (worst[1], worst[0]) if bad else ("", worst[0] if worst else None)
+                u.heard, u.heard_score = (heard, worst[0]) if bad else ("", worst[0] if worst else None)
             pieces: list[np.ndarray] = []
             for k, c in enumerate(p.chunks):
                 v = voices_[f"{first.id}:{k}"]
@@ -922,8 +979,35 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             # ยังยาวอยู่ ยอมให้ล้นเข้าช่วงเงียบได้ แต่ไม่ทับประโยคถัดไป
             _save_plan(p)
 
-    # เสียงพากย์ยังไม่ตรงบท → AI ตัดสิน retry / ย่อบท / accept แล้วทำตามนั้น
-    unclear_plans = [p for p in plans if any(u.heard for u in p.g)]
+    # ยังเงียบหลังลองครบทุกขั้นในการ์ดจอ: รวมกับประโยคข้างเคียงของคนเดียวกันแล้วพากย์ใหม่เป็นกลุ่ม (ครั้งเดียวต่อประโยค)
+    # เสียงของกลุ่มเก็บใต้ id ของประโยคแรก ไฟล์ของกลุ่มที่ถูกกลืนต้องลบ ไม่งั้นหลงเหลือเสียงซ้ำ/ค้าง
+    for sid in [p.g[0].id for p in plans if p.silent]:
+        i = next((k for k, g in enumerate(groups) if g[0].id == sid), None)
+        p = next((x for x in plans if x.i == i), None)
+        if p is None or not p.silent or any(u.id in user_text for u in p.g):
+            continue
+        j = _merge_candidate(groups, i, blocked=frozenset(user_text), voices_=voice_map, mood=mood_of, part=part)
+        if j is None:
+            log.info("tts-ladder line=%s: still silent, no neighbour to merge with -> flagged", sid)
+            continue
+        cancel()
+        lo, hi = min(i, j), max(i, j)
+        absorbed_first = groups[hi][0].id
+        log.info("tts-ladder line=%s: still silent, merging groups %s + %s and re-dubbing",
+                 sid, [u.id for u in groups[lo]], [u.id for u in groups[hi]])
+        _apply_merge(groups, done, plans, lo, hi)
+        merged = make_plan(lo, groups[lo])
+        for u in merged.g:
+            u.heard, u.heard_score = "", None
+        plans.append(merged)
+        render([merged], 0.94, 0.95)
+        _save_plan(merged)
+        for ext in ("wav", "json"):
+            (tts_dir / f"{absorbed_first:04d}.{ext}").unlink(missing_ok=True)
+        log.info("tts-ladder line=%s: merged re-dub %s", sid, "still silent" if merged.silent else "ok")
+
+    # เสียงพากย์ยังไม่ตรงบท → AI ตัดสิน retry / ย่อบท / accept แล้วทำตามนั้น (เสียงเงียบที่รวมแล้วก็ยังเงียบ ไม่ส่งให้ AI ลองซ้ำ)
+    unclear_plans = [p for p in plans if any(u.heard for u in p.g) and not p.silent]
     if unclear_plans and not settings.mock_pipeline:
         from .translate import judge_dub_quality, shorten
         judge_lines = []

@@ -252,6 +252,10 @@ class Settings:
     dub_check: bool = d.DUB_CHECK
     dub_check_min: float = d.DUB_CHECK_MIN
     dub_check_retries: int = d.DUB_CHECK_RETRIES
+    tts_min_sec: float = d.TTS_MIN_SEC
+    tts_retry_stretch: float = d.TTS_RETRY_STRETCH
+    silence_rms_min: float = d.SILENCE_RMS_MIN
+    silence_active_min: float = d.SILENCE_ACTIVE_MIN
     emotion_match: bool = audio.EMOTION_MATCH
     ref_emotion_weight: float = audio.REF_EMOTION_WEIGHT
     loudness_match: bool = audio.LOUDNESS_MATCH
