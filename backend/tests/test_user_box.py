@@ -69,3 +69,11 @@ def test_user_text_ids_ignores_pause_marks_and_whitespace(tmp_path):
 def test_user_text_ids_without_baseline_only_trusts_blank_source_boxes(tmp_path):
     now = [_u(1, 0.0, 3.0, target="x"), _u(2, 5.0, 7.0, source="", target="พิมพ์เอง")]
     assert quality.user_text_ids(tmp_path, now) == {2}
+
+
+def test_typed_text_is_not_cut_at_next_sentence():
+    from app.pipeline.runner import keep_seconds
+
+    assert keep_seconds(0.3, 2.2, typed=False) == 0.3  # ปกติตัดเพื่อไม่ทับประโยคถัดไป
+    assert keep_seconds(0.3, 2.2, typed=True) == 2.2   # กล่องสั้น 0.2 วินาทีที่ชิดประโยคถัดไป เสียงที่พิมพ์ต้องไม่หาย
+    assert keep_seconds(5.0, 2.2, typed=True) == 5.0

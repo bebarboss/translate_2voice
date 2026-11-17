@@ -485,6 +485,13 @@ def _speech_groups(utts: list, max_gap: float = 0.6, max_span: float = 12.0,
     return merged
 
 
+def keep_seconds(limit_sec: float, voice_sec: float, typed: bool) -> float:
+    """ความยาวเสียงพากย์ที่เก็บไว้ในไฟล์: ปกติตัดที่ limit_sec (ไม่ให้ล้นทับประโยคถัดไป)
+    ข้อความที่ผู้ใช้พิมพ์เองเก็บทั้งหมด ผู้ใช้วางกล่องและเลือกเองแล้ว (ตัดทิ้งจะเหลือเสียงสั้นนิดเดียวจนฟังไม่ออก
+    เช่นกล่องสั้น 0.2 วินาทีที่ชิดประโยคถัดไป) ส่วนที่ซ้อนกันมีป้าย "พูดซ้อน" ให้เห็น"""
+    return max(limit_sec, voice_sec) if typed else limit_sec
+
+
 def _group_speaker(g: list) -> str:
     """ผู้พูดหลักของประโยค (ท่อนสั้นที่ต่อเข้ามาอาจถูกแยกผู้พูดผิด)"""
     return max(g, key=lambda u: u.duration).speaker
@@ -733,7 +740,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                                  settings.pause_pack_max_sec, settings.pause_pack_ratio],
                          voice=[voice_map is not None, settings.voice_drift, settings.voice_retries],
                          # รอบที่ผู้ใช้กดสุ่มใหม่ ใส่เฉพาะเมื่อเคยสุ่ม คีย์ของประโยคอื่นจึงเหมือนเดิม ไม่ต้องพากย์ใหม่ทั้งคลิป
-                         **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}))
+                         **({"take": [u.take for u in p.g]} if any(u.take for u in p.g) else {}),
+                         # ข้อความที่ผู้ใช้พิมพ์เก็บเสียงเต็ม ไม่ตัดตามประโยคถัดไป ต้องไม่ใช้แคชรุ่นที่ถูกตัดไว้
+                         **({"typed": 1} if any(u.id in user_text for u in p.g) else {}))
 
     # ---- วางแผนทุกประโยค: เสียงตัวอย่าง ช่วงเวลา และใช้เสียงเดิมได้ไหม
     stage("tts", 0.72)
@@ -847,7 +856,8 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             p.voice = out
 
     def _save_plan(p: _Plan) -> None:
-        voice = audio.fade(p.voice[: int(p.limit_sec * sr)], sr)
+        keep = keep_seconds(p.limit_sec, len(p.voice) / sr, any(u.id in user_text for u in p.g))
+        voice = audio.fade(p.voice[: int(keep * sr)], sr)
         first = p.g[0]
         key = key_for(p, p.text())
         sf.write(tts_dir / f"{first.id:04d}.wav", voice, sr)
