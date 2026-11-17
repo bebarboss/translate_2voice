@@ -105,11 +105,19 @@ def dead_heard_score(expected: str, got: str) -> float | None:
     return 0.0
 
 
+def is_user_box(u: Utterance) -> bool:
+    """ท่อนที่ไม่มีต้นฉบับแต่มีบทพากย์ = กล่องที่ผู้ใช้เพิ่มเองแล้วพิมพ์ข้อความ (ASR ไม่มีทางสร้างท่อนแบบนี้)"""
+    return not (u.source or "").strip() and bool((u.target or "").strip())
+
+
 def clean(utts: list[Utterance]) -> list[Utterance]:
     """คืนรายการท่อนที่ตัดวลีที่แต่งเอง / เศษ SFX ออกแล้ว ท่อนที่เหลือแต่ขยะถูกตัดทิ้งทั้งท่อน"""
     out: list[Utterance] = []
     for u in utts:
         raw = u.source or ""
+        if is_user_box(u):  # กล่องที่ผู้ใช้เพิ่มแล้วพิมพ์บทพากย์เอง ไม่มีต้นฉบับให้ตรวจ ห้ามตัดทิ้งเป็นเศษเสียง
+            out.append(u)
+            continue
         text = scrub_source(raw)
         dur = float(u.duration)
         if text != raw.strip():
@@ -133,6 +141,8 @@ def clean(utts: list[Utterance]) -> list[Utterance]:
     for u in out:
         if (
             merged
+            and not is_user_box(u)
+            and not is_user_box(merged[-1])
             and u.duration < MIN_KEEP_SEC
             and len(_letters(u.source)) < 6
             and merged[-1].speaker == u.speaker

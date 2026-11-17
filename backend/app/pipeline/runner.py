@@ -572,8 +572,13 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     from . import repair as repair_mod
     words_pre = _load_words(d)
     turns_pre = load_turns(d)
-    utterances, words_fixed, n_repair = repair_mod.repair_transcript(
-        utterances, words_pre, turns_pre, source_lang)
+    # repair สร้างท่อนใหม่จากคำของ ASR ทั้งหมด ถ้าผู้ใช้แก้โครงบทแล้ว (เพิ่มกล่อง ซ้ำ ตัด รวม เลื่อนเวลา) จะถูกทับหาย
+    from .. import quality as quality_mod
+    if quality_mod.structure_unchanged(d, utterances):
+        utterances, words_fixed, n_repair = repair_mod.repair_transcript(
+            utterances, words_pre, turns_pre, source_lang)
+    else:
+        words_fixed, n_repair = None, 0
     if n_repair:
         if words_fixed is not None:
             (d / "words.json").write_text(

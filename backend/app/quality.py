@@ -34,6 +34,22 @@ def snapshot(job_dir: Path, utterances: list) -> None:
     path.write_text(json.dumps({"translations": n + 1, "lines": lines}, ensure_ascii=False), encoding="utf-8")
 
 
+def structure_unchanged(job_dir: Path, utterances: list) -> bool:
+    """โครงบท (id ต้นฉบับ ผู้พูด เวลา) ตรงกับที่ AI ทำไว้ทุกบรรทัด = ผู้ใช้ยังไม่ได้เพิ่ม/ลบ/ซ้ำ/ตัด/รวม/เลื่อนเวลา
+    ไม่มีไฟล์ของ AI (งานเก่าหรือนำเข้าไทม์ไลน์) ตอบ False เพราะแยกไม่ได้ว่าผู้ใช้แก้อะไรไปแล้วหรือยัง"""
+    try:
+        snap = json.loads((job_dir / AI_FILE).read_text(encoding="utf-8"))
+        ai = {int(k): v for k, v in snap["lines"].items()}
+    except (OSError, ValueError, KeyError, AttributeError):
+        return False
+    if {u.id for u in utterances} != set(ai):
+        return False
+    return all(
+        a["speaker"] == u.speaker and (a["source"] or "").strip() == (u.source or "").strip()
+        and abs(a["start"] - u.start) <= TIME_TOL and abs(a["end"] - u.end) <= TIME_TOL
+        for u in utterances for a in [ai[u.id]])
+
+
 def _clean(text: str) -> str:
     return strip_marks(text or "").strip()
 
