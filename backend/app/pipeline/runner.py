@@ -841,7 +841,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     for i, g in enumerate(groups):
         p = make_plan(i, g)
         # ประโยคที่บท ตัวละคร และเวลาเหมือนรอบก่อน → ใช้เสียงเดิม ไม่ต้องพากย์ใหม่
-        cached = _load_cached(tts_dir, first.id, key_for(p, p.text()))
+        cached = _load_cached(tts_dir, p.g[0].id, key_for(p, p.text()))
         if cached is not None:
             done[i] = cached
             reused += len(g)
