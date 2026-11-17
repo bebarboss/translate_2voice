@@ -14,7 +14,8 @@ QUIET = np.zeros(2400, dtype=np.float32)
 def _run(outputs, checks=None):
     calls = []
 
-    def fake(ref, ref_text, text, speed, steps, lang, slot=None, max_speedup=1.1, max_slowdown=1.2):
+    def fake(ref, ref_text, text, speed, steps, lang, slot=None, max_speedup=1.1, max_slowdown=1.2,
+             attempt=0, limit=None):
         calls.append(slot)
         return outputs[min(len(calls) - 1, len(outputs) - 1)]
 
