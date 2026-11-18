@@ -291,16 +291,18 @@ def _salvage_sentences(text: str) -> Optional[dict]:
 
 def _chat(system: str, user: str, temperature: Optional[float] = None, max_tokens: int = 4096) -> str:
     global _client
-    if not settings.typhoon_api_key:
+    api_key = settings.llm_api_key or settings.typhoon_api_key
+    model = settings.llm_model or settings.typhoon_model
+    if not api_key:
         raise RuntimeError("ต้องตั้งค่า TYPHOON_API_KEY (สมัครฟรีที่ playground.opentyphoon.ai)")
     if _client is None:
         from openai import OpenAI
-        _client = OpenAI(api_key=settings.typhoon_api_key, base_url=settings.typhoon_base_url)
+        _client = OpenAI(api_key=api_key, base_url=settings.llm_base_url or settings.typhoon_base_url)
     last_error: Optional[Exception] = None
     for attempt in range(4):
         try:
             resp = _client.chat.completions.create(
-                model=settings.typhoon_model,
+                model=model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                 temperature=settings.typhoon_temperature if temperature is None else temperature,
                 max_tokens=max_tokens,

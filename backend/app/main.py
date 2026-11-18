@@ -348,7 +348,7 @@ def system_info():
             "separation": settings.demucs_model,
             "diarization": settings.diarization_model,
             "transcription": f"whisper {settings.whisper_model}",
-            "translation": settings.typhoon_model,
+            "translation": settings.llm_model or settings.typhoon_model,
             "tts_th": f"F5-TTS Thai {settings.f5_model}",
             "tts_en": settings.f5_en_model,
         },
