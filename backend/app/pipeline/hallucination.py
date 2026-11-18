@@ -105,6 +105,39 @@ def dead_heard_score(expected: str, got: str) -> float | None:
     return 0.0
 
 
+ECHO_MAX_GAP = 0.05  # คำ/ท่อนซ้ำที่ Whisper ปล่อยออกมาต่อท้ายพอดี (ห่างไม่เกินนี้) ถ้าห่างกว่านี้ถือว่าพูดซ้ำจริง
+ECHO_MAX_SEC = 1.5
+
+
+def drop_echo_words(words: list) -> list:
+    """ตัดคำท้ายประโยคที่ Whisper ถอดซ้ำเป็นท่อนของตัวเอง เช่น "…upside down," ตามด้วย "down." อีกท่อนที่เริ่มต่อท้ายพอดี
+
+    ลักษณะเฉพาะของอาการนี้ (ตรวจทั้งหมดถึงจะตัด): คำเหมือนคำก่อนหน้า (ไม่นับวรรคตอน) คนละท่อน (segment) กับคำก่อนหน้า
+    ท่อนนั้นมีคำเดียว และเริ่มชิดจุดจบของคำก่อนหน้า (≤ ECHO_MAX_GAP) คนพูดซ้ำจริงมักมีช่องว่างและมักอยู่ท่อนเดียวกัน จึงไม่โดนตัด
+    ถ้าไม่ตัด ท่อนซ้ำจะถูกแปลและพากย์เป็นคำซ้ำท้ายประโยค"""
+    size: dict = {}
+    for w in words:
+        size[w.segment] = size.get(w.segment, 0) + 1
+    out: list = []
+    for w in words:
+        prev = out[-1] if out else None
+        norm = _letters(w.text).lower()
+        if (prev is not None and norm and norm == _letters(prev.text).lower() and w.segment != prev.segment
+                and size.get(w.segment) == 1 and float(w.start) - float(prev.end) <= ECHO_MAX_GAP):
+            log.info("drop echoed word %r at %.2fs (segment %s repeats %s)", w.text.strip(), w.start, w.segment, prev.segment)
+            continue
+        out.append(w)
+    return out
+
+
+def _echo_of_previous(prev: Utterance, u: Utterance) -> bool:
+    """ท่อน u เป็นแค่เสียงสะท้อนของท้ายท่อนก่อนหน้า (ข้อความ = ท้ายของ prev, คนเดิม, เริ่มชิดจุดจบ, สั้น)"""
+    a, b = _letters(prev.source).lower(), _letters(u.source).lower()
+    return (bool(b) and len(b) < len(a) and a.endswith(b) and len((u.source or "").split()) <= 2
+            and prev.speaker == u.speaker and float(u.duration) <= ECHO_MAX_SEC
+            and float(u.start) - float(prev.end) <= ECHO_MAX_GAP)
+
+
 def is_user_box(u: Utterance) -> bool:
     """ท่อนที่ไม่มีต้นฉบับแต่มีบทพากย์ = กล่องที่ผู้ใช้เพิ่มเองแล้วพิมพ์ข้อความ (ASR ไม่มีทางสร้างท่อนแบบนี้)"""
     return not (u.source or "").strip() and bool((u.target or "").strip())
@@ -135,6 +168,16 @@ def clean(utts: list[Utterance]) -> list[Utterance]:
             log.info("drop noise/SFX line %d (%.2fs): %s", u.id, dur, raw)
             continue
         out.append(u)
+
+    # ท่อนที่เป็นแค่เสียงสะท้อนของท้ายท่อนก่อนหน้า ("down," → "down.") ตัดทิ้ง ท่อนก่อนหน้าได้ช่องเวลาเพิ่มจนถึงท้ายเสียงสะท้อน
+    deduped: list[Utterance] = []
+    for u in out:
+        if deduped and not is_user_box(u) and not is_user_box(deduped[-1]) and _echo_of_previous(deduped[-1], u):
+            deduped[-1].end = max(deduped[-1].end, u.end)
+            log.info("drop echo line %d (%r) repeating the end of line %d", u.id, u.source, deduped[-1].id)
+            continue
+        deduped.append(u)
+    out = deduped
 
     # รวมท่อนสั้นมากเข้าท่อนก่อนหน้าคนเดียวกัน (เศษ ASR ที่หลุดมา)
     merged: list[Utterance] = []

@@ -122,6 +122,8 @@ def transcribe(wav16k: Path, language: Optional[str] = None,
             words += [Word(w.start, w.end, w.word, i) for w in seg.words]
         elif seg.text.strip():
             words.append(Word(seg.start, seg.end, seg.text, i))
+    from .hallucination import drop_echo_words
+    words = drop_echo_words(words)
     log.info("whisper vad=%s → %d words", _vad_params(), len(words))
     return words, info.language
 

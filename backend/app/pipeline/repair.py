@@ -132,6 +132,8 @@ def repair_transcript(utterances: list[Utterance], words: Optional[list[Word]],
     คืน (ท่อน, คำที่ clamp แล้ว, จำนวนท่อนที่เปลี่ยนเทียบของเดิม)"""
     if not words:
         return utterances, words or [], 0
+    from .hallucination import drop_echo_words
+    words = drop_echo_words(words)  # งานเก่าที่ words.json ยังมีคำสะท้อนท้ายประโยค ไม่ให้สร้างท่อนซ้ำกลับมา
     clamped = clamp_words(words)
     changed_words = sum(
         1 for a, b in zip(words, clamped)
