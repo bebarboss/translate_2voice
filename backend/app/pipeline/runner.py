@@ -512,6 +512,18 @@ def _merge_candidate(groups: list, i: int, *, max_gap: float = 1.5, max_span: fl
     return best[1] if best else None
 
 
+def should_lengthen(slot: float, voice_sec: float) -> bool:
+    """เสียงพากย์สั้นกว่าช่องมากพอจะขยายบทไหม: ช่องยาว (≥ LENGTHEN_MIN_SLOT) ใช้เกณฑ์ LENGTHEN_BELOW ช่องสั้นใช้ 65% เดิม"""
+    if slot >= settings.lengthen_min_slot:
+        return voice_sec < slot * settings.lengthen_below
+    return slot >= 1.2 and voice_sec < slot * 0.65
+
+
+def keep_lengthened(slot: float, old_sec: float, new_sec: float) -> bool:
+    """ใช้ผลที่ขยายบทก็ต่อเมื่อใกล้ช่องกว่าเดิมและไม่ล้นช่อง ไม่งั้นคืนบทและเสียงเดิม"""
+    return new_sec <= slot * 1.02 and abs(new_sec - slot) < abs(old_sec - slot)
+
+
 def heard_label(found: list) -> tuple[bool, str]:
     """ผลตรวจเสียงพากย์ของทุกช่วงในประโยค [[คะแนน, ที่ได้ยิน]] → (เงียบไหม, ข้อความที่ใส่ใน Utterance.heard)
     คะแนน 0 และไม่ได้ยินอะไรเลย = เงียบ → "(เสียงเงียบ)" ไม่งั้นเป็นข้อความของช่วงที่คะแนนต่ำสุด"""
@@ -933,6 +945,7 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         # เสียงสั้นกว่าฉากมาก → ขยายบทแล้วพากย์ใหม่หนึ่งครั้ง ให้พอดีปาก
         from .translate import lengthen, shorten
         again = []
+        lengthened: dict = {}  # id(plan) → (บทเดิม, เสียงเดิม)
         for p in batch:
             dur = len(p.voice) / sr
             if can_rewrite(p) and dur > p.slot * 1.02:
@@ -941,16 +954,31 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
                 shorten(p.g, target, target_ratio=0.88)
                 if p.text() != before:
                     again.append(p)
-            elif can_rewrite(p) and p.slot >= 1.2 and dur < p.slot * 0.65:
+            elif can_rewrite(p) and should_lengthen(p.slot, dur):
                 cancel()
                 before = p.text()
+                old = ([u.target for u in p.g], p.voice)
                 lengthen(p.g, target, tolerance=min(p.max_speedup, settings.fit_tolerance))
                 if p.text() != before:
                     again.append(p)
+                    lengthened[id(p)] = old
         if again:
             if gpu.remote():
                 log.info("re-dub %d timing-fixed lines", len(again))
             render(again, 0.88, 0.92)
+            # ขยายแล้วไม่ใกล้ช่องขึ้นหรือล้น → คืนบทและเสียงเดิม (ไม่ให้การขยายทำให้แย่กว่าเดิม)
+            for p in [x for x in again if id(x) in lengthened]:
+                targets, voice = lengthened[id(p)]
+                new_sec, old_sec = len(p.voice) / sr, len(voice) / sr
+                if p.silent or not keep_lengthened(p.slot, old_sec, new_sec):
+                    log.info("line %d: lengthened text not closer to the slot (%.2fs -> %.2fs of %.2fs), keeping the original",
+                             p.g[0].id, old_sec, new_sec, p.slot)
+                    for u, t in zip(p.g, targets):
+                        u.target = t
+                    p.voice = voice
+                    again.remove(p)
+                else:
+                    log.info("line %d: lengthened to fill the slot (%.2fs -> %.2fs of %.2fs)", p.g[0].id, old_sec, new_sec, p.slot)
         # รอบสอง: ยังล้นชัด → ย่อแรงขึ้นอีกครั้ง
         again2 = []
         for p in again:

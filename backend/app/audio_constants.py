@@ -28,7 +28,7 @@ PAUSE_MATCH = True
 MIN_PAUSE_SEC = 0.3
 PAUSE_PACK = True
 PAUSE_PACK_MIN_SEC = 0.08
-PAUSE_PACK_MAX_SEC = 0.28
+PAUSE_PACK_MAX_SEC = 0.4  # เดิม 0.28: ช่วงหยุดสั้นเกินไปทำให้เสียงพากย์สั้นกว่าช่องของต้นฉบับ
 PAUSE_PACK_RATIO = 0.35
 
 # --- เสียงนอกบท / หายใจ ---

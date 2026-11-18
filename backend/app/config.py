@@ -252,6 +252,8 @@ class Settings:
     dub_check: bool = d.DUB_CHECK
     dub_check_min: float = d.DUB_CHECK_MIN
     dub_check_retries: int = d.DUB_CHECK_RETRIES
+    lengthen_below: float = d.LENGTHEN_BELOW
+    lengthen_min_slot: float = d.LENGTHEN_MIN_SLOT
     tts_min_sec: float = d.TTS_MIN_SEC
     tts_retry_stretch: float = d.TTS_RETRY_STRETCH
     silence_rms_min: float = d.SILENCE_RMS_MIN
