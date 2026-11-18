@@ -70,6 +70,7 @@ export default function AccountMenu({ config, user }: { config: AuthConfig | nul
               </div>
               <hr />
               <Link role="menuitem" href="/account" className="menu-item" onClick={() => setOpen(false)}><UserIcon />{tx("โปรไฟล์และการตั้งค่า")}</Link>
+              <Link role="menuitem" href="/settings" className="menu-item" onClick={() => setOpen(false)}><GearIcon />{tx("ตั้งค่า")}</Link>
               {config?.billing && !user.admin && (
                 <Link role="menuitem" href="/promotions" className="menu-item" onClick={() => setOpen(false)}><TagIcon />{tx("แพ็กเกจและโปรโมชัน")}</Link>
               )}

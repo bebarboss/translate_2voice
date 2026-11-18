@@ -169,8 +169,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .side-recent .dot.awaiting_review { background: var(--info); }
 .side-recent .dot.done { background: var(--brand); }
 .side-recent .dot.failed { background: var(--danger); }
-.side-links { padding-top: 10px; border-top: 1px solid var(--border); }
-.side-links a { height: 36px; font-size: 14px; }
 .side-recent .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-more { color: var(--brand-ink) !important; font-weight: 500; }
 .side-empty { padding: 4px 12px; font-size: 13.5px; color: var(--dim); }
