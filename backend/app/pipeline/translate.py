@@ -64,7 +64,7 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ท่อนที่มี previous_translation คือต้นฉบับประโยคเดียวกันที่เคยพากย์ไปแล้ว ให้ใช้คำแปลนั้นถ้าเข้ากับบริบท ปรับความยาวได้ตาม min_chars–max_chars
 11. previous_lines และ next_lines คือบทก่อนหน้าและถัดไปของ sentences ไว้ดูบริบทให้ความหมาย สรรพนาม และน้ำเสียงต่อกันเท่านั้น ห้ามแปลซ้ำ ห้ามใส่ในคำตอบ และห้ามดึงเนื้อหาจากบทเหล่านั้นมาเติมใน sentences
    ถ้า content_type เป็น teaser บทข้างเคียงอาจเป็นคนละฉาก ห้ามตีความให้ต่อกัน
-12. sentence ที่มี continuity_issue คือบทที่ผู้ตรวจพบว่าคำแปลเดิมความหมายไม่ต่อกับบทข้างเคียง ให้แปลใหม่แก้จุดนั้น โดยยังตรงกับต้นฉบับ
+12. sentence ที่มี continuity_issue คือบทที่ผู้ตรวจพบว่าคำแปลเดิมผิดความหมายหรือไม่ต่อกับบทข้างเคียง (ในนั้นบอกเหตุผล) ให้แปลใหม่แก้จุดนั้น โดยแปลจากต้นฉบับของท่อนนั้นให้ตรง
 13. ใช้ได้กับทุกเนื้อหาเสียง (ละคร สัมภาษณ์ รีวิว สอน เล่าเรื่อง สารคดี โฆษณา) ภาษาไทยต้องฟังเป็นคนพูดจริงตามแนวและผู้พูดของคลิปนั้น โดยไม่เสียความหมายของ text ท่อนนั้น
     ทุกท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามเอาเนื้อหา คำตอบ หรือตัวเลขจากบทข้างเคียงมาใส่ แม้ท่อนนั้นจะสั้นหรือเป็นคำถามก็ต้องแปลคำถามนั้น
     สำนวนและสแลงแปลตามความหมายที่ text ท่อนนั้นสื่อ ไม่แปลทีละคำ ถ้าแปลตรงตัวแล้วคนไทยฟังไม่เข้าใจให้เลือกคำไทยที่สื่อความเดิม (ไม่แน่ใจความหมายของคำไหนให้แปลตามตัวอักษรที่ได้ยินอย่างระวัง ห้ามเดาเนื้อหาใหม่)
@@ -226,12 +226,24 @@ CONTINUITY_PROMPT = """คุณคือผู้ตรวจบทพากย
 2. ไม่นับเรื่องสำนวน ความไพเราะ หรือความยาว ไม่แน่ใจไม่ต้องใส่
 ตอบเป็น JSON รูปแบบ {"breaks":[{"id":1,"note":"เหตุผลสั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"breaks":[]}"""
 
+ACCURACY_PROMPT_TH = """คุณคือบรรณาธิการตรวจบทพากย์ไทยที่แปลจากต้นฉบับ lines คือบทที่ต้องตรวจตามลำดับเวลา (source = ต้นฉบับ, text = คำแปลไทย) previous_lines และ next_lines คือบทข้างเคียง ไว้ดูบริบท ไม่ต้องตรวจ
+หาบรรทัดที่ "ต้องแก้จริง" เพียง 3 แบบ:
+1. ความหมายผิดจากต้นฉบับ (แปลศัพท์ ตัวเลข ปฏิเสธ คน/ผู้กระทำ ผิด) หรือใจความหาย/เกินมา หรือเอาเนื้อหาของบรรทัดอื่นมาใส่
+2. ไทยฟังไม่เป็นธรรมชาติจนคนไทยอ่านแล้วไม่เข้าใจหรือฟังเป็นเครื่องแปล (แปลตรงตัวผิดความหมาย คำซ้อน ประโยคขาด)
+3. จบด้วยคำค้าง (และ ที่ เธอ ซึ่ง) ทั้งที่ source ท่อนนั้นจบสมบูรณ์
+กฎ:
+- เทียบกับ source เสมอ ต้นฉบับถูกตัดกลางประโยค (ไม่จบความ) ไม่นับเป็นความผิด
+- ไม่นับเรื่องสำนวนที่ถูกอยู่แล้วแต่ไม่ถูกใจ ความไพเราะ หรือความยาว ไม่แน่ใจไม่ต้องใส่ ใส่เฉพาะที่ผิดชัดเจน
+- note บอกสิ่งที่ผิดและที่ถูกควรเป็นอะไร สั้น ๆ ภาษาไทย
+ตอบเป็น JSON รูปแบบ {"bad":[{"id":1,"note":"..."}]} ไม่มีให้ตอบ {"bad":[]}"""
+
 TERMS_PROMPT = """คุณคือผู้ตรวจบทพากย์ของคลิปทีเซอร์หรือคลิปรวมฉาก บทแต่ละช่วงอาจเป็นคนละฉาก ไม่ต้องตรวจว่าเรื่องต่อกันไหม
 ตรวจอย่างเดียวว่าชื่อคนและศัพท์เฉพาะในคำแปล (text) ตรงกันทุกบรรทัด และตรงกับ glossary และ names (ถ้ามี) เช่น ชื่อเดียวกันแต่สะกดต่างกัน หรือต้นฉบับ (source) มีชื่อแต่คำแปลใช้ชื่ออื่น
 ไม่นับสำนวน สรรพนาม หรือความยาว ไม่แน่ใจไม่ต้องใส่ ห้ามเสนอคำแปลใหม่ทั้งบรรทัด
 ตอบเป็น JSON รูปแบบ {"issues":[{"id":1,"note":"ชื่อหรือศัพท์ที่ไม่ตรงกัน สั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"issues":[]}"""
 
 CONTEXT_BEFORE, CONTEXT_AFTER = 3, 2  # จำนวนประโยคข้างเคียงที่ส่งไปดูบริบทตอนแปล
+VERIFY_ROUNDS = 2  # ตรวจความถูกต้องแล้วแปลใหม่เฉพาะบรรทัดที่ผิดได้ไม่เกินกี่รอบ
 REVIEW_ROUNDS = 2  # แปลใหม่ได้ไม่เกินกี่รอบในขั้นตรวจความต่อเนื่อง
 TERMS_BATCH_SIZE = 60  # ตรวจชื่อต้องเห็นหลายบรรทัดพร้อมกันถึงจะเทียบตัวสะกดได้
 
@@ -1602,6 +1614,84 @@ def _continuity_breaks(order: list[Utterance], ids: Optional[set[int]] = None,
             except Exception as exc:  # noqa: BLE001
                 log.warning("continuity check failed: %s", exc)
     return out
+
+
+def _accuracy_issues(order: list[Utterance], ids: Optional[set[int]] = None,
+                     check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """id → เหตุผล ของบรรทัดที่คำแปลผิดความหมายหรือไม่เป็นภาษาพูด ids: ตรวจเฉพาะบรรทัดเหล่านี้ (ดูบริบทข้างเคียงด้วย)
+    เรียกไม่สำเร็จถือว่าไม่พบ ขั้นตรวจไม่ควรทำให้งานล้ม"""
+    out: dict[int, str] = {}
+    window = 8
+    for lo in range(0, len(order), window):
+        chunk = order[lo:lo + window]
+        if ids is not None and not any(u.id in ids for u in chunk):
+            continue
+        if check_cancel:
+            check_cancel()
+        brief = lambda u: {"speaker": u.speaker, "source": u.source, "text": u.target}  # noqa: E731
+        payload = {"previous_lines": [brief(u) for u in order[max(0, lo - 2):lo]],
+                   "lines": [{"id": u.id, "speaker": u.speaker, "source": u.source, "text": u.target}
+                             for u in chunk if (u.target or "").strip()],
+                   "next_lines": [brief(u) for u in order[lo + window:lo + window + 1]]}
+        try:
+            result = _parse_json(_chat(ACCURACY_PROMPT_TH, json.dumps(payload, ensure_ascii=False), temperature=0.1,
+                                       max_tokens=min(2048, 300 + 120 * len(chunk))))
+            found = _notes(result.get("bad"), {u.id for u in chunk} if ids is None else {u.id for u in chunk} & ids)
+            out.update({k: v or "คำแปลอาจผิดความหมาย" for k, v in found.items()})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("accuracy check failed: %s", exc)
+    return out
+
+
+def verify_translation(utts: list[Utterance], lang: str, target: str = "th", max_speedup: float = 1.10,
+                       title: str = "", hints: Optional[dict] = None,
+                       check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """ผู้ตรวจอ่านบทแปลเทียบต้นฉบับ → แปลใหม่เฉพาะประโยคที่ผิด (ส่งเหตุผลให้ผู้แปล) วนไม่เกิน VERIFY_ROUNDS รอบ
+    คืน id → เหตุผลของบรรทัดที่ยังไม่ผ่านหลังแก้ (ให้ผู้เรียกติดป้ายให้คนดู) ล้มเหลวคงบทเดิม ไม่ทำให้งานล้ม"""
+    if target != "th" or not settings.translate_verify or settings.mock_pipeline or not utts:
+        return {}
+    hints = _with_order(utts, hints)
+    order = [u for g in hints["sentences"] for u in g]
+    cap = max(2, int(len(order) * 0.4))  # แก้ไม่เกิน 40% ของบรรทัด ถ้ามากกว่านี้แปลว่าผู้ตรวจเกินเหตุ
+    bad = _accuracy_issues(order, check_cancel=check_cancel)
+    log.info("verify: %d/%d lines flagged", len(bad), len(order))
+    if not bad:
+        return {}
+    bad = dict(list(bad.items())[:cap])
+    if not settings.translate_verify_fix:
+        return bad  # ติดป้ายให้คนฟังอย่างเดียว ไม่แก้บทเอง (ผลทดสอบแปลใหม่ด้วย Qwen ยังไม่สม่ำเสมอ)
+    backup = {u.id: u.target for u in order}
+    changed: set[int] = set()
+    for rnd in range(VERIFY_ROUNDS):
+        if check_cancel:
+            check_cancel()
+        try:
+            tried = _retranslate(bad, lang, target, title, hints)
+        except RuntimeError as exc:
+            log.warning("verify retranslate failed: %s", exc)
+            break
+        changed |= tried
+        fit_lengths(utts, target, max_speedup, only=tried)
+        # ใช้บทใหม่เฉพาะเมื่อผ่านตรวจซ้ำ ที่ไม่ผ่านย้อนกลับบทเดิม (กันแปลใหม่แล้วเติมเนื้อหาที่ต้นฉบับไม่มี)
+        still = _accuracy_issues(order, tried, check_cancel)
+        log.info("verify round %d: %d lines still flagged", rnd + 1, len(still))
+        bad = {k: v for k, v in still.items() if k in bad or k in tried}
+        if not bad:
+            break
+    # ย้อนกลับ: บรรทัดที่ยังไม่ผ่าน และบรรทัดที่ยาวผิดปกติเทียบกับของเดิม (มักเป็นการแต่งเติม)
+    reverted = 0
+    for u in order:
+        if u.id not in changed:
+            continue
+        old, new = (backup.get(u.id) or "").strip(), (u.target or "").strip()
+        runaway = bool(old) and len(new) > max(12, len(old) * 1.35)
+        if u.id in bad or runaway or not new:
+            u.target = backup[u.id]
+            reverted += 1
+    if reverted:
+        log.info("verify: reverted %d lines to the original translation", reverted)
+        fit_lengths(utts, target, max_speedup, only=changed)
+    return bad
 
 
 def _keep_better_target(old: str, new: str, target: str) -> str:
