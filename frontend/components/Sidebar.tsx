@@ -9,6 +9,7 @@ import { fmtNum } from "@/lib/format";
 import { tx } from "@/lib/i18n";
 import { isSignedOut, useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
+import NotificationBell from "./NotificationBell";
 import { BrandLink } from "./Brand";
 import { FolderIcon, GearIcon, GridIcon, HelpIcon, HomeIcon, MenuIcon, MicIcon, PlusIcon, ShieldIcon, TimelineIcon, UserIcon, VideoIcon, WaveIcon, XIcon } from "./Icons";
 
@@ -99,13 +100,17 @@ export default function Sidebar() {
     <>
       <div className="topbar">
         {brand}
-        <button type="button" className="icon-only" aria-label={tx("เปิดเมนู")} aria-expanded={open} aria-controls="sidebar"
-          onClick={() => setOpen(true)}><MenuIcon /></button>
+        <div className="row" style={{ gap: 8 }}>
+          <NotificationBell enabled={!!config?.auth && !!user} />
+          <button type="button" className="icon-only" aria-label={tx("เปิดเมนู")} aria-expanded={open} aria-controls="sidebar"
+            onClick={() => setOpen(true)}><MenuIcon /></button>
+        </div>
       </div>
       {open && <div className="sidebar-backdrop" onClick={() => setOpen(false)} />}
       <aside id="sidebar" className={`sidebar${open ? " open" : ""}`}>
         <div className="sidebar-head">
           {brand}
+          <span className="bell-desktop"><NotificationBell enabled={!!config?.auth && !!user} /></span>
           <button type="button" className="icon-only sidebar-close" aria-label={tx("ปิดเมนู")} onClick={() => setOpen(false)}>
             <XIcon size={18} />
           </button>
