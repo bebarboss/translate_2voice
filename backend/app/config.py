@@ -224,6 +224,8 @@ class Settings:
     story_content_type: bool = d.STORY_CONTENT_TYPE
     translate_neighbors: bool = d.TRANSLATE_NEIGHBORS
     fit_neighbors: bool = d.FIT_NEIGHBORS
+    translate_verify: bool = d.TRANSLATE_VERIFY
+    translate_verify_fix: bool = d.TRANSLATE_VERIFY_FIX
     translate_review: bool = d.TRANSLATE_REVIEW
     pause_match: bool = audio.PAUSE_MATCH
     min_pause_sec: float = audio.MIN_PAUSE_SEC

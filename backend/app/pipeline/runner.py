@@ -288,6 +288,19 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("naturalize failed for job %s: %s", job_id, exc)
+    if settings.translate_verify and not settings.mock_pipeline and (settings.llm_api_key or settings.typhoon_api_key):
+        stage("verify_translation", lo + span * 0.88)
+        try:  # ขั้นเสริม ล้ม/ยกเลิกไม่ได้ทำให้งานล้ม ใช้บทที่แปลไว้แล้ว
+            still = translate_mod.verify_translation(utterances, lang, job.target_lang, max_sp, title, hints, cancel)
+            for u in utterances:
+                if u.id in still:
+                    u.check_note = f"{u.check_note}; {still[u.id]}".strip("; ") if u.check_note else still[u.id]
+                    u.unclear_reason = u.unclear_reason or still[u.id]
+            store.save_transcript(job_id, utterances)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("verify_translation failed for job %s: %s", job_id, exc)
     if settings.translate_review and not settings.mock_pipeline and settings.typhoon_api_key:
         stage("review_translation", lo + span * 0.9)
         try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว (รอบแปลใหม่ที่แย่กว่าจะถูกทิ้งใน _retranslate)

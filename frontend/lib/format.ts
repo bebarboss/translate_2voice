@@ -44,6 +44,8 @@ export const STAGE_LABEL: Record<string, string> = {
   story: "อ่านบททั้งเรื่อง วิเคราะห์ตัวละคร",
   translate: "แปลบทพากย์",
   fit_lengths: "ปรับบทให้พอดีเวลา",
+  naturalize: "ปรับบทให้เป็นภาษาพูด",
+  verify_translation: "ตรวจความถูกต้องของบทแปล",
   review_translation: "ตรวจบทแปล",
   analyzed: "เตรียมบทเสร็จ",
   awaiting_review: "รอตรวจบท",
