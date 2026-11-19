@@ -20,26 +20,27 @@
 | `API_URL` | config.env เป็นค่าว่าง | ว่าง = ไม่ใส่หัว `List-Unsubscribe` |
 | `UNSUBSCRIBE_SECRET` | Secret เท่านั้น เป็น `""` | ว่าง = ไม่ใส่ลิงก์ยกเลิกรับ |
 
-ตัวอย่างที่คอมเมนต์ไว้ใน `deploy/k8s/config.env` และ `.env.example` (ไม่ได้ตั้งค่าให้โปรดักชัน):
+โปรดักชันบน Resend (โดเมน `notify.cobie.online`, ภูมิภาค `us-east-1`) ใช้ค่านี้จนกว่าจะตรวจส่งผ่านแล้ว:
 
 ```
-MAIL_FROM=noreply@notify.cobie.online
 SMTP_HOST=smtp.resend.com
-SMTP_PORT=587
+SMTP_PORT=465
 SMTP_USER=resend
 ```
 
-`SMTP_PASSWORD` ของ Resend ใส่ใน Secret ไม่ใส่ในไฟล์ที่ commit
+พอร์ต 465 จนกว่าจะยืนยันได้ รหัส `SMTP_PASSWORD` อยู่ใน Kubernetes Secret เท่านั้น ไม่ใส่ใน config หรือในไฟล์ที่ commit
 
 ## DNS ของ notify.cobie.online (Resend)
 
-ใส่เรคคอร์ดตามที่แดชบอร์ด Resend ของโดเมนนี้แสดง ค่าด้านล่างเป็นตัวยึด ไม่ใช่เรคคอร์ดจริง
+เรคคอร์ดนี้ทีมใส่ใน Cloudflare แล้ว ภูมิภาค Resend คือ `us-east-1`
+ตารางนี้มีแค่ชื่อเรคคอร์ด ไม่มีค่าและไม่มีคีย์
 
-| ชนิด | ชื่อ | ค่า |
+| ชนิด | ชื่อ | ใช้ทำอะไร |
 | --- | --- | --- |
-| TXT | `notify.cobie.online` | `v=spf1 include:resend.com -all` |
-| CNAME หรือ TXT | ค่าที่ Resend ให้สำหรับ DKIM | `<resend-dkim-record>` |
-| TXT | `_dmarc.notify.cobie.online` | `v=DMARC1; p=none; rua=mailto:dmarc@notify.cobie.online` |
+| TXT | `resend._domainkey.notify` | DKIM |
+| CNAME | `rsend.notify` | tracking / return-path ของ Resend (ใช้คู่กับ CNAME ด้านล่าง แทน MX และ SPF) |
+| CNAME | `send.notify` | tracking / return-path ของ Resend (ใช้คู่กับ CNAME ด้านบน แทน MX และ SPF) |
+| TXT | `_dmarc.notify` | DMARC นโยบาย `p=none` |
 
 ## การส่งซ้ำ
 
