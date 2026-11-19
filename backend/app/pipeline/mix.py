@@ -163,7 +163,8 @@ def mix_tracks(voice_wav: Path, bgm_wav: Optional[Path], out_wav: Path,
 
 
 def mux_video(video: Path, audio_wav: Path, out_mp4: Path, watermark: str = "") -> Path:
-    base = ["ffmpeg", "-y", "-i", video, "-i", audio_wav, "-map", "0:v:0", "-map", "1:a:0"]
+    # -threads 2 ก่อน -i คุมตัวถอดรหัสวิดีโอ (dav1d สร้างเธรดและบัฟเฟอร์เฟรมตามจำนวนคอร์)
+    base = ["ffmpeg", "-y", "-threads", "2", "-i", video, "-i", audio_wav, "-map", "0:v:0", "-map", "1:a:0"]
     tail = ["-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out_mp4]
     # ลายน้ำมุมขวาล่าง (แพ็กทดลอง) — บังคับ encode วิดีโอใหม่
     vf = ""

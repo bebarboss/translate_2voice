@@ -25,6 +25,9 @@ def h264_video_args(crf: str = "20") -> list[str]:
     return [
         "-c:v", "libx264", "-profile:v", "main", "-preset", "veryfast",
         "-crf", crf, "-pix_fmt", "yuv420p",
+        # จำกัดหน่วยความจำ: วิดีโอ 1440x2560 (AV1) เข้ารหัสด้วยค่าเริ่มต้นกินเกิน 1.2 GB จน container API ถูก OOMKilled
+        # ลดเธรดกับ lookahead ได้ราว 40% โดยไฟล์ผลลัพธ์ขนาดและคุณภาพใกล้เดิม
+        "-threads", "2", "-x264-params", "rc-lookahead=10:sync-lookahead=0:ref=2",
     ]
 
 
