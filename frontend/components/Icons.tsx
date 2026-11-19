@@ -120,3 +120,19 @@ export const NextLineIcon = ({ size = 16, color = "currentColor" }: P) =>
 
 export const BellIcon = ({ size = 18, color = "currentColor" }: P) =>
   svg(size, color, <><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8" /><path d="M10.3 20a1.94 1.94 0 0 0 3.4 0" /></>);
+
+export const AlertIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M12 4.5 21 20H3L12 4.5z" /><path d="M12 10v5" /><path d="M12 17.5v.5" /></>);
+
+export const CoinIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><circle cx="12" cy="12" r="8" /><path d="M12 8v8" /><path d="M9.5 10.2c.6-.8 1.5-1.2 2.5-1.2s1.9.4 2.5 1.2" /><path d="M9.5 13.8c.6.8 1.5 1.2 2.5 1.2s1.9-.4 2.5-1.2" /></>);
+
+export const DocIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M7 3.5h7l5 5V20a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z" /><path d="M14 3.5V9h5" /><path d="M9 13h6" /><path d="M9 17h4" /></>);
+
+export const RetryIcon = ({ size = 16, color = "currentColor" }: P) =>
+  svg(size, color, <><path d="M4 12a8 8 0 1 0 2.3-5.7" /><path d="M4 4v5h5" /></>);
+
+/** ชนิดที่ไม่มีไอคอนเฉพาะ — วงกลมกลาง ไม่ใช้สีของชนิดอื่น */
+export const NeutralIcon = ({ size = 18, color = "currentColor" }: P) =>
+  svg(size, color, <><circle cx="12" cy="12" r="8" /><path d="M8 12h8" /></>);
