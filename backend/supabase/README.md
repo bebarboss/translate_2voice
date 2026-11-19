@@ -12,6 +12,7 @@ Production รัน **Postgres บน VPS** (`deploy/docker-compose.yml` servic
 | `20261112000000_trial_identity.sql` | Google `sub` และแฮชการรับทดลองที่อยู่ต่อหลังปิดบัญชี — รันมือบนฐานที่มีข้อมูลแล้ว |
 | `20261112010000_actor_pii_columns.sql` | คอลัมน์ ciphertext ของเลขผู้เสียภาษีและเลขบัญชี — รันมือบนฐานที่มีข้อมูลแล้ว ไม่ลบคอลัมน์เดิม |
 | `20261104000000_translation_memory.sql` ฯลฯ | ตาราง `public` (TM / quality / metrics) — คัดลอกไป `deploy/db/init/` แล้ว |
+| `20261119120000_email_outbox.sql` | คิวอีเมล `notification_outbox` และคอลัมน์ `notify_prefs` / `credits_low_armed` — รันมือบนฐานที่มีข้อมูลแล้ว คัดลอกไป `deploy/db/init/10_email_outbox.sql` |
 
 ## ตั้งค่า
 
