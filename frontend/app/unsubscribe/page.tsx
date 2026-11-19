@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import UnsubscribePanel from "./panel";
 
@@ -7,7 +8,11 @@ export const metadata: Metadata = {
   referrer: "no-referrer",
 };
 
-/** หน้าสาธารณะ โทเคนอยู่ใน query ของเบราว์เซอร์และถูกส่งเมื่อกดยืนยันเท่านั้น */
+/** หน้าสาธารณะ อ่านโทเคนครั้งเดียวแล้วเอา query ออกจากแถบที่อยู่ */
 export default function UnsubscribePage() {
-  return <UnsubscribePanel />;
+  return (
+    <Suspense fallback={<main className="page narrow" role="status"><span className="sr-only">กำลังโหลด...</span></main>}>
+      <UnsubscribePanel />
+    </Suspense>
+  );
 }

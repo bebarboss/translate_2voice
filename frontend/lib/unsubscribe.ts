@@ -43,6 +43,22 @@ export function readUnsubscribeToken(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/**
+ * จำโทเคนครั้งแรกเท่านั้น
+ * held เป็น undefined คือยังไม่ได้อ่าน query ที่ถูก replaceState ออกแล้วต้องไม่ทับค่าเดิม
+ */
+export function keepUnsubscribeToken(held: string | undefined, raw: string | null | undefined): string {
+  if (held !== undefined) return held;
+  return readUnsubscribeToken(raw);
+}
+
+/** ที่อยู่หลังอ่านโทเคน: pathname อย่างเดียว ไม่มี query หรือ hash */
+export function pathnameOnly(pathname: string): string {
+  const cut = pathname.split(/[?#]/, 1)[0] ?? "";
+  if (!cut.startsWith("/") || cut.startsWith("//") || cut.includes("\\")) return "/unsubscribe";
+  return cut;
+}
+
 export function categoryLabel(category: string): string | null {
   return CATEGORY_LABEL[category] ?? null;
 }
