@@ -952,6 +952,18 @@ input[type="file"]::file-selector-button:hover { border-color: var(--border-3); 
   transform: none !important; transition: left .15s var(--ease); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 .switch:checked { background: var(--brand) !important; box-shadow: none !important; }
 .switch:checked::before { left: 19px; }
+.switch:focus-visible { outline: none; box-shadow: var(--ring) !important; }
+.set-row .v:has(.switch) { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.lock-note { font-size: 12.5px; color: var(--muted); }
+.unsub-card { gap: 14px; }
+.unsub-card h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.35; }
+.unsub-card p { margin: 0; }
+.unsub-cat { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface-2); }
+.unsub-cat b { display: block; font-size: 15px; }
+.unsub-cat span { display: block; margin-top: 2px; color: var(--muted); font-size: 13.5px; }
+.unsub-actions { display: flex; flex-direction: column; gap: 10px; }
+.unsub-actions .btn { width: 100%; white-space: normal; text-align: center; height: auto; min-height: 44px; padding: 10px 16px; }
+.unsub-expired { display: flex; flex-direction: column; gap: 14px; }
 
 /* ================= ตัวเลือกภาษาและธีม ================= */
 .prefs { display: none; } /* ภาษาและธีมอยู่ในเมนูบัญชี */

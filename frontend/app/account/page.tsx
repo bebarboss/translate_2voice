@@ -1,14 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ActorPaymentSection from "@/components/ActorPaymentSection";
 import { fmtCredits, fmtDate, useWallet } from "@/components/Billing";
 import { ACCOUNT_LOAD_ERROR, CREDITS_LOAD_ERROR, LoadError, Skel, SkelLines } from "@/components/LoadState";
 import { GearIcon, MicIcon, ShieldIcon, TagIcon, UserIcon } from "@/components/Icons";
-import { api, fileUrl, type AccountType, type ActorMe, type User } from "@/lib/api";
+import { ApiError, api, fileUrl, type AccountType, type ActorMe, type User } from "@/lib/api";
 import { fmtBaht, fmtNum } from "@/lib/format";
 import { chooseLang, chooseTheme, currentTheme, getLang, locale, tx, type Lang, type Theme } from "@/lib/i18n";
+import {
+  EMAIL_PREF_DESC,
+  EMAIL_PREF_KINDS,
+  EMAIL_PREF_LABEL,
+  EMAIL_PREFS_LOAD_ERROR,
+  LEGACY_NOTIFY_DESC,
+  emailPrefPatch,
+  loadNotifyPrefs,
+  lockedRows,
+  optimisticEmailPrefs,
+  prefSaveNotice,
+  settlePrefToggle,
+  type EmailPrefKind,
+  type NotifyPrefs,
+  type PrefSaveNotice,
+} from "@/lib/notify-prefs";
 import { redirectToSignIn } from "@/lib/auth-routes";
 import { isSignedOut, useAuth } from "@/lib/useAuth";
 
@@ -66,15 +82,246 @@ function ProfileTab({ user }: { user: User }) {
   );
 }
 
+type EmailPrefsView =
+  | { phase: "loading" }
+  | { phase: "error" }
+  | { phase: "legacy"; on: boolean }
+  | { phase: "granular"; prefs: NotifyPrefs };
+
+function PrefSwitch({
+  label, checked, disabled, locked, onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  locked?: boolean;
+  onChange?: (on: boolean) => void;
+}) {
+  const off = disabled || locked;
+  return (
+    <input
+      type="checkbox"
+      className="switch"
+      role="switch"
+      aria-label={label}
+      aria-checked={checked}
+      aria-disabled={off || undefined}
+      checked={checked}
+      disabled={off}
+      onChange={onChange && !off ? (e) => onChange(e.target.checked) : () => {}}
+    />
+  );
+}
+
+function SaveNotice({ notice, onRetry }: { notice: PrefSaveNotice; onRetry?: () => void }) {
+  return (
+    <div className={`alert ${notice.role === "status" ? "info" : "error"}`} role={notice.role}>
+      {tx(notice.text)}
+      {notice.role === "alert" && onRetry && (
+        <> <button type="button" className="btn link small" onClick={onRetry}>{tx("ลองอีกครั้ง")}</button></>
+      )}
+    </div>
+  );
+}
+
+/** สวิตช์อีเมลแยกชนิด ถ้า /auth/notify-prefs ยังไม่ขึ้น (404) ใช้สวิตช์แจ้งเตือนงานเดิม */
+function EmailNotifySection({ user, onUser }: { user: User; onUser: (user: User) => void }) {
+  const [view, setView] = useState<EmailPrefsView>({ phase: "loading" });
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<PrefSaveNotice | null>(null);
+  const [retry, setRetry] = useState<(() => void) | null>(null);
+  const savingRef = useRef(false);
+
+  const load = useCallback(() => {
+    setView({ phase: "loading" });
+    setNotice(null);
+    setRetry(null);
+    api.notifyPrefs().then((body) => {
+      const loaded = loadNotifyPrefs(200, body);
+      if (loaded.mode === "granular") setView({ phase: "granular", prefs: loaded.prefs });
+      else setView({ phase: "error" });
+    }).catch((err) => {
+      const status = err instanceof ApiError ? err.status : 0;
+      const loaded = loadNotifyPrefs(status, null);
+      if (loaded.mode === "legacy") setView({ phase: "legacy", on: user.notify_email });
+      else setView({ phase: "error" });
+    });
+  }, [user.notify_email]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const toggleKind = (kind: EmailPrefKind, on: boolean) => {
+    if (view.phase !== "granular" || savingRef.current || view.prefs.always_on.includes(kind)) return;
+    const snapshot = view.prefs;
+    savingRef.current = true;
+    setNotice(null);
+    setRetry(null);
+    setSaving(true);
+    setView({
+      phase: "granular",
+      prefs: { ...snapshot, email: optimisticEmailPrefs(snapshot.email, kind, on) },
+    });
+    const finish = (status: number) => {
+      const note = prefSaveNotice(status);
+      setNotice(note);
+      setRetry(status === 422 || status === 200 ? null : () => () => toggleKind(kind, on));
+    };
+    api.setNotifyPrefs(emailPrefPatch(kind, on)).then((body) => {
+      const settled = settlePrefToggle(snapshot.email, body);
+      if (!settled.ok) {
+        setView({ phase: "granular", prefs: { ...snapshot, email: settled.email } });
+        finish(500);
+        return;
+      }
+      setView({ phase: "granular", prefs: settled.prefs });
+      finish(200);
+    }).catch((err) => {
+      setView({ phase: "granular", prefs: snapshot });
+      finish(err instanceof ApiError ? err.status : 0);
+    }).finally(() => { savingRef.current = false; setSaving(false); });
+  };
+
+  const toggleLegacy = (on: boolean) => {
+    if (view.phase !== "legacy" || savingRef.current) return;
+    const prev = view.on;
+    savingRef.current = true;
+    setNotice(null);
+    setRetry(null);
+    setSaving(true);
+    setView({ phase: "legacy", on });
+    const finish = (status: number) => {
+      setNotice(prefSaveNotice(status));
+      setRetry(status === 200 || status === 422 ? null : () => () => toggleLegacy(on));
+    };
+    api.setNotify(on).then((next) => {
+      onUser(next);
+      setView({ phase: "legacy", on: next.notify_email });
+      finish(200);
+    }).catch((err) => {
+      setView({ phase: "legacy", on: prev });
+      finish(err instanceof ApiError ? err.status : 0);
+    }).finally(() => { savingRef.current = false; setSaving(false); });
+  };
+
+  const toggleMarketing = (on: boolean) => {
+    if (savingRef.current) return;
+    const prev = user.marketing;
+    savingRef.current = true;
+    setNotice(null);
+    setRetry(null);
+    setSaving(true);
+    onUser({ ...user, marketing: on });
+    api.setMarketing(on).then((next) => {
+      onUser(next);
+      setNotice(prefSaveNotice(200));
+      setRetry(null);
+    }).catch((err) => {
+      onUser({ ...user, marketing: prev });
+      const status = err instanceof ApiError ? err.status : 0;
+      setNotice(prefSaveNotice(status));
+      setRetry(status === 422 ? null : () => () => toggleMarketing(on));
+    }).finally(() => { savingRef.current = false; setSaving(false); });
+  };
+
+  const locked = view.phase === "granular" ? lockedRows(view.prefs.always_on) : [];
+  const banner = notice ? <SaveNotice notice={notice} onRetry={retry ?? undefined} /> : null;
+
+  return (
+    <>
+      {banner}
+      {view.phase === "loading" && (
+        <>
+          <Head title={tx("อีเมลแจ้งเตือนงาน")} text={tx("เลือกชนิดอีเมลที่ต้องการรับ ส่งไปที่อีเมลของบัญชี")} />
+          <div className="set-group" role="status" aria-busy="true">
+            <span className="sr-only">{tx("กำลังโหลด...")}</span>
+            {EMAIL_PREF_KINDS.map((kind) => (
+              <Row key={kind} title={tx(EMAIL_PREF_LABEL[kind])} desc={tx(EMAIL_PREF_DESC[kind])}>
+                <Skel width="40px" />
+              </Row>
+            ))}
+          </div>
+        </>
+      )}
+      {view.phase === "error" && (
+        <>
+          <Head title={tx("อีเมลแจ้งเตือนงาน")} />
+          <LoadError
+            title={EMAIL_PREFS_LOAD_ERROR.title}
+            description={EMAIL_PREFS_LOAD_ERROR.description}
+            onRetry={load}
+          />
+        </>
+      )}
+      {view.phase === "granular" && (
+        <>
+          <Head title={tx("อีเมลแจ้งเตือนงาน")} text={tx("เลือกชนิดอีเมลที่ต้องการรับ ส่งไปที่อีเมลของบัญชี")} />
+          <div className="set-group">
+            {EMAIL_PREF_KINDS.map((kind) => {
+              const held = view.prefs.always_on.includes(kind);
+              const label = tx(EMAIL_PREF_LABEL[kind]);
+              return (
+                <Row key={kind} title={label} desc={tx(EMAIL_PREF_DESC[kind])}>
+                  {held && <span className="lock-note">{tx("ส่งเสมอ")}</span>}
+                  <PrefSwitch
+                    label={held ? `${label} ${tx("ส่งเสมอ")}` : label}
+                    checked={view.prefs.email[kind]}
+                    disabled={saving}
+                    locked={held}
+                    onChange={(on) => toggleKind(kind, on)}
+                  />
+                </Row>
+              );
+            })}
+          </div>
+          {locked.length > 0 && (
+            <>
+              <Head title={tx("ส่งเสมอ")} text={tx("อีเมลเหล่านี้ปิดไม่ได้จากหน้านี้")} />
+              <div className="set-group">
+                {locked.map((row) => (
+                  <Row key={row.id} title={tx(row.label)} desc={tx(row.desc)}>
+                    <span className="lock-note">{tx(row.note)}</span>
+                    <PrefSwitch label={`${tx(row.label)} ${tx(row.note)}`} checked locked />
+                  </Row>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+      {view.phase === "legacy" && (
+        <>
+          <Head title={tx("อีเมล")} />
+          <div className="set-group">
+            <Row title={tx("แจ้งเตือนงาน")} desc={tx(LEGACY_NOTIFY_DESC)}>
+              <PrefSwitch
+                label={tx("แจ้งเตือนงาน")}
+                checked={view.on}
+                disabled={saving}
+                onChange={toggleLegacy}
+              />
+            </Row>
+          </div>
+        </>
+      )}
+      <Head title={tx("ข่าวสาร")} />
+      <div className="set-group">
+        <Row title={tx("ข่าวสารและโปรโมชัน")} desc={tx("ฟีเจอร์ใหม่และโปรโมชัน ยกเลิกได้ทุกเมื่อ")}>
+          <PrefSwitch
+            label={tx("ข่าวสารและโปรโมชัน")}
+            checked={user.marketing}
+            disabled={saving}
+            onChange={toggleMarketing}
+          />
+        </Row>
+      </div>
+    </>
+  );
+}
+
 function PrefsTab({ user: initial }: { user: User }) {
   const [user, setUser] = useState(initial);
-  const [saving, setSaving] = useState(false);
   const [theme, setTheme] = useState<Theme>("system");
   useEffect(() => setTheme(currentTheme()), []);
-  const toggle = async (fn: () => Promise<User>) => {
-    setSaving(true);
-    try { setUser(await fn()); } catch { /* คงค่าเดิม */ } finally { setSaving(false); }
-  };
   const lang = getLang();
   return (
     <>
@@ -95,17 +342,7 @@ function PrefsTab({ user: initial }: { user: User }) {
           </div>
         </Row>
       </div>
-      <Head title={tx("อีเมล")} />
-      <div className="set-group">
-        <Row title={tx("แจ้งเตือนงาน")} desc={tx("แจ้งทางอีเมลเมื่องานรอตรวจบท พากย์เสร็จ หรือไม่สำเร็จ")}>
-          <input type="checkbox" className="switch" role="switch" aria-label={tx("แจ้งเตือนงาน")} checked={user.notify_email} disabled={saving}
-            onChange={() => toggle(() => api.setNotify(!user.notify_email))} />
-        </Row>
-        <Row title={tx("ข่าวสารและโปรโมชัน")} desc={tx("ฟีเจอร์ใหม่และโปรโมชัน ยกเลิกได้ทุกเมื่อ")}>
-          <input type="checkbox" className="switch" role="switch" aria-label={tx("ข่าวสารและโปรโมชัน")} checked={user.marketing} disabled={saving}
-            onChange={() => toggle(() => api.setMarketing(!user.marketing))} />
-        </Row>
-      </div>
+      <EmailNotifySection user={user} onUser={setUser} />
     </>
   );
 }
@@ -304,8 +541,10 @@ export default function AccountPage() {
     api.actorMe().then(setActorMe).catch(() => setActorMe(null));
   }, []);
   useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("tab");
     const h = window.location.hash.slice(1);
-    if (TABS.some((t) => t.id === h)) setTab(h as Tab);
+    const id = q || h;
+    if (TABS.some((t) => t.id === id)) setTab(id as Tab);
   }, []);
   useEffect(() => {
     if (loaded && signedOut) redirectToSignIn();
@@ -313,7 +552,13 @@ export default function AccountPage() {
   useEffect(() => {
     if (user) reloadActor();
   }, [user, reloadActor]);
-  const pick = (t: Tab) => { setTab(t); window.history.replaceState(null, "", `#${t}`); };
+  const pick = (t: Tab) => {
+    setTab(t);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("tab");
+    url.hash = t;
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   if (!loaded || signedOut) return <main className="page"><div className="empty">{tx("กำลังโหลด...")}</div></main>;
   if (unavailable && !user) {
