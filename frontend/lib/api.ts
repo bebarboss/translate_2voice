@@ -439,6 +439,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+/** แจ้งเตือนในแอป (กระดิ่ง) title/body มาจากเซิร์ฟเวอร์เป็นภาษาไทย ไม่แปล */
+export type AppNotification = {
+  id: string; kind: string; title: string; body: string; link: string; job_id: string; created_at: number; read: boolean;
+};
+
 const json = (method: string, body: unknown): RequestInit => ({
   method,
   headers: { "Content-Type": "application/json" },
@@ -456,6 +461,10 @@ export const api = {
   acceptConsent: (body: ConsentChoice) => request<User>("/auth/consent", json("POST", body)),
   setMarketing: (on: boolean) => request<User>("/auth/marketing", json("PUT", { on })),
   setNotify: (on: boolean) => request<User>("/auth/notify", json("PUT", { on })),
+  notifications: (limit = 30) => request<{ items: AppNotification[]; unread: number }>(`/notifications?limit=${limit}`),
+  notificationsUnread: () => request<{ unread: number }>("/notifications/unread"),
+  readNotification: (id: string) => request<{ unread: number }>(`/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),
+  readAllNotifications: () => request<{ unread: number }>("/notifications/read-all", { method: "POST" }),
   /** ปิดบัญชีและลบข้อมูล ต้องพิมพ์อีเมลของบัญชียืนยัน ย้อนกลับไม่ได้ */
   closeAccount: (confirm: string) => request<void>("/auth/close", json("POST", { confirm })),
   backups: () => request<Backups>("/admin/backups"),

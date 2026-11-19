@@ -90,16 +90,32 @@ def admins() -> list[str]:
 
 
 # ---------------------------------------------------------------- งาน
+def _inbox_job(u, job, job_id: str, kind: str) -> None:
+    from . import inbox
+    name = job.filename
+    link = f"/jobs/{job_id}"
+    if kind == "review":
+        inbox.add(u["id"], "job_review", "รอตรวจบท", f"งาน “{name}” แปลเสร็จแล้ว รอคุณตรวจบทก่อนพากย์", link, job_id)
+    elif kind == "done":
+        inbox.add(u["id"], "job_done", "พากย์เสร็จแล้ว", f"งาน “{name}” พร้อมดูผลและดาวน์โหลด", link, job_id)
+    elif kind == "failed":
+        why = (job.error or "ไม่ทราบสาเหตุ").splitlines()[0][:200]
+        inbox.add(u["id"], "job_failed", "งานไม่สำเร็จ", f"งาน “{name}”: {why} กดลองใหม่ได้ที่หน้างาน", link, job_id)
+
+
 def job_event(job_id: str, kind: str, elapsed: float) -> None:
     """kind: review = แปลเสร็จรอตรวจบท, done = พากย์เสร็จ, failed = ล้มเหลว"""
     from .main import store
     job = store.get(job_id)
     u = _user(job.owner if job else None)
-    if job is None or u is None or not u["notify_email"]:
+    if job is None or u is None:
+        return
+    name = job.filename
+    _inbox_job(u, job, job_id, kind)  # แจ้งในแอปทุกครั้ง แม้งานเสร็จเร็วหรือปิดอีเมลไว้
+    if not u["notify_email"]:
         return
     if kind != "failed" and elapsed < settings.notify_min_seconds:
         return
-    name = job.filename
     if kind == "review":
         what = "แยกเสียงเสร็จแล้ว เลือกบันทึกเสียงของแต่ละคนลงคลังได้" if job.library else "ถอดเสียงและแปลเสร็จแล้ว รอคุณตรวจบทก่อนพากย์"
         send(u["email"], f"รอตรวจบท: {name}", [f"สวัสดีคุณ{u['name']}", f"งาน “{name}” {what}"], f"/jobs/{job_id}", "ตรวจบท")
@@ -136,6 +152,9 @@ def actor_reviewed(uid: str, approve: bool, note: str) -> None:
         lines.append("ใบสมัครนักพากย์ของคุณได้รับอนุมัติแล้ว เข้าไปอัดเสียงเข้าคลังได้เลย")
     else:
         lines.append("ใบสมัครนักพากย์ของคุณยังไม่ผ่าน" + (f": {note}" if note else "") + " แก้ไขแล้วสมัครใหม่ได้")
+    from . import inbox
+    inbox.add(uid, "actor_approved" if approve else "actor_rejected",
+              "ใบสมัครนักพากย์ได้รับอนุมัติ" if approve else "ใบสมัครนักพากย์ยังไม่ผ่าน", lines[1], "/actor")
     send(u["email"], "ใบสมัครนักพากย์ได้รับอนุมัติ" if approve else "ผลใบสมัครนักพากย์", lines, "/actor", "ไปหน้านักพากย์")
 
 
@@ -150,6 +169,8 @@ def voice_reviewed(uid: str, voice_name: str, approve: bool, note: str, bonus: i
             lines.append(f"ได้รับโบนัส {bonus} เครดิตจากการอนุมัติเสียงนี้ (เครดิตเติม ไม่หมดอายุ)")
     else:
         lines.append(f"เสียง “{voice_name}” ยังไม่ผ่านการตรวจ" + (f": {note}" if note else "") + " อัดใหม่แล้วส่งอีกครั้งได้")
+    from . import inbox
+    inbox.add(uid, "voice_approved" if approve else "voice_rejected", f"ผลตรวจเสียง: {voice_name}", " ".join(lines[1:]), "/actor")
     send(u["email"], f"ผลตรวจเสียง: {voice_name}", lines, "/actor", "ไปหน้านักพากย์")
 
 
@@ -161,4 +182,6 @@ def actor_paid(uid: str, month: str, amount: int, wht: int) -> None:
     lines = [f"สวัสดีคุณ{u['name']}", f"โอนค่าตอบแทนของเดือน {month} ให้แล้ว {baht(amount - wht)}"]
     if wht:
         lines.append(f"ยอดก่อนหักภาษี {baht(amount)} หักภาษี ณ ที่จ่าย {baht(wht)}")
+    from . import inbox
+    inbox.add(uid, "actor_paid", f"โอนค่าตอบแทนเดือน {month} แล้ว", lines[1], "/actor")
     send(u["email"], f"โอนค่าตอบแทนเดือน {month} แล้ว", lines, "/actor", "ดูรายละเอียด")

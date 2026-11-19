@@ -186,6 +186,35 @@ def set_notify(body: Marketing, user=Depends(require_user)):
     return accounts.set_notify(user["id"], body.on)
 
 
+@router.get("/notifications")
+def list_notifications(limit: int = 30, user=Depends(require_user)):
+    """แจ้งเตือนในแอปของผู้ใช้ (ใหม่สุดก่อน) พร้อมจำนวนที่ยังไม่อ่าน"""
+    from . import inbox
+    return inbox.list_for(user["id"], limit)
+
+
+@router.get("/notifications/unread")
+def notifications_unread(user=Depends(require_user)):
+    """จำนวนที่ยังไม่อ่านอย่างเดียว เบากว่ารายการ ใช้โพลล์ตัวเลขบนกระดิ่ง"""
+    from . import inbox
+    return {"unread": inbox.unread_count(user["id"])}
+
+
+@router.post("/notifications/read-all")
+def read_all_notifications(user=Depends(require_user)):
+    from . import inbox
+    inbox.mark_all(user["id"])
+    return {"unread": 0}
+
+
+@router.post("/notifications/{notification_id}/read")
+def read_notification(notification_id: str, user=Depends(require_user)):
+    from . import inbox
+    if not inbox.mark_read(user["id"], notification_id):
+        raise HTTPException(404, "ไม่พบการแจ้งเตือนนี้")
+    return {"unread": inbox.unread_count(user["id"])}
+
+
 @router.put("/auth/marketing")
 def set_marketing(body: Marketing, request: Request, user=Depends(require_user)):
     """เปิดหรือปิดการรับข่าวสาร (ถอนความยินยอมได้ตลอด)"""
