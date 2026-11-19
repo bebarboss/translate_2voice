@@ -603,11 +603,43 @@ def test_fast_success_skips_email_but_failed_does_not(book):
     assert "secret-trace" not in row["text_body"] and "secret-trace" not in row["html_body"]
 
 
-def test_invalid_session_cookie_does_not_401(book, monkeypatch):
-    """แอปจริง: คุกกี้ dub_session และ X-User-Token ที่ใช้ไม่ได้ต้องไม่กลายเป็น 401/403"""
+def _asgi(app, method: str, path: str, query: str = "", headers: dict | None = None, body: bytes = b""):
+    """เรียกแอปจริงโดยไม่เข้า lifespan และไม่ใช้ httpx (CI มี httpx2)"""
     import asyncio
 
-    import httpx
+    status: dict[str, int] = {}
+    chunks = bytearray()
+    raw_headers = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            status["code"] = message["status"]
+        elif message["type"] == "http.response.body":
+            chunks.extend(message.get("body") or b"")
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": query.encode(),
+        "headers": raw_headers,
+        "client": ("127.0.0.1", 123),
+        "server": ("test", 80),
+    }
+    asyncio.run(app(scope, receive, send))
+    return status["code"], bytes(chunks).decode()
+
+
+def test_invalid_session_cookie_does_not_401(book, monkeypatch):
+    """แอปจริง: คุกกี้ dub_session และ X-User-Token ที่ใช้ไม่ได้ต้องไม่กลายเป็น 401/403"""
+    from urllib.parse import quote
 
     from app import main as main_mod
 
@@ -619,33 +651,27 @@ def test_invalid_session_cookie_does_not_401(book, monkeypatch):
         "cookie": "dub_session=not-a-real-session",
         "x-user-token": "not-a-real-session",
     }
-    expired = notify.sign_token(SECRET_UID, "job_done", int(time.time()) - 30)
+    expired = quote(notify.sign_token(SECRET_UID, "job_done", int(time.time()) - 30), safe="")
     before = _prefs()
 
-    async def _call():
-        transport = httpx.ASGITransport(app=main_mod.app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            bad = await client.get("/notifications/unsubscribe", params={"token": "nope"}, headers=headers)
-            posted = await client.post("/notifications/unsubscribe", params={"token": "nope"}, headers=headers)
-            gone = await client.get("/notifications/unsubscribe", params={"token": expired}, headers=headers)
-            gone_post = await client.post("/notifications/unsubscribe", json={"token": expired}, headers=headers)
-            slash = await client.get("/notifications/unsubscribe/", params={"token": "nope"}, headers=headers)
-            other = await client.get("/jobs", headers=headers)
-            return bad, posted, gone, gone_post, slash, other
-
-    bad, posted, gone, gone_post, slash, other = asyncio.run(_call())
-    assert bad.status_code == 400
-    assert posted.status_code == 400
-    assert gone.status_code == 410
-    assert gone_post.status_code == 410
-    assert slash.status_code == 400
-    for response in (bad, posted, gone, gone_post, slash):
-        assert response.status_code not in (401, 403)
-        assert "กรุณาเข้าสู่ระบบ" not in response.text
-        assert "API key" not in response.text
-        _no_identity(response.text)
+    bad = _asgi(main_mod.app, "GET", "/notifications/unsubscribe", "token=nope", headers)
+    posted = _asgi(main_mod.app, "POST", "/notifications/unsubscribe", "token=nope", headers)
+    gone = _asgi(main_mod.app, "GET", "/notifications/unsubscribe", f"token={expired}", headers)
+    gone_post = _asgi(
+        main_mod.app, "POST", "/notifications/unsubscribe", "",
+        {**headers, "content-type": "application/json"},
+        json.dumps({"token": notify.sign_token(SECRET_UID, "job_done", int(time.time()) - 30)}).encode(),
+    )
+    slash = _asgi(main_mod.app, "GET", "/notifications/unsubscribe/", "token=nope", headers)
+    for code, text in (bad, posted, gone, gone_post, slash):
+        assert code not in (401, 403)
+        assert "กรุณาเข้าสู่ระบบ" not in text
+        assert "API key" not in text
+        _no_identity(text)
+    assert bad[0] == 400 and posted[0] == 400 and slash[0] == 400
+    assert gone[0] == 410 and gone_post[0] == 410
     assert _prefs() == before
-    assert other.status_code == 401
+    assert _asgi(main_mod.app, "GET", "/jobs", "", headers)[0] == 401
 
 
 def test_access_log_redacts_unsubscribe_token(caplog):
