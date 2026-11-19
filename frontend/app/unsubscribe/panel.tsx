@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { BrandLockup } from "@/components/Brand";
 import { Skel } from "@/components/LoadState";
@@ -26,9 +27,10 @@ import {
   SUCCESS_TITLE,
   categoryLabel,
   confirmCategoryLine,
+  keepUnsubscribeToken,
   mapUnsubscribePreview,
   mapUnsubscribeResponse,
-  readUnsubscribeToken,
+  pathnameOnly,
 } from "@/lib/unsubscribe";
 
 type Phase =
@@ -40,17 +42,24 @@ type Phase =
   | { name: "expired" }
   | { name: "error"; category: string | null };
 
-/** อ่านโทเคนจาก URL ฝั่งเบราว์เซอร์ แล้วเรียก GET เพื่อแสดงชื่อชนิด ยกเลิกจริงเมื่อกดปุ่มเท่านั้น */
+/** อ่านโทเคนครั้งเดียวก่อนลบ query แล้วเรียก GET เพื่อแสดงชื่อชนิด ยกเลิกจริงเมื่อกดปุ่มเท่านั้น */
 export default function UnsubscribePanel() {
   const auth = useAuth();
+  const searchParams = useSearchParams();
   const [phase, setPhase] = useState<Phase>({ name: "loading" });
-  const tokenRef = useRef("");
+  const tokenRef = useRef<string | undefined>(undefined);
+  if (tokenRef.current === undefined) {
+    tokenRef.current = keepUnsubscribeToken(undefined, searchParams.get("token"));
+  }
   const busyRef = useRef(false);
   const settingsHref = emailSettingsHref(!(auth.loaded && isSignedOut(auth)));
 
   useEffect(() => {
-    const token = readUnsubscribeToken(new URLSearchParams(window.location.search).get("token"));
-    tokenRef.current = token;
+    const next = pathnameOnly(window.location.pathname);
+    if (window.location.pathname !== next || window.location.search || window.location.hash) {
+      window.history.replaceState(window.history.state, "", next);
+    }
+    const token = tokenRef.current ?? "";
     if (!token) {
       setPhase({ name: "invalid" });
       return;

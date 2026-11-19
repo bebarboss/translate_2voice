@@ -10,7 +10,9 @@ import {
   categoryLabel,
   confirmCategoryLine,
   mapUnsubscribePreview,
+  keepUnsubscribeToken,
   mapUnsubscribeResponse,
+  pathnameOnly,
   readUnsubscribeToken,
 } from "./unsubscribe.ts";
 
@@ -22,6 +24,27 @@ describe("unsubscribe token", () => {
     assert.equal(readUnsubscribeToken(null), "");
     assert.equal(readUnsubscribeToken("   "), "");
     assert.equal(readUnsubscribeToken("  abc  "), "abc");
+  });
+
+  it("keeps the first read after the query is removed and strips the address to the pathname", () => {
+    let held: string | undefined;
+    held = keepUnsubscribeToken(held, "  tok-1  ");
+    held = keepUnsubscribeToken(held, null);
+    held = keepUnsubscribeToken(held, "tok-2");
+    assert.equal(held, "tok-1");
+
+    let missing: string | undefined;
+    missing = keepUnsubscribeToken(missing, "   ");
+    missing = keepUnsubscribeToken(missing, "tok-1");
+    assert.equal(missing, "");
+
+    const next = pathnameOnly("/unsubscribe?token=tok-1#later");
+    assert.equal(next, "/unsubscribe");
+    assert.equal(next.includes("tok-1"), false);
+    assert.equal(next.includes("?"), false);
+    assert.equal(next.includes("#"), false);
+    assert.equal(pathnameOnly("/unsubscribe"), "/unsubscribe");
+    assert.equal(pathnameOnly("//evil.example/unsubscribe?token=tok-1"), "/unsubscribe");
   });
 });
 
