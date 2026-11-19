@@ -104,6 +104,10 @@ class Settings:
     smtp_password: str = _env("SMTP_PASSWORD")
     mail_from: str = _env("MAIL_FROM")
     web_url: str = _env("WEB_URL")
+    # ต้นทางสาธารณะของ API สำหรับหัว List-Unsubscribe ว่าง = ไม่ใส่หัวนี้
+    api_url: str = _env("API_URL")
+    # HMAC ของลิงก์ยกเลิกอีเมล ว่าง = ไม่ใส่ลิงก์ ห้ามใส่ค่าจริงในไฟล์ที่ commit
+    unsubscribe_secret: str = _env("UNSUBSCRIBE_SECRET")
     mock_pipeline: bool = _bool("MOCK_PIPELINE")
     device: str = _env("DEVICE", "cuda")
     low_vram: bool = _bool("LOW_VRAM")

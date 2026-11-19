@@ -37,6 +37,7 @@ configMapGenerator:
       - 07_quality.sql=../db/init/07_quality.sql
       - 08_job_metrics.sql=../db/init/08_job_metrics.sql
       - 09_trial_identity.sql=../db/init/09_trial_identity.sql
+      - 10_email_outbox.sql=../db/init/10_email_outbox.sql
 
 images:
   - name: ghcr.io/bebarboss/pakdee-api
