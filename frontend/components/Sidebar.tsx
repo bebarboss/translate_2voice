@@ -23,7 +23,7 @@ const LINKS = [
 ];
 const RECENT = 6;
 // หน้าที่ไม่มีเมนูซ้าย (มีโครงของตัวเอง)
-const BARE = /^\/(welcome|login|onboarding|terms|privacy|actor-consent|share)/;
+const BARE = /^\/(welcome|login|onboarding|terms|privacy|actor-consent|share|unsubscribe)/;
 
 /** เครดิตคงเหลือท้ายเมนู (เมื่อเปิดระบบเครดิต) โหลดใหม่เมื่อเปลี่ยนหน้า ทุก 20 วินาที และตอนกลับมาที่แท็บ */
 function CreditCard({ path }: { path: string }) {

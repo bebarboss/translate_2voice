@@ -1,6 +1,7 @@
 // หน้าแอปที่ต้องล็อกอิน (เมื่อระบบบัญชีเปิด) กับหน้าสาธารณะ
 // proxy ใช้รายการนี้ตัดก่อนเรนเดอร์ ส่วน client ใช้ตอน API ตอบ 401 กลางคัน
 // เส้นทางที่ไม่ได้อยู่ในรายการ (รวมหน้าที่ไม่มีอยู่) ไม่ถูกพาไปหน้าเข้าสู่ระบบ
+// สาธารณะที่ตั้งใจไว้ รวม /unsubscribe (ลิงก์ในอีเมล เปิดได้โดยไม่ล็อกอิน)
 
 const PREFIXES = [
   "/dashboard",
@@ -46,6 +47,13 @@ export function safeNext(value: string): string {
     || /[\u0000-\u001F]/.test(value)
   ) return "/dashboard";
   return value;
+}
+
+/** แท็บตั้งค่าอีเมล ถ้ายังไม่ล็อกอินให้ผ่านหน้าเข้าสู่ระบบแล้วกลับมาที่แท็บนี้ */
+export function emailSettingsHref(signedIn: boolean): string {
+  const path = "/account";
+  const search = "?tab=prefs";
+  return signedIn ? `${path}${search}` : signInPath(path, search);
 }
 
 /** ปลายทางเข้าสู่ระบบที่หน้ารับ Google ใช้อยู่แล้ว (query next) หน้าสมัครนักพากย์เปิดโหมดสมัคร */

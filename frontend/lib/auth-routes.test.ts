@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { authGate, isProtectedPath, safeNext, signInPath } from "./auth-routes.ts";
+import { authGate, emailSettingsHref, isProtectedPath, safeNext, signInPath } from "./auth-routes.ts";
 
 describe("isProtectedPath", () => {
   it("protects studio pages and leaves public pages alone", () => {
     for (const path of ["/", "/dashboard", "/jobs", "/jobs/abc", "/projects", "/projects/p1", "/voices", "/voices/v1", "/timeline", "/admin", "/admin/extra", "/account", "/settings", "/support", "/actor", "/actors", "/onboarding"]) {
       assert.equal(isProtectedPath(path), true, path);
     }
-    for (const path of ["/welcome", "/login", "/terms", "/privacy", "/actor-consent", "/share", "/share/tok", "/promotions", "/this-page-does-not-exist"]) {
+    for (const path of ["/welcome", "/login", "/terms", "/privacy", "/actor-consent", "/share", "/share/tok", "/promotions", "/unsubscribe", "/this-page-does-not-exist"]) {
       assert.equal(isProtectedPath(path), false, path);
     }
   });
@@ -80,6 +80,18 @@ describe("authGate", () => {
     assert.deepEqual(authGate("/welcome", "", { authOn: true, hasSession: false }), { action: "next" });
     assert.deepEqual(authGate("/promotions", "", { authOn: true, hasSession: false }), { action: "next" });
     assert.deepEqual(authGate("/terms", "", { authOn: true, hasSession: false }), { action: "next" });
+  });
+
+  it("sends signed-out visitors to sign in and back to email settings", () => {
+    assert.equal(emailSettingsHref(true), "/account?tab=prefs");
+    assert.equal(emailSettingsHref(false), "/login?next=%2Faccount%3Ftab%3Dprefs");
+  });
+
+  it("keeps the email unsubscribe page public with or without a session", () => {
+    assert.equal(isProtectedPath("/unsubscribe"), false);
+    assert.deepEqual(authGate("/unsubscribe", "?token=1", { authOn: true, hasSession: false }), { action: "next" });
+    assert.deepEqual(authGate("/unsubscribe", "", { authOn: true, hasSession: true }), { action: "next" });
+    assert.deepEqual(authGate("/unsubscribe", "", { authOn: false, hasSession: false }), { action: "next" });
   });
 
   it("sends non-admins away from /admin without rendering it", () => {
