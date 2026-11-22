@@ -416,9 +416,13 @@ class Worker:
             if phase == "analyze":
                 runner.run_analyze(self.store, job_id)
                 job = self.store.get(job_id)
-                if job and job.review:
+                # ผู้ใช้ปิดการตรวจบทไว้ แต่มีบรรทัดที่ระบบไม่แน่ใจ → หยุดรอตรวจเหมือนเปิดไว้ (ไม่พากย์บทที่ไม่แน่ใจเงียบ ๆ)
+                uncertain = runner.uncertain_lines(self.store, job_id) if job and not job.review else []
+                if uncertain:
+                    log.info("job %s: %d uncertain lines, pausing for review", job_id, len(uncertain))
+                if job and (job.review or uncertain):
                     self.store.update(job_id, status=JobStatus.awaiting_review, stage="awaiting_review",
-                                      billing_ref=None)
+                                      billing_ref=None, **({"review": True} if uncertain else {}))
                     event = "review"
                     return
                 self.store.update(job_id, phase="synthesize")

@@ -119,7 +119,8 @@ def idiom_hints(sources: list[str]) -> list[str]:
 
 # ---------------------------------------------------------------- ป้ายตรวจ
 def add_flag(u: Utterance, origin: str, kind: str, reason: str, *, fixed: bool = False, before: str = "") -> None:
-    """origin: rule | self_check | verify; kind: meaning | naturalness | length"""
+    """origin: rule | self_check | verify
+    kind: meaning | naturalness | number | name | added_word | unclear_source (แก้เองไม่ได้ ต้องให้คนฟัง)"""
     flag = {"origin": origin, "kind": kind, "reason": reason[:200], "fixed": fixed, **({"before": before} if before else {})}
     if not any(f.get("origin") == origin and f.get("reason") == flag["reason"] for f in u.qa_flags):
         u.qa_flags.append(flag)
@@ -133,9 +134,273 @@ def note_unresolved(u: Utterance, reason: str) -> None:
     u.unclear_reason = u.unclear_reason or reason
 
 
-def rule_flags(utts: list[Utterance]) -> dict[int, list[tuple[str, str]]]:
-    """id → [(kind, reason)] จากสำนวนที่รู้ว่าแปลผิดบ่อย ไม่เรียกโมเดล"""
+# ---------------------------------------------------------------- ตรวจรายบรรทัดแบบกฎ (ระยะที่ 2)
+# ตัวเลข ชื่อ/แบรนด์ คำลงท้ายที่เติมเอง และต้นฉบับที่ถอดเสียงไม่ชัด ไม่เรียกโมเดล ผลเหมือนเดิมทุกครั้ง
+# unclear_source แก้เองไม่ได้ (ต้องฟังเสียงจริง) ส่งให้เจ้าของงานตรวจเสมอ ที่เหลือส่งไปเขียนใหม่ 1 รอบได้
+UNFIXABLE = frozenset({"unclear_source"})
+
+
+@dataclass(frozen=True)
+class Term:
+    source: str
+    target: str
+    note: str = ""
+
+
+def parse_glossary(text: str) -> list[Term]:
+    """บรรทัดละคำ "ต้นฉบับ = คำที่ต้องใช้ # หมายเหตุ" (หมายเหตุไม่บังคับ) บรรทัดที่ไม่มี = ข้าม"""
+    out: list[Term] = []
+    for line in (text or "").splitlines():
+        src, eq, rest = line.partition("=")
+        src, dst = src.strip(), T.gloss_target(rest)
+        if not eq or not src or not dst:
+            continue
+        note = rest.strip()[len(dst):].strip().lstrip("#").strip()
+        out.append(Term(src, dst, note))
+    return out
+
+
+_THAI_DIGITS = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
+_NUM = re.compile(r"(?<![\w.,])\d+(?:[.,]\d+)*")
+_TH_UNITS = ("", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า")
+_TH_PLACES = ("", "สิบ", "ร้อย", "พัน", "หมื่น", "แสน")
+
+
+def _num_key(s: str) -> str:
+    """"1,000" → "1000" "3.50" → "3.5" (เทียบตัวเลขโดยไม่สนตัวคั่นหลักพัน)"""
+    s = s.translate(_THAI_DIGITS)
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
+        s = s.replace(",", "")
+    s = s.replace(",", ".")
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s.lstrip("0") or "0"
+
+
+def thai_number_words(n: int) -> str:
+    """135 → หนึ่งร้อยสามสิบห้า (ใช้เทียบเมื่อผู้แปลเขียนตัวเลขเป็นคำ)"""
+    if n == 0:
+        return "ศูนย์"
+    if n >= 1_000_000:
+        hi, lo = divmod(n, 1_000_000)
+        return thai_number_words(hi) + "ล้าน" + (thai_number_words(lo) if lo else "")
+    digits = str(n)
+    out = []
+    for i, ch in enumerate(digits):
+        d, place = int(ch), len(digits) - i - 1
+        if d == 0:
+            continue
+        if place == 1:
+            out.append(("ยี่" if d == 2 else "" if d == 1 else _TH_UNITS[d]) + "สิบ")
+        elif place == 0 and d == 1 and len(digits) > 1:
+            out.append("เอ็ด")
+        else:
+            out.append(_TH_UNITS[d] + _TH_PLACES[place])
+    return "".join(out)
+
+
+def _number_forms(raw: str) -> set[str]:
+    key = _num_key(raw)
+    forms = {key}
+    if key.isdigit():
+        n = int(key)
+        if n < 10 ** 12:
+            w = thai_number_words(n)
+            forms.add(w)
+            if w.startswith("หนึ่ง") and n >= 100:
+                forms.add(w[len("หนึ่ง"):])  # "ร้อยสามสิบห้า" แบบที่คนพูด
+        if 1900 <= n <= 2100:
+            forms.add(str(n + 543))  # ปี ค.ศ. → พ.ศ.
+    elif re.fullmatch(r"\d+\.\d+", key):
+        a, b = key.split(".")
+        forms.add(thai_number_words(int(a)) + "จุด" + "".join(_TH_UNITS[int(c)] or "ศูนย์" for c in b))
+    return forms
+
+
+_SENT = re.compile(r"(?<=[.!?…])\s+")
+_ONLY_NUM = re.compile(r"^\W*(\d+(?:[.,]\d+)*)\W*$")
+
+
+def unclear_numbers(u: Utterance, prev: Optional[Utterance] = None) -> list[str]:
+    """ตัวเลขที่ลอยอยู่เดี่ยว ๆ ทั้งประโยคต่อจากประโยคที่มีตัวเลข เช่น "I scored 135! 435." (เสียงสะท้อน/ถอดผิด)
+    นับถอยหลัง/รายการ (ตัวเลขเดี่ยวหลายประโยค) ไม่นับ"""
+    parts = [p for p in _SENT.split((u.source or "").strip()) if p.strip()]
+    alone = [i for i, p in enumerate(parts) if _ONLY_NUM.match(p)]
+    if len(alone) != 1:
+        return []
+    i = alone[0]
+    if i > 0:
+        before = parts[i - 1]
+    elif prev is not None and len(parts) == 1:
+        before = ([p for p in _SENT.split((prev.source or "").strip()) if p.strip()] or [""])[-1]
+    else:
+        return []
+    if not _NUM.search(before) or _ONLY_NUM.match(before):
+        return []
+    return [_ONLY_NUM.match(parts[i]).group(1)]
+
+
+def _check_numbers(source: str, target: str, skip: set[str]) -> list[tuple[str, str]]:
+    tgt = target.translate(_THAI_DIGITS)
+    have = {_num_key(m) for m in _NUM.findall(tgt)}
+    flat = re.sub(r"\s+", "", tgt)
+    missing = []
+    for raw in _NUM.findall(source or ""):
+        if raw in skip or raw in missing:
+            continue
+        forms = _number_forms(raw)
+        if forms & have or any(f in flat for f in forms if not f.isdigit()):
+            continue
+        missing.append(raw)
+    return [("number", f'ตัวเลข "{x}" ในต้นฉบับหายหรือเปลี่ยนไป ต้องคง {x} ไว้ตามต้นฉบับ') for x in missing]
+
+
+# ตัวย่อที่คนไทยอ่านหรือเขียนเป็นไทยกันทั่วไป ไม่ถือเป็นชื่อแบรนด์ที่ต้องคงอักษรละติน
+COMMON_ACRONYMS = frozenset("""AI OK TV US USA UK EU UN CEO DJ IT AM PM VIP DIY FAQ ID PC DNA NASA FBI CIA GPS PDF LOL OMG
+BTW ASAP IQ PR HR VS MR MRS MS DR II III IV TBH FYI IG FB""".split())
+_STOP = frozenset("I A An The My Our Your His Her Their This That These Those And Or But So If When Then Oh Hey Hi Yes No".split())
+_CAP_RUN = re.compile(r"[A-Z][A-Za-z0-9'&.-]*(?:\s+[A-Z][A-Za-z0-9'&.-]*)*")
+
+
+def brand_names(source: str) -> list[str]:
+    """ชื่อแบรนด์/ผลิตภัณฑ์ในต้นฉบับ: กลุ่มคำขึ้นต้นตัวใหญ่ที่มีตัวย่อตัวใหญ่ล้วน (ไม่ใช่ตัวย่อทั่วไป) เช่น "DE Practice"
+    ตัดคำทั่วไปหัวท้าย ("I", "The", "AI") และคำแรกของประโยคออก"""
+    out: list[str] = []
+    for m in _CAP_RUN.finditer(source or ""):
+        toks = [t.strip(".'") for t in m.group(0).split()]
+        head = (source or "")[:m.start()].rstrip()
+        if len(toks) > 1 and (not head or head[-1] in ".!?…") and not toks[0].isupper():
+            toks.pop(0)  # คำแรกของประโยคขึ้นต้นตัวใหญ่อยู่แล้ว ("Try DE Practice" → "DE Practice")
+        while toks and (toks[0] in _STOP or toks[0].upper() in COMMON_ACRONYMS):
+            toks.pop(0)
+        while toks and (toks[-1] in _STOP or toks[-1].upper() in COMMON_ACRONYMS):
+            toks.pop()
+        if any(re.fullmatch(r"[A-Z]{2,}\d*", t) and t not in COMMON_ACRONYMS for t in toks):
+            name = " ".join(toks)
+            if name not in out:
+                out.append(name)
+    return out
+
+
+def _has_word(text: str, word: str) -> bool:
+    return re.search(r"(?<![A-Za-z])" + re.escape(word) + r"(?![A-Za-z])", text, re.I) is not None
+
+
+def _check_names(source: str, target: str, terms: list[Term]) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    covered: list[str] = []
+    for t in terms:
+        if len(t.source) < 2 or not _has_word(source, t.source):
+            continue
+        covered.append(t.source.lower())
+        if t.target.lower() not in target.lower():
+            out.append(("name", f'"{t.source}" ต้องเขียนว่า "{t.target}" ตาม glossary ของโปรเจกต์'))
+    for name in brand_names(source):
+        if any(name.lower() in c or c in name.lower() for c in covered):
+            continue
+        lost = [w for w in name.split() if not _has_word(target, w)]
+        if lost:
+            out.append(("name", f'ชื่อ "{name}" ถูกถอดเป็นอักษรไทยเอง ให้คงอักษรละติน "{name}" '
+                                f'(หรือเพิ่มคำสะกดที่ถูกใน glossary)'))
+    return out
+
+
+# คำลงท้ายอ่อนลง (นะ ฯลฯ) ต้องมีที่มาในต้นฉบับ คำสุภาพ (ครับ/ค่ะ) ใช้ได้เมื่อระดับภาษาหรือนิสัยผู้พูดเป็นแบบนั้น
+SOFT_PARTICLES = ("นะคะ", "นะครับ", "นะจ๊ะ", "เนอะ", "จ้ะ", "จ้า", "น่ะ", "นะ")
+POLITE_PARTICLES = ("ครับ", "ค่ะ", "คะ")
+_NOT_PARTICLE = ("เจ้า", "ชนะ", "ขณะ", "ฐานะ", "คณะ", "ทัศนะ", "ภาชนะ", "พาหนะ", "มานะ", "ปณะ")
+_SOFT_BASIS = re.compile(
+    r"\?|\b(?:please|pls|let'?s|let us|okay|ok|alright|all right|you know|ya know|y'know|huh|eh|hey|come on|trust me|"
+    r"remember|don'?t forget|promise|honey|sweetie|dear|babe|buddy|bye|goodbye|see you|take care|thanks|thank you|"
+    r"sorry|good ?night|good ?luck|right)\b", re.I)
+_IMPERATIVE = re.compile(
+    r"(?:^|[.!?]\s+)(?:don'?t|do|go|come|wait|look|listen|try|make|take|be|tell|give|check|keep|stop|see|watch|get|let|"
+    r"hold|follow|subscribe|like|click|stay|calm|relax|enjoy|imagine|call|send|write|read|use|start|eat|drink|sit|"
+    r"stand|leave|put|bring|help|show|ask|smile|believe|forget|hurry|run|move|join)\b", re.I)
+_POLITE_BASIS = re.compile(r"\b(?:sir|ma'?am|madam|hello|hi|welcome|good (?:morning|afternoon|evening)|excuse me)\b", re.I)
+_POLITE_HINT = re.compile(r"สุภาพ|ทางการ|ครับ|ค่ะ|polite|formal", re.I)
+
+
+def _end_particles(target: str) -> list[str]:
+    """คำลงท้ายของแต่ละช่วง (คั่นด้วยช่องว่าง/เครื่องหมาย) ที่เป็น particle"""
+    out = []
+    for chunk in re.split(r"[\s!?.,…/\"'“”]+", target or ""):
+        if not chunk or any(chunk.endswith(w) for w in _NOT_PARTICLE):
+            continue
+        for p in SOFT_PARTICLES + POLITE_PARTICLES:
+            if chunk.endswith(p):
+                out.append(p)
+                break
+    return out
+
+
+@dataclass
+class LineContext:
+    """ข้อมูลที่กฎต้องใช้ทั้งชุด: glossary ระดับภาษา นิสัยคำลงท้ายของผู้พูด บรรทัดก่อนหน้า"""
+    terms: list[Term]
+    polite_speakers: set[str]
+    prev: dict[int, Utterance]
+    register: str = ""
+
+
+def line_context(utts: list[Utterance], hints: Optional[dict] = None) -> LineContext:
+    hints = hints or {}
+    order = sorted(utts, key=lambda u: u.start)
+    register = str(hints.get("register") or "")
+    chars = hints.get("characters") or {}
+    names = hints.get("names") or {}
+    polite: set[str] = set()
+    by_spk: dict[str, list[Utterance]] = {}
+    for u in order:
+        if (u.target or "").strip():
+            by_spk.setdefault(u.speaker, []).append(u)
+    for spk, lines in by_spk.items():
+        info = chars.get(spk) or chars.get(names.get(spk, "")) or {}
+        if _POLITE_HINT.search(register) or _POLITE_HINT.search(json.dumps(info, ensure_ascii=False)):
+            polite.add(spk)
+            continue
+        # ผู้พูดลงท้ายสุภาพเกินครึ่งของบท (อย่างน้อย 2 บรรทัด) = สไตล์ของคนนี้ ไม่ใช่เติมเอง
+        n = sum(1 for u in lines if any(p in POLITE_PARTICLES for p in _end_particles(u.target)))
+        if n >= 2 and n * 2 >= len(lines):
+            polite.add(spk)
+    return LineContext(parse_glossary(str(hints.get("glossary") or "")), polite,
+                       {b.id: a for a, b in zip(order, order[1:])}, register)
+
+
+def _check_particles(u: Utterance, ctx: LineContext) -> list[tuple[str, str]]:
+    src = u.source or ""
+    soft_ok = bool(_SOFT_BASIS.search(src) or _IMPERATIVE.search(src.strip()))
+    polite_ok = soft_ok or bool(_POLITE_BASIS.search(src)) or u.speaker in ctx.polite_speakers
+    out: list[tuple[str, str]] = []
+    for p in dict.fromkeys(_end_particles(u.target)):
+        if p in ctx.register:  # ระดับภาษาของเรื่องกำหนดคำลงท้ายนี้ไว้เอง
+            continue
+        soft = p in SOFT_PARTICLES
+        if (soft and not soft_ok) or (not soft and not polite_ok):
+            out.append(("added_word", f'เติม "{p}" ท้ายประโยคเองทั้งที่ต้นฉบับไม่มีน้ำเสียงนี้ ควรตัดออก'))
+    return out
+
+
+def line_flags(u: Utterance, ctx: LineContext) -> list[tuple[str, str]]:
+    """ตรวจบรรทัดเดียว: ตัวเลข ชื่อ คำลงท้ายเกิน ต้นฉบับไม่ชัด → [(kind, reason)]"""
+    if not (u.target or "").strip():
+        return []
+    unclear = unclear_numbers(u, ctx.prev.get(u.id))
+    out = [("unclear_source", f'ต้นฉบับมี "{x}" ลอยอยู่เดี่ยว ๆ อาจถอดเสียงผิดหรือซ้ำ ฟังต้นฉบับแล้วแก้หรือลบ')
+           for x in unclear]
+    out += _check_numbers(u.source, u.target, set(unclear))
+    out += _check_names(u.source, u.target, ctx.terms)
+    out += _check_particles(u, ctx)
+    return out
+
+
+def rule_flags(utts: list[Utterance], hints: Optional[dict] = None, *,
+               ctx: Optional[LineContext] = None) -> dict[int, list[tuple[str, str]]]:
+    """id → [(kind, reason)] จากสำนวนที่รู้ว่าแปลผิดบ่อย + (TRANSLATE_LINE_CHECKS) ตัวเลข ชื่อ คำลงท้ายเกิน ต้นฉบับไม่ชัด
+    ไม่เรียกโมเดล ctx = ข้อมูลทั้งชุด (ส่งมาเมื่อตรวจบางบรรทัดซ้ำ ให้รู้ผู้พูดและบรรทัดก่อนหน้า)"""
     out: dict[int, list[tuple[str, str]]] = {}
+    if settings.translate_line_checks and ctx is None:
+        ctx = line_context(utts, hints)
     for u in utts:
         if not (u.target or "").strip():
             continue
@@ -143,7 +408,16 @@ def rule_flags(utts: list[Utterance]) -> dict[int, list[tuple[str, str]]]:
             found = h.check(u.target)
             if found:
                 out.setdefault(u.id, []).extend(found)
+        if settings.translate_line_checks:
+            for f in line_flags(u, ctx):
+                if f not in out.get(u.id, []):
+                    out.setdefault(u.id, []).append(f)
     return out
+
+
+def uncertain_ids(utts: list[Utterance]) -> list[int]:
+    """บรรทัดที่ยังมีป้ายไม่ได้แก้ (ทุกแหล่ง) = ระบบไม่แน่ใจ ต้องให้เจ้าของงานดูในหน้าตรวจบทก่อนพากย์"""
+    return [u.id for u in utts if any(not f.get("fixed") for f in u.qa_flags or [])]
 
 
 # ---------------------------------------------------------------- แปลทั้งฉาก
@@ -307,9 +581,11 @@ REWRITE_PROMPT_TH = """คุณแก้บทพากย์ไทยเฉพ
 ให้ความหมายตรงต้นฉบับ เป็นภาษาพูดที่คนไทยพูดจริง ไม่แปลทีละคำ คงสรรพนามและชื่อตามบทเดิม
 idioms คือคำอธิบายสำนวนที่ต้องแปลตามความหมาย ความยาวราว target_syllables ห้ามเกิน max_syllables
 before/after คือบทข้างเคียง ไว้ดูบริบท ห้ามแก้หรือใส่ในคำตอบ
+ตัวเลขต้องตรงต้นฉบับทุกตัว (keep_numbers) ชื่อแบรนด์/ชื่อเฉพาะคงอักษรละตินหรือสะกดตาม glossary ทุกตัวอักษร
+ห้ามเติมคำลงท้าย (นะ นะคะ ครับ ค่ะ) ที่ต้นฉบับไม่มีน้ำเสียงนั้น
 ตอบ JSON อย่างเดียว {"lines":[{"id":1,"text":"บทใหม่"}]} เฉพาะ id ที่ส่งมา"""
 
-KINDS = ("meaning", "naturalness")
+KINDS = ("meaning", "naturalness", "number", "name", "added_word")  # โมเดลติดป้าย unclear_source ไม่ได้ (เป็นของกฎ)
 
 
 def _brief(u: Utterance) -> dict:
@@ -347,19 +623,39 @@ def llm_flags(order: list[Utterance], check_cancel: Optional[Callable[[], None]]
     return out
 
 
-def rewrite_flagged(order: list[Utterance], flags: dict[int, list[tuple[str, str]]], hints: dict) -> set[int]:
-    """เขียนใหม่ครั้งเดียวเฉพาะบรรทัดที่ติดป้าย คืน id ที่เปลี่ยนจริง
-    ไม่ใช้คำตอบที่ว่าง / มีอักษรต้นฉบับ / เหมือนเดิม / ยังผิดกฎสำนวน / ยาวเกินงบพยางค์และยาวกว่าเดิม"""
+def _fixable(found: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    return [f for f in found if f[0] not in UNFIXABLE]
+
+
+# น้ำหนักความร้ายแรงเมื่อเทียบบทเดิมกับบทใหม่ (ตัวเลข/ความหมายผิด แย่กว่าคำลงท้ายเกิน)
+SEVERITY = {"meaning": 3, "number": 3, "name": 2, "added_word": 1, "naturalness": 1}
+
+
+def _badness(found: list[tuple[str, str]]) -> int:
+    return sum(SEVERITY.get(k, 1) for k, _ in _fixable(found))
+
+
+def rewrite_flagged(order: list[Utterance], flags: dict[int, list[tuple[str, str]]], hints: dict,
+                    ctx: Optional[LineContext] = None) -> set[int]:
+    """เขียนใหม่ครั้งเดียวเฉพาะบรรทัดที่ติดป้าย โดยบอกปัญหาของบรรทัดนั้นตรง ๆ ใน flags คืน id ที่เปลี่ยนจริง
+    ไม่ใช้คำตอบที่ว่าง / เหมือนเดิม / ยังผิดกฎสำนวน / ยาวเกินงบพยางค์และยาวกว่าเดิม
+    กฎรายบรรทัด (ตัวเลข ชื่อ คำลงท้าย): ผ่านหมด = ใช้บทใหม่ ไม่ผ่านแต่ดีขึ้น (SEVERITY รวมน้อยลง) = ใช้บทใหม่แต่ยังไม่แน่ใจ
+    แย่เท่าเดิมหรือแย่ลง = คงบทเดิม"""
     at = {u.id: i for i, u in enumerate(order)}
     budget = hints.get("budgets") or T.budgets(order)
     flagged = [u for u in order if u.id in flags]
     if not flagged:
         return set()
+    if settings.translate_line_checks and ctx is None:
+        ctx = line_context(order, hints)
     lines = []
     for u in flagged:
         i, sec = at[u.id], budget.get(u.id, u.duration)
+        skip = set(unclear_numbers(u, ctx.prev.get(u.id))) if ctx else set()
+        nums = [x for x in dict.fromkeys(_NUM.findall(u.source or "")) if x not in skip]
         lines.append({**_brief(u), **syllable_budget(sec),
                       "flags": [r for _, r in flags[u.id]],
+                      **({"keep_numbers": nums} if nums else {}),
                       **({"before": _brief(order[i - 1])} if i > 0 else {}),
                       **({"after": _brief(order[i + 1])} if i + 1 < len(order) else {})})
     idioms = idiom_hints([u.source for u in flagged])
@@ -384,6 +680,12 @@ def rewrite_flagged(order: list[Utterance], flags: dict[int, list[tuple[str, str
         if thai_syllables(new) > syllable_budget(sec)["max_syllables"] and thai_syllables(new) > thai_syllables(old):
             log.info("self-check: rewrite of line %d is over the length budget, kept old", u.id)
             continue
+        if ctx is not None:
+            bad_old = _badness(line_flags(u, ctx))
+            bad_new = _badness(line_flags(u.model_copy(update={"target": new}), ctx))
+            if bad_new and bad_new >= bad_old:
+                log.info("self-check: rewrite of line %d is no better on line rules (%s), kept old", u.id, bad_new)
+                continue
         u.target = new
         changed.add(u.id)
     return changed
@@ -391,12 +693,14 @@ def rewrite_flagged(order: list[Utterance], flags: dict[int, list[tuple[str, str
 
 def self_check(utts: list[Utterance], hints: Optional[dict] = None, *, use_llm: bool = True,
                check_cancel: Optional[Callable[[], None]] = None) -> dict[int, list[tuple[str, str]]]:
-    """ตรวจคำแปลเทียบต้นฉบับ (กฎสำนวน + โมเดลถ้า use_llm) → เขียนใหม่เฉพาะบรรทัดที่ติดป้าย 1 รอบ (เฉพาะ use_llm)
+    """ตรวจคำแปลเทียบต้นฉบับ (กฎ + โมเดลถ้า use_llm) → เขียนใหม่เฉพาะบรรทัดที่ติดป้ายที่แก้ได้ 1 รอบ (เฉพาะ use_llm)
     → ตรวจซ้ำด้วยกฎ บันทึกป้ายทุกอันใน qa_flags (fixed = แก้แล้ว) ที่ยังไม่ผ่านขึ้น check_note ให้คนดู
+    unclear_source (ต้นฉบับถอดเสียงไม่ชัด) ไม่ส่งไปแก้ ค้างเป็นไม่แน่ใจเสมอ
     คืน id → ป้ายที่ยังไม่ผ่าน"""
     hints = hints or {}
     order = sorted([u for u in utts if (u.target or "").strip()], key=lambda u: u.start)
-    rules = rule_flags(order)
+    ctx = line_context(order, hints) if settings.translate_line_checks else None
+    rules = rule_flags(order, hints, ctx=ctx)
     flags = {k: list(v) for k, v in rules.items()}
     if use_llm:
         for uid, found in llm_flags(order, check_cancel).items():
@@ -405,24 +709,50 @@ def self_check(utts: list[Utterance], hints: Optional[dict] = None, *, use_llm: 
                     flags[uid].append(f)
     if not flags:
         return {}
+    fixable = {uid: _fixable(found) for uid, found in flags.items() if _fixable(found)}
     cap = max(2, int(len(order) * 0.4))  # ติดป้ายเกิน 40% แปลว่าผู้ตรวจเกินเหตุ แก้แค่ส่วนแรก
-    fix = dict(list(flags.items())[:cap])
+    fix = dict(list(fixable.items())[:cap])
     before = {u.id: u.target for u in order}
-    changed = rewrite_flagged(order, fix, hints) if use_llm else set()
+    changed = rewrite_flagged(order, fix, hints, ctx) if use_llm and fix else set()
     still: dict[int, list[tuple[str, str]]] = {}
     by_id = {u.id: u for u in order}
     for uid, found in flags.items():
         u = by_id[uid]
         # รอบเดียว: บรรทัดที่เขียนใหม่ตรวจซ้ำด้วยกฎเท่านั้น (ไม่เรียกโมเดลอีกรอบ)
-        remaining = rule_flags([u]).get(uid, []) if uid in changed else found
+        remaining = rule_flags([u], hints, ctx=ctx).get(uid, []) if uid in changed else found
         for kind, reason in found:
             origin = "rule" if (kind, reason) in rules.get(uid, []) else "self_check"
             add_flag(u, origin, kind, reason, fixed=uid in changed and (kind, reason) not in remaining,
                      before=before[uid] if uid in changed else "")
+        for kind, reason in remaining:  # บทใหม่มีปัญหาใหม่ที่บทเดิมไม่มี
+            if (kind, reason) not in found:
+                add_flag(u, "rule", kind, reason)
         if remaining:
             still[uid] = remaining
             note_unresolved(u, "ตรวจคำแปล: " + "; ".join(r for _, r in remaining))
     log.info("self-check: %d flagged, %d rewritten, %d still flagged", len(flags), len(changed), len(still))
+    return still
+
+
+def final_gate(utts: list[Utterance], hints: Optional[dict] = None) -> dict[int, list[tuple[str, str]]]:
+    """ก่อนเข้าหน้าตรวจบท (ก่อนแปลงละตินเป็นคำอ่าน): ตรวจกฎรายบรรทัดซ้ำทุกบรรทัด เพราะขั้นเรียบเรียง/ตรวจ/เติมบท
+    หลัง self_check อาจแก้บทอีก ไม่เรียกโมเดล ไม่แก้บท ป้ายที่เคยแก้แล้วแต่กลับมา = ไม่แน่ใจอีกครั้ง"""
+    if not settings.translate_line_checks:
+        return {}
+    order = sorted([u for u in utts if (u.target or "").strip()], key=lambda u: u.start)
+    ctx = line_context(order, hints)
+    still = rule_flags(order, hints, ctx=ctx)
+    for u in order:
+        found = still.get(u.id, [])
+        for kind, reason in found:
+            again = [f for f in u.qa_flags if f.get("reason") == reason[:200]]
+            for f in again:
+                f["fixed"] = False
+            if not again:
+                add_flag(u, "rule", kind, reason)
+        new = [r for _, r in found if r not in (u.check_note or "")]
+        if new:
+            note_unresolved(u, "ตรวจคำแปล: " + "; ".join(new))
     return still
 
 

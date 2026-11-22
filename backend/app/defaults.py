@@ -73,6 +73,9 @@ TRANSLATE_SCENE_GAP_SEC = 4.0  # เงียบนานกว่านี้ =
 TRANSLATE_SCENE_OVERLAP = 2  # บรรทัดจากฉากก่อน/หลังที่ส่งไปเป็นบริบท (ไม่แปลซ้ำ)
 TRANSLATE_SELF_CHECK = False  # True = หลังแปลให้โมเดลตรวจเทียบต้นฉบับ แล้วเขียนใหม่เฉพาะบรรทัดที่ติดป้าย 1 รอบ (เรียกเพิ่มราว 2 ครั้งต่อ 24 บรรทัด)
 TRANSLATE_RULE_FLAGS = True  # ตรวจสำนวนที่รู้ว่าแปลผิดบ่อยด้วยกฎ (ไม่เรียกโมเดล) ติดป้ายอย่างเดียวเมื่อปิด TRANSLATE_SELF_CHECK
+# คุณภาพคำแปลไทย ระยะที่ 2 (translate_quality.line_flags) — ปิดไว้ก่อนจนกว่าจะเทียบกับงานจริง
+TRANSLATE_LINE_CHECKS = False  # True = กฎรายบรรทัด: ตัวเลขต้องคงไว้ ชื่อแบรนด์/glossary คำลงท้าย (นะ/ครับ) ที่เติมเอง ต้นฉบับที่ถอดไม่ชัด
+TRANSLATE_UNCERTAIN_REVIEW = False  # True = งานที่ยังมีบรรทัดไม่แน่ใจ (ป้ายที่ยังไม่ได้แก้) หยุดรอตรวจบทก่อนพากย์ แม้ผู้ใช้ปิดการตรวจบท
 TRANSLATE_IDIOM_HINTS = True  # ส่งคำอธิบายสำนวน/สแลงที่มักแปลผิดไปกับคำขอ เฉพาะบรรทัดที่ต้นฉบับมีสำนวนนั้น
 TRANSLATE_SYLLABLE_BUDGET = False  # True = ส่ง target_syllables/max_syllables ต่อท่อนในเส้นทางแปลเดิมด้วย (โหมดฉากส่งเสมอ)
 THAI_CHARS_PER_SYLLABLE = 2.5  # ตัวอักษรฐานต่อพยางค์ไทยโดยเฉลี่ย → พยางค์/วินาที = THAI_CHARS_PER_SEC / ค่านี้ (12 / 2.5 = 4.8)

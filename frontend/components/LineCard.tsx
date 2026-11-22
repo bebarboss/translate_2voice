@@ -1,12 +1,33 @@
 "use client";
 
 import type { ReactNode, Ref } from "react";
-import type { Utterance } from "@/lib/api";
+import { unsureFlags, type QaFlag, type Utterance } from "@/lib/api";
 import { MOOD_LABEL, fmtTime, speakerColor } from "@/lib/format";
 import { NEW_SPEAKER, isChanged, type Transcript } from "@/lib/useTranscript";
 import { ArrowLeft, MergeIcon, ScissorsIcon, ShuffleIcon, TrashIcon } from "./Icons";
 
 import { tx } from "@/lib/i18n";
+
+const FLAG_LABEL: Record<string, string> = {
+  meaning: "ความหมาย", naturalness: "สำนวน", number: "ตัวเลข", name: "ชื่อเฉพาะ",
+  added_word: "คำเกิน", unclear_source: "ต้นฉบับไม่ชัด",
+};
+
+/** ป้ายตรวจคำแปล: ที่ยังไม่แน่ใจ (สีเตือน) และที่ระบบแก้ให้แล้ว (พร้อมบทเดิม) */
+function QaFlags({ flags }: { flags: QaFlag[] }) {
+  if (!flags.length) return null;
+  return (
+    <ul className="qa-flags" aria-label={tx("ผลตรวจคำแปล")}>
+      {flags.map((f, i) => (
+        <li key={i} className={f.fixed ? "fixed" : "unsure"}>
+          <b>{f.fixed ? tx("แก้ให้แล้ว") : tx("ไม่แน่ใจ")} · {tx(FLAG_LABEL[f.kind] ?? f.kind)}</b>: {f.reason}
+          {f.fixed && f.before && <> — {tx("บทเดิม")}: <s>{f.before}</s></>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** แก้ประโยคเดียว: ตัวละคร บทพากย์ แยกประโยค รวมกับประโยคถัดไป */
 export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onSeek, onFocusText, boxRef, tools, retake }: {
   u: Utterance;
@@ -29,6 +50,12 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
   const showMood = moods.length > 0 || (!!d.mood && d.mood !== "normal");
   // อารมณ์ที่ระบบเลือกไว้ตอนพากย์รอบล่าสุด (แสดงเมื่อบทยังเหมือนตอนที่เลือก)
   const auto = u.mood_auto && u.mood_auto_text === d.target ? u.mood_auto : "";
+  const unsure = changed ? [] : unsureFlags(u);
+  // ป้ายที่แสดงใน QaFlags แล้วไม่ต้องซ้ำใน check_note / unclear_reason (โน้ตอื่น เช่น ยาวเกินเวลา ยังแสดง)
+  const shown = new Set((u.qa_flags ?? []).map((f) => f.reason));
+  const note = (u.check_note || "").split("; ").map((x) => x.replace(/^ตรวจคำแปล: /, ""))
+    .filter((x) => x && !shown.has(x)).join("; ");
+  const reason = shown.size ? "" : u.unclear_reason;
   // ช่องเวลา: ปัดทีละ 0.05 วินาที ไม่ให้สั้นกว่า 0.2 วินาที
   const setTime = (key: "start" | "end", raw: string) => {
     const v = Math.round(Number(raw) * 20) / 20;
@@ -37,7 +64,7 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
     tr.setDraft(u.id, { [key]: v });
   };
   return (
-    <div ref={boxRef} className={`line${active ? " active" : ""}${speaking ? " speaking" : ""}`}>
+    <div ref={boxRef} className={`line${active ? " active" : ""}${speaking ? " speaking" : ""}${unsure.length ? " uncertain" : ""}`}>
       <div className="row" style={{ gap: 8 }}>
         <button type="button" className="time-btn" onClick={() => onSeek(u.start)} aria-label={tx("ไปที่ {0}", { 0: fmtTime(u.start) })}>
           {fmtTime(u.start)}
@@ -70,8 +97,9 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           {u.unclear && (
             <span className="badge warn" title={u.unclear_reason || tx("เพลงดังทับเสียงพูด ถอดเสียงสองรอบแล้วยังไม่มั่นใจ ฟังต้นฉบับแล้วแก้ข้อความถ้าผิด")}>{tx("ถอดไม่ชัด ควรฟัง")}</span>
           )}
-          {!!u.check_note && !changed && <span className="badge warn" title={u.check_note}>{tx("ควรตรวจ")}</span>}
-          {!!u.unclear_reason && !u.unclear && !u.check_note && (
+          {unsure.length > 0 && <span className="badge warn" title={unsure.map((f) => f.reason).join("\n")}>{tx("ระบบไม่แน่ใจ")}</span>}
+          {!!u.check_note && !changed && !unsure.length && <span className="badge warn" title={u.check_note}>{tx("ควรตรวจ")}</span>}
+          {!!u.unclear_reason && !u.unclear && !u.check_note && !unsure.length && (
             <span className="badge warn" title={u.unclear_reason}>{tx("ควรตรวจ")}</span>
           )}
           {!!u.heard && !changed && (
@@ -82,10 +110,11 @@ export default function LineCard({ u, tr, isLast, active, speaking, tooLong, onS
           )}
         </span>
       </div>
-      {(u.check_note || u.unclear_reason || u.heard) && !changed && (
+      {!changed && <QaFlags flags={u.qa_flags ?? []} />}
+      {(note || reason || u.heard) && !changed && (
         <p className="dim" style={{ margin: "2px 0 0", fontSize: 12.5, lineHeight: 1.4 }}>
-          {u.check_note
-            || u.unclear_reason
+          {note
+            || reason
             || (u.heard
               ? tx("ระบบฟังเสียงพากย์แล้วได้ยินว่า: {0}", { 0: u.heard })
                 + (u.heard_score != null ? ` (${Math.round(u.heard_score * 100)}%)` : "")

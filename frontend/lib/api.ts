@@ -330,10 +330,25 @@ export interface Utterance {
   unclear_reason?: string;
   /** ตรวจหลังแปลแล้วควรให้คนดู: เหตุผล */
   check_note?: string;
+  /** ป้ายตรวจคำแปลทุกแหล่ง fixed = ระบบแก้ให้แล้ว (before = บทเดิม) ที่ยังไม่ fixed = ระบบไม่แน่ใจ ต้องให้คนตรวจ */
+  qa_flags?: QaFlag[];
   ref_reading: string;
 }
 
 export type LineMood = Mood | "" | "normal";
+
+export type QaFlagKind = "meaning" | "naturalness" | "number" | "name" | "added_word" | "unclear_source";
+
+export interface QaFlag {
+  origin: "rule" | "self_check" | "verify";
+  kind: QaFlagKind | string;
+  reason: string;
+  fixed: boolean;
+  before?: string;
+}
+
+/** ป้ายที่ระบบยังไม่ได้แก้ = บรรทัดที่ไม่แน่ใจ */
+export const unsureFlags = (u: Pick<Utterance, "qa_flags">): QaFlag[] => (u.qa_flags ?? []).filter((f) => !f.fixed);
 
 export interface UtteranceEdit {
   id: number;

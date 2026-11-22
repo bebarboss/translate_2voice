@@ -233,6 +233,8 @@ class Settings:
     translate_scene_overlap: int = d.TRANSLATE_SCENE_OVERLAP
     translate_self_check: bool = d.TRANSLATE_SELF_CHECK
     translate_rule_flags: bool = d.TRANSLATE_RULE_FLAGS
+    translate_line_checks: bool = d.TRANSLATE_LINE_CHECKS
+    translate_uncertain_review: bool = d.TRANSLATE_UNCERTAIN_REVIEW
     translate_idiom_hints: bool = d.TRANSLATE_IDIOM_HINTS
     translate_syllable_budget: bool = d.TRANSLATE_SYLLABLE_BUDGET
     thai_chars_per_syllable: float = d.THAI_CHARS_PER_SYLLABLE

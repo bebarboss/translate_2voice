@@ -335,6 +335,14 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         fit_lengths(utterances, job.target_lang, max_sp)
         store.save_transcript(job_id, utterances)
         log.info("job %s: filled %d empty targets after translate (refit)", job_id, n_fill)
+    # ด่านสุดท้ายก่อนหน้าตรวจบท: กฎรายบรรทัดซ้ำหลังขั้นเรียบเรียง/ตรวจ/เติมบท (ก่อนแปลงละตินเป็นคำอ่าน ชื่อยังเทียบได้)
+    if job.target_lang == "th" and not translate_mod.same_lang(lang, job.target_lang) and settings.translate_line_checks:
+        from . import translate_quality
+        try:
+            if translate_quality.final_gate(utterances, hints):
+                store.save_transcript(job_id, utterances)
+        except Exception as exc:  # noqa: BLE001  ขั้นเสริม
+            log.warning("final translation gate failed for job %s: %s", job_id, exc)
     # พจนานุกรมคำอ่าน + AI เฉพาะชื่อ/ตัวย่อละตินที่เหลือ (ก่อนหน้าตรวจบท / พากย์)
     if job.target_lang == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
         stage("speak_latin", lo + span * 0.95)
@@ -412,6 +420,18 @@ def _marked_sources(d: Path, utterances: list[Utterance]) -> dict[int, str]:
             out[u.id] = text
     log.info("pause marks in %d of %d lines", len(out), len(utterances))
     return out
+
+
+def uncertain_lines(store: JobStore, job_id: str) -> list[int]:
+    """บรรทัดที่ระบบยังไม่แน่ใจ (TRANSLATE_UNCERTAIN_REVIEW เปิด) งานที่มีต้องหยุดรอตรวจบทก่อนพากย์เสมอ"""
+    if not settings.translate_uncertain_review:
+        return []
+    from . import translate_quality
+    try:
+        return translate_quality.uncertain_ids(store.load_transcript(job_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("uncertain-line check failed for job %s: %s", job_id, exc)
+        return []
 
 
 def run_translate(store: JobStore, job_id: str) -> None:
