@@ -227,6 +227,15 @@ class Settings:
     translate_verify: bool = d.TRANSLATE_VERIFY
     translate_verify_fix: bool = d.TRANSLATE_VERIFY_FIX
     translate_review: bool = d.TRANSLATE_REVIEW
+    translate_scene_mode: bool = d.TRANSLATE_SCENE_MODE
+    translate_scene_max_lines: int = d.TRANSLATE_SCENE_MAX_LINES
+    translate_scene_gap_sec: float = d.TRANSLATE_SCENE_GAP_SEC
+    translate_scene_overlap: int = d.TRANSLATE_SCENE_OVERLAP
+    translate_self_check: bool = d.TRANSLATE_SELF_CHECK
+    translate_rule_flags: bool = d.TRANSLATE_RULE_FLAGS
+    translate_idiom_hints: bool = d.TRANSLATE_IDIOM_HINTS
+    translate_syllable_budget: bool = d.TRANSLATE_SYLLABLE_BUDGET
+    thai_chars_per_syllable: float = d.THAI_CHARS_PER_SYLLABLE
     pause_match: bool = audio.PAUSE_MATCH
     min_pause_sec: float = audio.MIN_PAUSE_SEC
     pause_pack: bool = audio.PAUSE_PACK
