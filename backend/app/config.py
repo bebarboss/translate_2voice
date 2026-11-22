@@ -276,6 +276,13 @@ class Settings:
     loudness_max_cut: float = audio.LOUDNESS_MAX_CUT
     room_reverb: float = audio.ROOM_REVERB
     room_rt60: float = audio.ROOM_RT60
+    room_width: float = audio.ROOM_WIDTH
+    duck: bool = audio.DUCK
+    duck_depth_db: float = audio.DUCK_DEPTH_DB
+    duck_below_db: float = audio.DUCK_BELOW_DB
+    duck_ratio: float = audio.DUCK_RATIO
+    duck_attack_ms: float = audio.DUCK_ATTACK_MS
+    duck_release_ms: float = audio.DUCK_RELEASE_MS
     max_slowdown: float = audio.MAX_SLOWDOWN
     thai_syllables_per_sec: float = audio.THAI_SYLLABLES_PER_SEC
     prosody_match: bool = audio.PROSODY_MATCH

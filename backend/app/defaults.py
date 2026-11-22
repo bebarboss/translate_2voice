@@ -29,7 +29,7 @@ USER_MAX_QUEUED = 10
 # ---------- โมเดล ----------
 SEPARATOR = "roformer"
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
-SEPARATOR_OVERLAP = 2
+SEPARATOR_OVERLAP = 4  # เดิม 2: แต่ละจุดผ่านโมเดล overlap รอบ (4 = ราว 2 เท่าของ 2) แยกสะอาดขึ้น รอยต่อ segment น้อยลง
 DENOISE_MODEL = "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
 DEMUCS_MODEL = "htdemucs"
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"

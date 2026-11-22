@@ -1129,15 +1129,18 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
         bed = mix.nonspeech(orig, orig_sr, speech, total, sr, is_speech) * settings.nonspeech_gain
         _free_vram("transcribe")
     mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60,
-                    gain=rs.voice_gain)
-    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", bgm_gain=rs.bgm_gain)
+                    gain=rs.voice_gain, width=settings.room_width)
+    duck = mix.Duck(settings.duck_depth_db, settings.duck_below_db, settings.duck_ratio,
+                    settings.duck_attack_ms, settings.duck_release_ms) if settings.duck else None
+    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", bgm_gain=rs.bgm_gain, duck=duck)
     if timeline is not None:  # ไม่มีวิดีโอ: เก็บเสียงพากย์แยกผู้พูดไว้ส่งออก (timeline/exporter.py)
         subs.write_srt(utterances, d / "subtitles.srt")
         dub = d / "timeline" / "dub"
         dub.mkdir(parents=True, exist_ok=True)
         for s in {_group_speaker(g) for g in groups}:
             mine = [c for c, g in zip(clips, groups) if _group_speaker(g) == s]
-            mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60)
+            mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60,
+                            width=settings.room_width)
         _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
         _remember(store, job_id, utterances)
         return
