@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/useAuth";
 import { BrandLink } from "@/components/Brand";
 import { XIcon } from "@/components/Icons";
 import Prefs from "@/components/Prefs";
-import { tx } from "@/lib/i18n";
+import { getLang, tx } from "@/lib/i18n";
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
 type CredentialResponse = { credential: string };
 type GoogleId = {
@@ -87,6 +87,22 @@ function Showcase({ bonus }: { bonus: number }) {
   );
 }
 
+/** ธีมที่แสดงอยู่จริง (data-theme ที่ผู้ใช้เลือก หรือตามเครื่องเมื่อเลือก "อัตโนมัติ") เปลี่ยนเมื่อสลับธีมโดยไม่โหลดหน้าใหม่ */
+function useDarkTheme(): boolean {
+  const [dark, setDark] = useState(true);
+  useEffect(() => {
+    const root = document.documentElement;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const read = () => setDark(root.dataset.theme ? root.dataset.theme === "dark" : media.matches);
+    read();
+    const watch = new MutationObserver(read);
+    watch.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    media.addEventListener("change", read);
+    return () => { watch.disconnect(); media.removeEventListener("change", read); };
+  }, []);
+  return dark;
+}
+
 /** หน้าที่จะกลับไปหลังล็อกอิน (เฉพาะในเว็บนี้) */
 function nextPath(): string {
   const next = new URLSearchParams(window.location.search).get("next") ?? "/dashboard";
@@ -115,9 +131,10 @@ export default function LoginPage() {
   }, [config?.billing]);
 
   const clientId = config?.google_client_id ?? "";
+  const dark = useDarkTheme();
+  const [gsi, setGsi] = useState<GoogleId | null>(null);
   useEffect(() => {
-    if (!clientId || !button.current) return;
-    const el = button.current;
+    if (!clientId) return;
     loadGsi().then((gid) => {
       gid.initialize({
         client_id: clientId,
@@ -136,12 +153,20 @@ export default function LoginPage() {
           }
         },
       });
-      gid.renderButton(el, {
-        theme: "outline", size: "large", shape: "pill", locale: "th",
-        text: signup ? "signup_with" : "signin_with", width: 320,
-      });
+      setGsi(gid);
     }).catch(() => setError(tx("โหลดปุ่ม Google ไม่ได้ ตรวจการเชื่อมต่อแล้วรีเฟรชหน้า")));
-  }, [clientId, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
+  }, [clientId]);
+
+  // วาดปุ่มใหม่ทุกครั้งที่สลับธีม: ธีมมืดใช้ปุ่มดำของ Google ธีมสว่างใช้ปุ่มขอบ
+  useEffect(() => {
+    const el = button.current;
+    if (!gsi || !el) return;
+    el.replaceChildren();
+    gsi.renderButton(el, {
+      theme: dark ? "filled_black" : "outline", size: "large", shape: "pill", locale: getLang(),
+      text: signup ? "signup_with" : "signin_with", width: 320,
+    });
+  }, [gsi, dark, signup, loaded]); // loaded: กล่องปุ่มเพิ่งมีหลังหน้าโหลดเสร็จ
 
   let body: React.ReactNode;
   if (!loaded) body = <div className="empty">{tx("กำลังโหลด...")}</div>;

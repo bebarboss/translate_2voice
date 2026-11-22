@@ -1564,4 +1564,9 @@ export const EN: Record<string, string> = {
   "{n} นาทีที่แล้ว": "{n} min ago",
   "{n} ชั่วโมงที่แล้ว": "{n} h ago",
   "{n} วันที่แล้ว": "{n} d ago",
+  "เทียบเสียงต้นฉบับกับเสียงที่พากย์ไทยแล้ว": "Compare the original audio with the Thai dub",
+  "ก่อนพากย์": "Before",
+  "หลังพากย์": "After",
+  "เอกสารทางกฎหมาย": "Legal",
+  "ฟังตัวอย่างงานพากย์": "Listen to samples",
 };
