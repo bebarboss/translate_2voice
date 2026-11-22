@@ -285,6 +285,14 @@ def _glossary(hints: dict) -> list[str]:
     return [line.strip() for line in (hints.get("glossary") or "").splitlines() if line.strip()][:60]
 
 
+GLOSS_NOTE = re.compile(r"\s+#(?:\s.*)?$")
+
+
+def gloss_target(dst: str) -> str:
+    """ส่วนคำแปลของบรรทัด glossary "ต้นฉบับ = คำแปล # หมายเหตุ" (หมายเหตุไม่บังคับ ตัดออกก่อนเทียบ)"""
+    return GLOSS_NOTE.sub("", dst or "").strip()
+
+
 def _parse_json(text: str) -> dict:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
@@ -1744,7 +1752,7 @@ def _glossary_misses(hints: dict) -> dict[int, str]:
     out: dict[int, str] = {}
     for line in _glossary(hints):
         src, _, dst = line.partition("=")
-        src, dst = src.strip().lower(), dst.strip().lower()
+        src, dst = src.strip().lower(), gloss_target(dst).lower()
         if len(src) < 2 or not dst:
             continue
         for g in hints["sentences"]:

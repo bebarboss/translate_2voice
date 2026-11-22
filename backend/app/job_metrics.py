@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -408,7 +409,7 @@ def translate_fidelity(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
             if "=" not in line:
                 continue
             src_g, _, dst_g = line.partition("=")
-            src_g, dst_g = src_g.strip().lower(), dst_g.strip().lower()
+            src_g, dst_g = src_g.strip().lower(), re.sub(r"\s+#(?:\s.*)?$", "", dst_g).strip().lower()
             if len(src_g) < 2 or not dst_g:
                 continue
             for u in utts:
@@ -633,7 +634,7 @@ def term_consistency(job_dir: Path, utts: list[Utterance]) -> dict[str, Any]:
         if "=" not in line:
             continue
         src, _, dst = line.partition("=")
-        src, dst = src.strip(), dst.strip()
+        src, dst = src.strip(), re.sub(r"\s+#(?:\s.*)?$", "", dst).strip()  # "# หมายเหตุ" ท้ายบรรทัด
         if len(src) < 2 or len(dst) < 1:
             continue
         key = _norm_token(src)

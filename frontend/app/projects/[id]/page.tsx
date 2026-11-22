@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import GlossaryEditor from "@/components/GlossaryEditor";
 import JobCard from "@/components/JobCard";
 import { ArrowLeft, PlusIcon, TrashIcon } from "@/components/Icons";
 import { api, type Job, type LibraryVoice, type Project, type ProjectCharacter, type ProjectMemory, type TargetLang } from "@/lib/api";
@@ -171,9 +172,9 @@ export default function ProjectPage() {
           </div>
         </div>
         <div className="field">
-          <label htmlFor="pf-gloss">{tx("ชื่อเฉพาะ (บรรทัดละคำ)")}</label>
-          <textarea id="pf-gloss" className="textarea" rows={4} maxLength={4000} placeholder={tx("ドラえもん = โดราเอมอน\nのび太 = โนบิตะ")}
-            value={form.glossary} onChange={(e) => setForm({ ...form, glossary: e.target.value })} />
+          <label htmlFor="pf-gloss">{tx("ชื่อเฉพาะและคำสะกด (glossary)")}</label>
+          <span className="dim">{tx("ชื่อคน แบรนด์ และศัพท์ที่ต้องสะกดแบบเดียวทุกตอน ผู้แปลใช้ตามนี้ และระบบติดป้ายบรรทัดที่สะกดไม่ตรง")}</span>
+          <GlossaryEditor id="pf-gloss" value={form.glossary} onChange={(glossary) => setForm((f) => ({ ...f, glossary }))} />
         </div>
         {dirty && (
           <button type="button" className="btn primary small" style={{ alignSelf: "flex-start" }} disabled={!!busy || !form.name.trim()}
