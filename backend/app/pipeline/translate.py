@@ -604,12 +604,16 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     else:
         around = {"previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context]}
     issues = hints.get("issues") or {}
+    from . import translate_quality as Q  # วนกันถ้า import ที่หัวไฟล์
+    idioms = Q.idiom_hints([u.source for g in groups for u in g]) if target == "th" else []
+    syllables = target == "th" and settings.translate_syllable_budget
     payload = {
         "title": title,
         **({"content_type": hints["content_type"]} if hints.get("content_type") else {}),
         **({"examples": examples} if examples else {}),
         **({"genre": hints["genre"]} if hints.get("genre") else {}),
         **({"glossary": glossary} if glossary else {}),
+        **({"idioms": idioms} if idioms else {}),
         **({"register": hints["register"]} if hints.get("register") else {}),
         **({"characters": {_speaker_label(sp, hints): info for sp, info in hints["characters"].items()
                            if any(sp == g[0].speaker for g in groups)}} if hints.get("characters") else {}),
@@ -622,6 +626,7 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
+                                  **(Q.syllable_budget(budget.get(u.id, u.duration)) if syllables else {}),
                                   "text": (hints.get("marked") or {}).get(u.id, u.source),
                                   **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {}),
                                   **({"previous_translation": fixed[u.id]} if u.id in fixed else {})}
@@ -636,7 +641,8 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
             "One translated string per source part, in order — each part only from that part's text; never move numbers/names across parts.\n"
             'Reply as {"sentences":[{"id":1,"parts":["part 1","part 2"]}]}\n\n'
             + json.dumps(payload, ensure_ascii=False))
-    return SYSTEM_PROMPT_TH + (SAME_LANG_RULE_TH if same else ""), (
+    extra = (Q.LENGTH_RULE_TH if syllables else "") + (Q.IDIOM_RULE_TH if idioms else "")
+    return SYSTEM_PROMPT_TH + (SAME_LANG_RULE_TH if same else "") + extra, (
         "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines และ next_lines คือบทก่อนหน้าและถัดไป ไว้ดูบริบท ห้ามแปลซ้ำหรือใส่ในคำตอบ) "
         "ตอบ parts ให้ครบหนึ่งต่อหนึ่งตามลำดับ — แต่ละท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามย้ายตัวเลข/ชื่อ/ใจความข้ามท่อน\n"
         'ตอบรูปแบบ {"sentences":[{"id":1,"parts":["ท่อนที่ 1","ท่อนที่ 2"]}]}\n\n'
@@ -1080,6 +1086,11 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
             u.target = _translate_local(u.source)
             if on_progress:
                 on_progress((i + 1) / len(utts))
+        return
+
+    if settings.translate_scene_mode and target == "th" and not same_lang(lang, target):
+        from . import translate_quality as Q
+        Q.translate_scenes(hints["sentences"], lang, title, hints, on_progress, check_cancel)
         return
 
     done = 0

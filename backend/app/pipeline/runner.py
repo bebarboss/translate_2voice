@@ -271,6 +271,20 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     _free_vram("translate")
     store.save_transcript(job_id, utterances)
 
+    # ตรวจตัวเองก่อนย่อบท: เขียนใหม่เฉพาะบรรทัดที่ติดป้าย (โมเดล 1 รอบ) หรือกฎสำนวนติดป้ายอย่างเดียว
+    if job.target_lang == "th" and not translate_mod.same_lang(lang, job.target_lang):
+        from . import translate_quality
+        use_llm = settings.translate_self_check and not settings.mock_pipeline and bool(settings.llm_api_key or settings.typhoon_api_key)
+        if use_llm or settings.translate_rule_flags:
+            stage("verify_translation", lo + span * 0.78)  # ใช้ชื่อขั้นเดิม หน้าเว็บมีป้ายอยู่แล้ว
+            try:
+                translate_quality.self_check(utterances, hints, use_llm=use_llm, check_cancel=cancel)
+                store.save_transcript(job_id, utterances)
+            except Cancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001  ขั้นเสริม ล้มก็ใช้บทที่แปลไว้
+                log.warning("self-check failed for job %s: %s", job_id, exc)
+
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
@@ -292,6 +306,8 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         stage("verify_translation", lo + span * 0.88)
         try:  # ขั้นเสริม ล้ม/ยกเลิกไม่ได้ทำให้งานล้ม ใช้บทที่แปลไว้แล้ว
             still = translate_mod.verify_translation(utterances, lang, job.target_lang, max_sp, title, hints, cancel)
+            from . import translate_quality
+            translate_quality.record_verify_flags(utterances, still)
             for u in utterances:
                 if u.id in still:
                     u.check_note = f"{u.check_note}; {still[u.id]}".strip("; ") if u.check_note else still[u.id]
@@ -404,7 +420,7 @@ def run_translate(store: JobStore, job_id: str) -> None:
     job = store.get(job_id)
     utterances = hallucination.clean(store.load_transcript(job_id))
     for u in utterances:
-        u.target, u.check_note = "", ""
+        u.target, u.check_note, u.qa_flags = "", "", []
     _translate_and_fit(store, job_id, utterances, job.detected_lang or job.source_lang or "", 0.0, 1.0)
 
 
