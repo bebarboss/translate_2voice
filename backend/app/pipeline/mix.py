@@ -5,6 +5,7 @@ import math
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -112,11 +113,14 @@ def match_loudness(clips: list[tuple[float, np.ndarray]], spans: list[tuple[floa
     return out
 
 
-def room(track: np.ndarray, sr: int, wet: float = 0.2, rt60: float = 0.4, seed: int = 0) -> np.ndarray:
+def room(track: np.ndarray, sr: int, wet: float = ac.ROOM_REVERB, rt60: float = ac.ROOM_RT60, seed: int = 0,
+         width: float = ac.ROOM_WIDTH) -> np.ndarray:
     """ใส่เสียงก้องของห้องแบบสเตอริโอ คืนเสียง 2 ช่อง (n, 2)
 
     TTS ให้เสียงแห้งเหมือนอัดในห้องเก็บเสียง ส่วนเสียงพูดในหนังมีเสียงก้องของฉากติดมา เสียงพากย์จึงฟังลอยไม่เข้ากับฉาก
-    สร้างเสียงก้องจากสัญญาณสุ่มที่ค่อย ๆ จางลง (rt60 วินาทีจางไป 60 dB) ซ้ายขวาไม่เหมือนกัน เสียงจึงกว้างแบบห้องจริง
+    สร้างเสียงก้องจากสัญญาณสุ่มที่ค่อย ๆ จางลง (rt60 วินาทีจางไป 60 dB)
+    width: สัดส่วนหางเสียงก้องที่ซ้าย/ขวาต่างกัน (0 = เหมือนกัน เสียงอยู่กลาง, 1 = ต่างกันทั้งหมดแบบเดิม)
+    ค่าเริ่มต้นใส่บาง ๆ (wet ต่ำ หางสั้น กว้างเล็กน้อย): F5-TTS โคลนก้องจาก ref มาแล้ว ใส่มากจะขุ่นและเสียงพูดไม่อยู่กลาง
     ตัดย่านเสียงสูงของหางเสียงก้องลง เพราะผนังห้องดูดเสียงแหลมมากกว่าเสียงทุ้ม
     """
     from scipy.signal import fftconvolve, lfilter
@@ -129,9 +133,12 @@ def room(track: np.ndarray, sr: int, wet: float = 0.2, rt60: float = 0.4, seed: 
     t = np.arange(n) / sr
     decay = 10 ** (-3 * t / rt60)  # -60 dB ที่ rt60
     pre = int(sr * 0.012)  # เสียงสะท้อนแรกมาหลังเสียงตรงเล็กน้อย
+    w = float(np.clip(width, 0.0, 1.0))
+    common = rng.standard_normal(n)
     out = np.empty_like(dry)
     for ch in range(2):
-        ir = rng.standard_normal(n) * decay
+        noise = np.sqrt(1 - w * w) * common + w * rng.standard_normal(n)
+        ir = noise * decay
         ir = lfilter([0.6], [1, -0.4], ir)  # low-pass ขั้นเดียว ราว 3.5 kHz ที่ 24 kHz
         ir = np.concatenate([np.zeros(pre), ir])
         ir /= np.sqrt(np.sum(ir ** 2))
@@ -140,10 +147,10 @@ def room(track: np.ndarray, sr: int, wet: float = 0.2, rt60: float = 0.4, seed: 
 
 
 def place_clips(clips: list[tuple[float, np.ndarray]], total_sec: float, sr: int, out_wav: Path,
-                bed: Optional[np.ndarray] = None, reverb: float = 0.0, rt60: float = 0.4,
-                gain: float = 1.0) -> Path:
+                bed: Optional[np.ndarray] = None, reverb: float = 0.0, rt60: float = ac.ROOM_RT60,
+                gain: float = 1.0, width: float = ac.ROOM_WIDTH) -> Path:
     """bed: เสียงที่ปูไว้ใต้เสียงพากย์ (เสียงร้องหรืออุทานของต้นฉบับ ซึ่งมีเสียงก้องของฉากอยู่แล้ว)
-    reverb: ความดังเสียงก้องที่ใส่ให้เสียงพากย์ (0 = ไม่ใส่)
+    reverb: ความดังเสียงก้องที่ใส่ให้เสียงพากย์ (0 = ไม่ใส่) width: ความกว้างซ้ายขวาของหางเสียงก้อง (ดู room)
     gain: ระดับเสียงพากย์ (voice_gain) คูณก่อนเขียนไฟล์
 
     เขียนเป็น WAV float32 และไม่ตัดที่ ±1: เสียงก้อง เสียง bed และประโยคที่ซ้อนกันทำให้ peak เกิน 1 ได้
@@ -155,7 +162,7 @@ def place_clips(clips: list[tuple[float, np.ndarray]], total_sec: float, sr: int
         b = min(len(track), a + len(audio))
         if b > a:
             track[a:b] += audio[: b - a]
-    out = room(track, sr, reverb, rt60)[:n]
+    out = room(track, sr, reverb, rt60, width=width)[:n]
     if bed is not None:
         out[: len(bed)] += bed[: len(out), None]
     if gain != 1.0:
@@ -205,20 +212,82 @@ def loudnorm(src: Path, out_wav: Path, i: float = ac.LOUDNORM_I, tp: float = ac.
     return True
 
 
+@dataclass(frozen=True)
+class Duck:
+    """ลดเพลงประกอบลงตอนเสียงพากย์ดัง (ค่าใน audio_constants.DUCK_*)"""
+    depth_db: float = ac.DUCK_DEPTH_DB
+    below_db: float = ac.DUCK_BELOW_DB
+    ratio: float = ac.DUCK_RATIO
+    attack_ms: float = ac.DUCK_ATTACK_MS
+    release_ms: float = ac.DUCK_RELEASE_MS
+
+
+def active_level_db(wav: Path, frame: float = 0.05) -> float | None:
+    """ความดังเฉลี่ยของไฟล์เฉพาะช่วงที่มีเสียง (dBFS แบบ emotion.active_db) อ่านทีละก้อน ไม่โหลดทั้งไฟล์
+    คืน None ถ้าเงียบทั้งไฟล์"""
+    info = sf.info(wav)
+    hop = max(1, int(info.samplerate * frame))
+    ms = []
+    for block in sf.blocks(wav, blocksize=hop * 400, dtype="float32", always_2d=True):
+        x = block.mean(axis=1)
+        f = len(x) // hop
+        if f:
+            ms.append((x[: f * hop].reshape(f, hop) ** 2).mean(axis=1))
+    if not ms:
+        return None
+    rms = np.sqrt(np.concatenate(ms))
+    if len(rms) < 3 or rms.max() <= 1e-5:
+        return None
+    on = rms[rms > 0.1 * np.percentile(rms, 95)]
+    return float(10 * np.log10(np.mean(on ** 2) + 1e-12))
+
+
+_SC_MIN_DB = 20 * math.log10(0.000976563)  # threshold ต่ำสุดที่ sidechaincompress รับ (-60.2 dB)
+
+
+def duck_filter(voice_db: float, duck: Duck) -> str:
+    """ตัวกรอง sidechaincompress สำหรับ bgm ([bgm][เสียงพากย์] → bgm ที่ลดลงตอนมีเสียงพูด)
+
+    threshold ตั้งจากความดังของเสียงพากย์ในคลิปนี้ (voice_db - below_db) จึงลดเพลงเท่ากันทั้งคลิปที่ต้นฉบับพูดเบาและดัง
+    ratio สูงทำให้ลดเต็มที่ตั้งแต่พูดเบา ๆ แล้ว mix จำกัดความลึกไว้ที่ depth_db: gain = mix*g + (1-mix) ≥ 1-mix
+    ระหว่างพูดเพลงจึงลดเกือบคงที่ ไม่กระเพื่อมตามพยางค์ detection=rms + release ยาวกว่าช่องว่างระหว่างคำ"""
+    thr_db = min(0.0, max(_SC_MIN_DB, voice_db - duck.below_db))
+    mix_amt = 1 - 10 ** (-max(0.0, duck.depth_db) / 20)
+    return (f"sidechaincompress=threshold={10 ** (thr_db / 20):.6f}:ratio={duck.ratio:g}:"
+            f"attack={duck.attack_ms:g}:release={duck.release_ms:g}:knee=2.82843:"
+            f"detection=rms:link=maximum:makeup=1:mix={mix_amt:.4f}")
+
+
+def mix_graph(has_bgm: bool, bgm_gain: float = 1.0, duck_af: str = "") -> str:
+    """filter_complex ของขั้นผสม (ไม่มีป้ายขาออก ต่อ [out] เอง)
+    [0:a] เสียงพากย์, [1:a] เพลงประกอบ, duck_af: ตัวกรอง ducking (ว่าง = ไม่ลดเพลง)"""
+    voice = f"[0:a]aresample={MIX_SR},aformat=channel_layouts=stereo"
+    if not has_bgm:
+        return voice
+    bgm = f"[1:a]aresample={MIX_SR},aformat=channel_layouts=stereo,volume={bgm_gain}"
+    if not duck_af:
+        return f"{voice}[v];{bgm}[b];[v][b]amix=inputs=2:duration=longest:normalize=0"
+    # เสียงพากย์แยกเป็นสองสาย: สายหนึ่งผสม อีกสายคุม sidechain (apad: ถ้าเสียงพากย์สั้นกว่าเพลง ให้ท้ายเพลงไม่ถูกตัด)
+    return (f"{voice},asplit=2[v][sc0];[sc0]apad[sc];{bgm}[b0];[b0][sc]{duck_af}[b];"
+            "[v][b]amix=inputs=2:duration=longest:normalize=0")
+
+
 def mix_tracks(voice_wav: Path, bgm_wav: Optional[Path], out_wav: Path, bgm_gain: float = 1.0,
-               normalize: bool = ac.LOUDNORM) -> Path:
+               normalize: bool = ac.LOUDNORM, duck: Duck | None = Duck()) -> Path:
     """ผสมเสียงพากย์ (ใส่ voice_gain มาแล้วใน place_clips) กับเพลงประกอบ แล้วปรับความดังรวม
 
+    duck: ลดเพลงลงตอนเสียงพากย์ดัง (None = ไม่ลด) กลบเสียงพูดภาษาเดิมที่หลงเหลือใน bgm
     เขียนผลเป็น WAV float32 ระหว่างทาง ไม่ตัดแข็ง ขั้นสุดท้ายใช้ loudnorm 2 รอบ (audio_constants.LOUDNORM_*)
     ถ้าปิดหรือวัดไม่ได้ ใช้ alimiter กันแตกแบบเดิม"""
-    voice = f"[0:a]aresample={MIX_SR},aformat=channel_layouts=stereo[v]"
-    if bgm_wav and bgm_wav.exists():
-        inputs = ["-i", voice_wav, "-i", bgm_wav]
-        graph = (f"{voice};[1:a]aresample={MIX_SR},aformat=channel_layouts=stereo,volume={bgm_gain}[b];"
-                 "[v][b]amix=inputs=2:duration=longest:normalize=0")
-    else:
-        inputs = ["-i", voice_wav]
-        graph = voice.replace("[v]", "")
+    has_bgm = bool(bgm_wav and bgm_wav.exists())
+    duck_af = ""
+    if has_bgm and duck is not None and duck.depth_db > 0:
+        voice_db = active_level_db(voice_wav)
+        if voice_db is not None:
+            duck_af = duck_filter(voice_db, duck)
+            log.info("duck bgm: voice %.1f dBFS, %s", voice_db, duck_af)
+    inputs = ["-i", voice_wav, "-i", bgm_wav] if has_bgm else ["-i", voice_wav]
+    graph = mix_graph(has_bgm, bgm_gain, duck_af)
     with tempfile.TemporaryDirectory() as tmp:
         premix = Path(tmp) / "premix.wav"
         run(["ffmpeg", "-y", *inputs, "-filter_complex", f"{graph}[out]",
