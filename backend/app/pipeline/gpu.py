@@ -475,11 +475,13 @@ def synthesize_core(vocals: Path, lines: list[dict], steps: int, speed: float, r
 
 
 # ================================================================ ฝั่ง Modal (modal_app.py เรียก)
-def _flac(src: Path, sr: int) -> bytes:
-    """แปลงไฟล์เสียงเป็น FLAC mono (ไฟล์เล็กกว่า WAV ราวครึ่ง ไม่เสียคุณภาพ)"""
+def _flac(src: Path, sr: int, channels: int = 1) -> bytes:
+    """แปลงไฟล์เสียงเป็น FLAC (ไฟล์เล็กกว่า WAV ราวครึ่ง ไม่เสียคุณภาพ)
+    channels: 1 = รวมเป็น mono (เสียงพูดที่ใช้ทำ ASR/ref), 2 = คงสเตอริโอ (เสียงผสมก่อนแยก และเพลงประกอบ)
+    รวมเป็น mono ก่อนแยกเสียงทำให้ภาพเสียงสเตอริโอหายทั้งคลิปและตัวแยกเสียงทำงานแย่ลง"""
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "audio.flac"
-        audio.run(["ffmpeg", "-y", "-i", src, "-ac", 1, "-ar", sr, "-c:a", "flac", out])
+        audio.run(["ffmpeg", "-y", "-i", src, "-ac", channels, "-ar", sr, "-c:a", "flac", out])
         return out.read_bytes()
 
 
@@ -511,7 +513,7 @@ def serve_analyze(audio_flac: bytes, source_lang: Optional[str], num_speakers: O
         features = features_core(res["utterances"], res["vocals"], res["lang"])
         return {
             "vocals_flac": _flac(res["vocals"], SOURCE_SR),
-            "bgm_flac": _flac(res["bgm"], SOURCE_SR),
+            "bgm_flac": _flac(res["bgm"], SOURCE_SR, 2),
             "turns": [t.__dict__ for t in res["turns"]],
             "words": [w.__dict__ for w in res["words"]],
             "detected_lang": res["lang"],
@@ -652,14 +654,14 @@ def _analyze_fast_config() -> Optional[dict]:
     return {"whisper_model": model}
 
 
-def _flac_slice(src: Path, start: float, end: float, sr: int = SOURCE_SR) -> bytes:
-    """ตัดช่วงเสียงเป็น FLAC mono สำหรับส่ง Modal"""
+def _flac_slice(src: Path, start: float, end: float, sr: int = SOURCE_SR, channels: int = 2) -> bytes:
+    """ตัดช่วงเสียงเป็น FLAC สำหรับส่ง Modal (ค่าเริ่มต้นสเตอริโอ: ชิ้นนี้คือเสียงผสมก่อนแยกเสียง)"""
     dur = max(0.05, end - start)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "audio.flac"
         audio.run([
             "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}",
-            "-i", src, "-ac", "1", "-ar", sr, "-c:a", "flac", out,
+            "-i", src, "-ac", channels, "-ar", sr, "-c:a", "flac", out,
         ])
         return out.read_bytes()
 
@@ -796,9 +798,9 @@ def _analyze_chunked_local(
                 "recheck": res.get("recheck"),
             })
             v, vsr = _mono(res["vocals"])
-            b, bsr = _mono(res["bgm"])
+            b, bsr = sf.read(res["bgm"], dtype="float32", always_2d=True)  # เพลงประกอบคงสเตอริโอ
             vocals_parts.append((win, v[:, None], vsr))
-            bgm_parts.append((win, b[:, None], bsr))
+            bgm_parts.append((win, b, bsr))
     finally:
         if fast and "whisper_model" in fast:
             object.__setattr__(settings, "whisper_model", old_whisper)
@@ -842,7 +844,7 @@ def analyze(mixed: Path, work: Path, source_lang: Optional[str], num_speakers: O
         return analyze_core(mixed, work, source_lang, num_speakers, stage, preseparated=preseparated)
 
     stage("transcribe" if preseparated else "separate_vocals", 0.1)
-    data = _flac(mixed, SOURCE_SR)
+    data = _flac(mixed, SOURCE_SR, 2)
     log.info("analyze on Modal: upload %.1f MB%s", len(data) / 1e6, " (preseparated)" if preseparated else "")
     # ส่ง preseparated เฉพาะตอนเปิด — ฟังก์ชันบน Modal รุ่นก่อนไม่รู้จักค่านี้
     kwargs = {"preseparated": True} if preseparated else {}
@@ -901,7 +903,7 @@ def prepare_voice(raw: Path, work: Path, stage: Stage, denoise: bool = False) ->
         return clean_voice(raw, work, stage, denoise)
     # ส่ง denoise เฉพาะตอนเปิด ฟังก์ชันบน Modal รุ่นก่อนหน้าไม่รู้จักค่านี้
     kwargs = {"voice_ref": True, **({"denoise": True} if denoise else {})}
-    [res] = _run("analyze_audio", [((_flac(raw, SOURCE_SR), "th", None), kwargs)], _follow(stage))
+    [res] = _run("analyze_audio", [((_flac(raw, SOURCE_SR, 2), "th", None), kwargs)], _follow(stage))
     wav, sr = _decode(res["ref_flac"])
     emb = None if res["emb"] is None else np.asarray(res["emb"], dtype=np.float32)
     return {"wav": wav, "sr": sr, "text": res["text"], "pitch_hz": res["pitch_hz"], "quality": res["quality"],
