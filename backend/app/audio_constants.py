@@ -60,3 +60,9 @@ PROSODY_MAX_RANGE = 1.3
 # --- ระดับผสมสุดท้าย (ค่าเริ่มต้นหน้าตั้งค่า) ---
 VOICE_GAIN = 1.0
 BGM_GAIN = 1.0
+
+# --- ความดังรวมของไฟล์สุดท้าย (loudnorm 2 รอบ, EBU R128) ---
+LOUDNORM = True        # False = ใช้ alimiter 0.95 แบบเดิม
+LOUDNORM_I = -16.0     # LUFS integrated (-14 สำหรับโซเชียลที่ต้องการดังขึ้น)
+LOUDNORM_TP = -1.5     # dBTP เพดาน true-peak กันเพี้ยนหลังเข้ารหัส AAC
+LOUDNORM_LRA = 11.0    # LU

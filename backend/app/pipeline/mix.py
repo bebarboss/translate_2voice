@@ -1,11 +1,20 @@
 """วางเสียงพากย์ตามเวลา ผสมกับเพลงเดิม รวมกลับเข้าวิดีโอ และทำซับไตเติล"""
+import json
+import logging
+import math
+import re
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 import soundfile as sf
 
+from .. import audio_constants as ac
 from .audio import h264_video_args, run
+
+log = logging.getLogger("dubbing.mix")
 
 
 def _loud_runs(x: np.ndarray, sr: int, level: float = 0.02, min_len: float = 0.2,
@@ -131,9 +140,14 @@ def room(track: np.ndarray, sr: int, wet: float = 0.2, rt60: float = 0.4, seed: 
 
 
 def place_clips(clips: list[tuple[float, np.ndarray]], total_sec: float, sr: int, out_wav: Path,
-                bed: Optional[np.ndarray] = None, reverb: float = 0.0, rt60: float = 0.4) -> Path:
+                bed: Optional[np.ndarray] = None, reverb: float = 0.0, rt60: float = 0.4,
+                gain: float = 1.0) -> Path:
     """bed: เสียงที่ปูไว้ใต้เสียงพากย์ (เสียงร้องหรืออุทานของต้นฉบับ ซึ่งมีเสียงก้องของฉากอยู่แล้ว)
-    reverb: ความดังเสียงก้องที่ใส่ให้เสียงพากย์ (0 = ไม่ใส่)"""
+    reverb: ความดังเสียงก้องที่ใส่ให้เสียงพากย์ (0 = ไม่ใส่)
+    gain: ระดับเสียงพากย์ (voice_gain) คูณก่อนเขียนไฟล์
+
+    เขียนเป็น WAV float32 และไม่ตัดที่ ±1: เสียงก้อง เสียง bed และประโยคที่ซ้อนกันทำให้ peak เกิน 1 ได้
+    ถ้าตัดแข็งตรงนี้เสียงจะแตกถาวร (ลด voice_gain ทีหลังก็ไม่หาย) ปล่อยให้ขั้นผสมสุดท้ายคุมความดังและ true-peak แทน"""
     n = int(total_sec * sr)
     track = np.zeros(n + sr, dtype=np.float32)
     for start, audio in clips:
@@ -144,21 +158,74 @@ def place_clips(clips: list[tuple[float, np.ndarray]], total_sec: float, sr: int
     out = room(track, sr, reverb, rt60)[:n]
     if bed is not None:
         out[: len(bed)] += bed[: len(out), None]
-    sf.write(out_wav, np.clip(out, -1.0, 1.0), sr)
+    if gain != 1.0:
+        out *= gain
+    sf.write(out_wav, out.astype(np.float32), sr, subtype="FLOAT")
     return out_wav
 
 
-def mix_tracks(voice_wav: Path, bgm_wav: Optional[Path], out_wav: Path,
-               voice_gain: float = 1.0, bgm_gain: float = 1.0) -> Path:
-    voice = f"[0:a]aresample=44100,aformat=channel_layouts=stereo,volume={voice_gain}[v]"
+MIX_SR = 44100
+_LOUDNORM_JSON = re.compile(r"\{[^{}]*\"input_i\"[^{}]*\}", re.S)
+
+
+def _measure_loudness(wav: Path, i: float, tp: float, lra: float) -> Optional[dict]:
+    """รอบวัดของ loudnorm (คืน input_i, input_tp, input_lra, input_thresh, target_offset) หรือ None ถ้าวัดไม่ได้"""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(wav),
+         "-af", f"loudnorm=I={i}:TP={tp}:LRA={lra}:print_format=json", "-f", "null", "-"],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        log.warning("loudnorm measure failed: %s", proc.stderr[-500:])
+        return None
+    m = _LOUDNORM_JSON.search(proc.stderr)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(0))
+        vals = {k: float(data[k]) for k in ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")}
+    except (ValueError, KeyError):
+        return None
+    # ทั้งไฟล์เงียบ (-inf) หรือสั้นจนวัดไม่ได้ → ไม่ปรับ
+    return vals if all(math.isfinite(v) for v in vals.values()) else None
+
+
+def loudnorm(src: Path, out_wav: Path, i: float = ac.LOUDNORM_I, tp: float = ac.LOUDNORM_TP,
+             lra: float = ac.LOUDNORM_LRA) -> bool:
+    """ปรับความดังรวมแบบ 2 รอบ (EBU R128): วัดก่อนแล้วปรับแบบ linear ให้ได้ I LUFS และ true-peak ไม่เกิน tp dBTP
+    คืน False ถ้าวัดไม่ได้ (ไม่ได้เขียน out_wav)"""
+    m = _measure_loudness(src, i, tp, lra)
+    if m is None:
+        return False
+    af = (f"loudnorm=I={i}:TP={tp}:LRA={lra}:measured_I={m['input_i']}:measured_TP={m['input_tp']}:"
+          f"measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}:offset={m['target_offset']}:"
+          f"linear=true:print_format=summary,aresample={MIX_SR}")
+    run(["ffmpeg", "-y", "-i", src, "-af", af, "-c:a", "pcm_f32le", out_wav])
+    log.info("loudnorm: %.1f LUFS / %.1f dBTP → target %.1f LUFS / %.1f dBTP",
+             m["input_i"], m["input_tp"], i, tp)
+    return True
+
+
+def mix_tracks(voice_wav: Path, bgm_wav: Optional[Path], out_wav: Path, bgm_gain: float = 1.0,
+               normalize: bool = ac.LOUDNORM) -> Path:
+    """ผสมเสียงพากย์ (ใส่ voice_gain มาแล้วใน place_clips) กับเพลงประกอบ แล้วปรับความดังรวม
+
+    เขียนผลเป็น WAV float32 ระหว่างทาง ไม่ตัดแข็ง ขั้นสุดท้ายใช้ loudnorm 2 รอบ (audio_constants.LOUDNORM_*)
+    ถ้าปิดหรือวัดไม่ได้ ใช้ alimiter กันแตกแบบเดิม"""
+    voice = f"[0:a]aresample={MIX_SR},aformat=channel_layouts=stereo[v]"
     if bgm_wav and bgm_wav.exists():
-        graph = (f"{voice};[1:a]aresample=44100,aformat=channel_layouts=stereo,volume={bgm_gain}[b];"
-                 "[v][b]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[out]")
-        run(["ffmpeg", "-y", "-i", voice_wav, "-i", bgm_wav, "-filter_complex", graph,
-             "-map", "[out]", "-c:a", "pcm_s16le", out_wav])
+        inputs = ["-i", voice_wav, "-i", bgm_wav]
+        graph = (f"{voice};[1:a]aresample={MIX_SR},aformat=channel_layouts=stereo,volume={bgm_gain}[b];"
+                 "[v][b]amix=inputs=2:duration=longest:normalize=0")
     else:
-        run(["ffmpeg", "-y", "-i", voice_wav, "-filter_complex", voice.replace("[v]", "[out]"),
-             "-map", "[out]", "-c:a", "pcm_s16le", out_wav])
+        inputs = ["-i", voice_wav]
+        graph = voice.replace("[v]", "")
+    with tempfile.TemporaryDirectory() as tmp:
+        premix = Path(tmp) / "premix.wav"
+        run(["ffmpeg", "-y", *inputs, "-filter_complex", f"{graph}[out]",
+             "-map", "[out]", "-c:a", "pcm_f32le", premix])
+        if normalize and loudnorm(premix, out_wav):
+            return out_wav
+        run(["ffmpeg", "-y", "-i", premix, "-af", "alimiter=limit=0.95", "-c:a", "pcm_f32le", out_wav])
     return out_wav
 
 

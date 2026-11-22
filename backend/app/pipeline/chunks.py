@@ -268,6 +268,9 @@ def stitch_wavs(
             out.append(wav[a:b])
     if not out:
         raise RuntimeError("ช่วงตัด overlap ทับกันจนไม่เหลือเสียง")
+    # ชิ้นที่ช่องไม่เท่ากัน (เช่น Modal รุ่นเก่าส่ง bgm mono ปนกับสเตอริโอ) ขยาย mono ให้เท่าช่องมากสุด
+    ch = max(p.shape[1] for p in out)
+    out = [p if p.shape[1] == ch else np.repeat(p[:, :1], ch, axis=1) for p in out]
     merged = np.concatenate(out, axis=0)
     if merged.shape[1] == 1:
         merged = merged[:, 0]

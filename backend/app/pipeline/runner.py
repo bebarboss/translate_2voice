@@ -1128,8 +1128,9 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             speech += known
         bed = mix.nonspeech(orig, orig_sr, speech, total, sr, is_speech) * settings.nonspeech_gain
         _free_vram("transcribe")
-    mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60)
-    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", rs.voice_gain, rs.bgm_gain)
+    mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60,
+                    gain=rs.voice_gain)
+    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", bgm_gain=rs.bgm_gain)
     if timeline is not None:  # ไม่มีวิดีโอ: เก็บเสียงพากย์แยกผู้พูดไว้ส่งออก (timeline/exporter.py)
         subs.write_srt(utterances, d / "subtitles.srt")
         dub = d / "timeline" / "dub"
