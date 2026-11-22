@@ -11,11 +11,32 @@ import LangInit from "@/components/LangInit";
 import ProfileGate from "@/components/ProfileGate";
 import Sidebar from "@/components/Sidebar";
 import { isLang, isTheme, LANG_COOKIE, THEME_COOKIE } from "@/lib/i18n";
+import { siteUrl } from "@/lib/site";
 import { AuthProvider } from "@/lib/useAuth";
 
+const SHARE_TITLE = "พากย์ดี (Pakdee) · AI พากย์ไทย";
+const SHARE_DESCRIPTION = "แยกตัวละคร แปล และพากย์คลิปต่างประเทศเป็นเสียงไทย ด้วยเสียงนักแสดงต้นฉบับหรือเสียงพากย์จากคลัง";
+// รูปแชร์ 1200x630 ต้นฉบับอยู่ที่ scripts/og-image.html
+const SHARE_IMAGE = { url: "/brand/og.png", width: 1200, height: 630, alt: "นกแก้วพากย์ดี · พากย์ดีด้วย AI" };
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
   title: "Pakdee",
   description: "พากย์ดี · AI พากย์ไทย — พากย์คลิปต่างประเทศเป็นไทยหรืออังกฤษ ด้วยเสียงนักแสดงต้นฉบับ",
+  openGraph: {
+    type: "website",
+    siteName: "Pakdee",
+    locale: "th_TH",
+    title: SHARE_TITLE,
+    description: SHARE_DESCRIPTION,
+    images: [SHARE_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SHARE_TITLE,
+    description: SHARE_DESCRIPTION,
+    images: [SHARE_IMAGE],
+  },
   icons: {
     icon: [
       { url: "/brand/icon-32.png", sizes: "32x32", type: "image/png" },
