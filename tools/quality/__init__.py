@@ -3,7 +3,7 @@
 Three separate scores, never combined into one number:
   A. audio (objective)          -> tools/quality/audio.py
   B. translation rules          -> tools/quality/rules.py (reuses backend/app/pipeline/translate_quality.py)
-  C. naturalness / meaning      -> NOT scored; exported as a rating sheet for humans or an LLM later
+  C. naturalness / meaning      -> tools/quality/judge.py (LLM judge, default off) + spot-check / calibration
 
 Run from the repo root:  python -m tools.quality.score <exports_dir> --out <dir>
 """

@@ -1,13 +1,19 @@
 """Score dubbing exports. Three separate scores, never combined:
-  A. audio (objective)  B. translation rules (objective)  C. naturalness/meaning: not scored, exported for rating
+  A. audio (objective)  B. translation rules (objective)  C. naturalness/meaning (LLM judge, default off)
 
     python -m tools.quality.score <exports_dir> --out <dir> [--glossary FILE] [--clips]
+                                  [--judge [--confirm-spend]] [--seed N] [--spot-frac F] [--spot-min N]
 
 Writes to <dir>:
-  segments.csv      one row per segment per job: A + B fields, code version, date, thresholds
-  jobs_summary.csv  one row per job (also jobs_summary.json with thresholds and notes)
-  rating_sheet.csv  C: job id, segment id, source, translation, audio path, empty rating columns
+  segments.csv      one row per segment per job: A + B + C fields, code version, date, thresholds, judge model/prompt
+  jobs_summary.csv  one row per job (also jobs_summary.json with thresholds, judge config and notes)
+  rating_sheet.csv  C input: job id, segment id, source, translation, audio path, empty rubric columns
+  spot_check.csv    seeded random sample (default 10%, min 5) with judge scores beside empty human columns;
+                    fill it in, then: python -m tools.quality.judge calibrate spot_check.csv
   clips/            (--clips) one WAV per segment cut from the final mix, for raters
+
+C never calls a model unless QUALITY_JUDGE_MODEL is set AND --judge --confirm-spend are given; --judge alone
+prints the cost estimate and stops. See tools/quality/judge.py for the env vars and caps.
 """
 import argparse
 import csv
@@ -22,6 +28,7 @@ from typing import Optional
 from . import BACKEND  # noqa: F401  (puts backend/ on sys.path)
 from . import audio as A
 from . import exports as E
+from . import judge as J
 from . import rules as R
 from .thresholds import resolved
 
@@ -36,6 +43,8 @@ SEGMENT_FIELDS = [
     "rules_checked", "number", "name", "added_word", "unclear_source", "idiom", "rule_flags", "rule_reasons",
     "asr_unclear", "pipeline_open_flags", "rate_unit", "rate_units", "slot_sec", "rate_per_sec",
     "rate_nominal_per_sec", "rate_max_units", "over_rate",
+    # C. naturalness / meaning (LLM judge)
+    *J.JUDGE_FIELDS,
     # provenance
     "code_version", "scored_at", "thresholds",
 ]
@@ -49,9 +58,11 @@ JOB_FIELDS = (["job_id", "export_kind", "segments", "dubbed"] + JOB_AUDIO_FIELDS
               ["segments_overrun", "segments_overlap_next", "segments_clipped",
                "rule_number", "rule_name", "rule_added_word", "rule_unclear_source", "rule_idiom",
                "segments_with_rule_flags", "segments_over_rate", "segments_asr_unclear", "rules_checked",
+               "judge_ok", "judge_failed", "judge_skipped", "judge_provisional",
                "notes", "code_version", "scored_at"])
 RATING_FIELDS = ["job_id", "segment_id", "speaker", "start", "end", "source", "translation", "audio_path",
-                 "audio_start", "audio_end", "meaning_1to5", "naturalness_1to5", "rater", "rater_notes"]
+                 "audio_start", "audio_end", "meaning_0to2", "naturalness_1to5", "register_1to5", "rater",
+                 "rater_notes"]
 
 
 def code_version() -> str:
@@ -124,6 +135,8 @@ def score_job(ex: E.JobExport, th: dict, meta: dict, clips_dir: Optional[Path]) 
         seg_a[h] = row
 
     rows, rating = [], []
+    spoken = [u for u in sorted(ex.utts, key=lambda u: (u.start, u.id)) if (u.target or "").strip()]
+    near = {u.id: (a, b) for u, a, b in zip(spoken, [None] + spoken[:-1], spoken[1:] + [None])}
     for u in sorted(ex.utts, key=lambda u: (u.start, u.id)):
         h = head_of.get(u.id)
         row = {"job_id": ex.job_id, "export_kind": ex.kind, "segment_id": u.id, "speaker": u.speaker,
@@ -137,7 +150,12 @@ def score_job(ex: E.JobExport, th: dict, meta: dict, clips_dir: Optional[Path]) 
         row.update(meta)
         rows.append(row)
         if (u.target or "").strip():
-            rating.append(_rating_row(ex, u, h, seg_a.get(h, {}), mix, mix_sr, clips_dir))
+            r = _rating_row(ex, u, h, seg_a.get(h, {}), mix, mix_sr, clips_dir)
+            a, b = near[u.id]
+            r.update(target_lang=ex.target_lang,
+                     prev={"source": a.source, "translation": a.target} if a and ex.has_source else None,
+                     next={"source": b.source, "translation": b.target} if b and ex.has_source else None)
+            rating.append(r)
 
     flagged = lambda k: sum(1 for r in rows if r.get(k))  # noqa: E731
     summary = {"job_id": ex.job_id, "export_kind": ex.kind, "segments": len(ex.utts), "dubbed": len(groups),
@@ -170,7 +188,7 @@ def _rating_row(ex, u, h, a: dict, mix, mix_sr: int, clips_dir: Optional[Path]) 
     return {"job_id": ex.job_id, "segment_id": u.id, "speaker": u.speaker, "start": round(u.start, 3),
             "end": round(u.end, 3), "source": u.source, "translation": u.target, "audio_path": path,
             "audio_start": round(a_start, 3), "audio_end": round(a_end, 3),
-            "meaning_1to5": "", "naturalness_1to5": "", "rater": "", "rater_notes": ""}
+            "meaning_0to2": "", "naturalness_1to5": "", "register_1to5": "", "rater": "", "rater_notes": ""}
 
 
 def _csv(path: Path, fields: list[str], rows: list[dict]) -> None:
@@ -196,10 +214,11 @@ def print_table(summaries: list[dict], out=sys.stdout) -> None:
             ("duck dB", "duck_db"), ("v/bg dB", "voice_over_bg_db"), ("L/R corr", "lr_corr"), ("side dB", "side_mid_db"),
             ("overrun", "segments_overrun"), ("overlap", "segments_overlap_next"),
             ("num", "rule_number"), ("name", "rule_name"), ("particle", "rule_added_word"),
-            ("unclear", "rule_unclear_source"), ("fast", "segments_over_rate"), ("segs", "segments")]
+            ("unclear", "rule_unclear_source"), ("fast", "segments_over_rate"),
+            ("C ok", "judge_ok"), ("C fail", "judge_failed"), ("C cap", "judge_skipped"), ("segs", "segments")]
     table = [[h for h, _ in cols]] + [[_fmt(s.get(k), 3 if k == "lr_corr" else 1)[:24] for _, k in cols] for s in summaries]
     widths = [max(len(r[i]) for r in table) for i in range(len(cols))]
-    print("A = audio, B = translation rules (separate; no combined score). C (naturalness/meaning) -> rating_sheet.csv",
+    print("A = audio, B = translation rules, C = LLM judge (separate; no combined score; C details in segments.csv)",
           file=out)
     for i, r in enumerate(table):
         print("  ".join(c.ljust(w) for c, w in zip(r, widths)), file=out)
@@ -207,7 +226,33 @@ def print_table(summaries: list[dict], out=sys.stdout) -> None:
             print("  ".join("-" * w for w in widths), file=out)
 
 
-def run(exports_dir: Path, out_dir: Path, glossary: str = "", clips: bool = False, quiet: bool = False) -> dict:
+def judge_step(rating: list[dict], judge: bool, confirm_spend: bool, cfg: J.JudgeConfig,
+               call: Optional[J.Caller], quiet: bool) -> tuple[dict, dict]:
+    """(job_id, segment_id) -> C fields, and a run report. No model call unless judge AND confirm_spend."""
+    keys = [(str(r["job_id"]), str(r["segment_id"])) for r in rating]
+    info: dict = {"requested": judge, "confirmed": confirm_spend, **cfg.public()}
+    if not judge:
+        return {k: J.off_fields("off") for k in keys}, info
+    if not cfg.enabled:
+        raise SystemExit("--judge needs QUALITY_JUDGE_MODEL (and its key) set; see tools/quality/judge.py")
+    J.check_family(cfg)
+    est = J.estimate(rating, cfg)
+    info["estimate"] = {"calls": est.calls, "in_tokens": est.in_tokens, "out_tokens": est.out_tokens,
+                        "usd": round(est.usd, 6), "calls_within_caps": est.capped_calls}
+    print(est.text(cfg))
+    if not confirm_spend:
+        print("estimate only: no judge calls made. Re-run with --confirm-spend to run the judge.")
+        return {k: J.off_fields("estimate_only") for k in keys}, info
+    res = J.run_judge(rating, cfg, call or J.http_call)
+    info.update(calls=res.calls, est_tokens_used=res.tokens, stopped=res.stopped)
+    msg = f"judge: {res.calls} call(s), ~{res.tokens} tokens"
+    print(msg + (f"; STOPPED: {res.stopped}" if res.stopped else ""), file=sys.stderr if quiet else sys.stdout)
+    return res.results, info
+
+
+def run(exports_dir: Path, out_dir: Path, glossary: str = "", clips: bool = False, quiet: bool = False,
+        judge: bool = False, confirm_spend: bool = False, judge_cfg: Optional[J.JudgeConfig] = None,
+        call: Optional[J.Caller] = None, seed: int = 0, spot_frac: float = 0.10, spot_min: int = 5) -> dict:
     A.ffmpeg_bin()  # fail early with a clear message
     out_dir.mkdir(parents=True, exist_ok=True)
     th = resolved()
@@ -221,17 +266,45 @@ def run(exports_dir: Path, out_dir: Path, glossary: str = "", clips: bool = Fals
         all_rows += rows
         summaries.append(summary)
         rating += rate
+    cfg = judge_cfg or J.config_from_env()
+    c, judge_info = judge_step(rating, judge, confirm_spend, cfg, call, quiet)
+    for r in all_rows:
+        r.update(c.get((str(r["job_id"]), str(r["segment_id"])), J.off_fields("no_translation")))
+    for s in summaries:
+        mine = [r for r in all_rows if r["job_id"] == s["job_id"]]
+        st = [r.get("judge_status") for r in mine]
+        s.update(judge_ok=st.count("ok"), judge_failed=st.count("failed"), judge_skipped=st.count("skipped_cap"),
+                 judge_provisional=any(r.get("judge_provisional") for r in mine if r.get("judge_status") == "ok"))
+    spot = spot_check(all_rows, rating, seed, spot_frac, spot_min)
     _csv(out_dir / "segments.csv", SEGMENT_FIELDS, all_rows)
     _csv(out_dir / "jobs_summary.csv", JOB_FIELDS, summaries)
     _csv(out_dir / "rating_sheet.csv", RATING_FIELDS, rating)
+    _csv(out_dir / "spot_check.csv", J.SPOT_FIELDS, spot)
     report = {"code_version": meta["code_version"], "scored_at": meta["scored_at"], "thresholds": th,
-              "exports_dir": str(exports_dir), "jobs": summaries}
+              "exports_dir": str(exports_dir), "judge": judge_info,
+              "spot_check": {"seed": seed, "frac": spot_frac, "min": spot_min, "rows": len(spot)},
+              "jobs": summaries}
     (out_dir / "jobs_summary.json").write_text(json.dumps(report, ensure_ascii=False, indent=2, default=str),
                                                encoding="utf-8")
     if not quiet:
         print_table(summaries)
         print(f"\n{len(found)} job(s), {len(all_rows)} segment row(s) -> {out_dir}")
     return report
+
+
+def spot_check(rows: list[dict], rating: list[dict], seed: int, frac: float, minimum: int) -> list[dict]:
+    """seeded sample of rated segments: judge scores beside empty human columns for the owner to fill in"""
+    by_seg = {(str(r["job_id"]), str(r["segment_id"])): r for r in rows}
+    by_rate = {(str(r["job_id"]), str(r["segment_id"])): r for r in rating}
+    out = []
+    for k in J.spot_sample(list(by_rate), seed, frac, minimum):
+        seg, rt = by_seg.get(k, {}), by_rate[k]
+        out.append({**{f: seg.get(f, "") for f in J.SPOT_FIELDS if f.startswith("judge_")},
+                    **{f: rt.get(f, "") for f in ("job_id", "segment_id", "speaker", "source", "translation",
+                                                  "audio_path", "audio_start", "audio_end")},
+                    "human_meaning": "", "human_naturalness": "", "human_register": "", "human_notes": "",
+                    "sample_seed": seed})
+    return out
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -241,11 +314,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument("--out", type=Path, required=True, help="output folder")
     p.add_argument("--glossary", type=Path, help='project glossary file, one "source = target # note" per line')
     p.add_argument("--clips", action="store_true", help="cut one WAV per segment from the final mix for raters")
+    p.add_argument("--judge", action="store_true", help="C: LLM judge. Alone it only prints the cost estimate")
+    p.add_argument("--confirm-spend", action="store_true", help="with --judge: actually call the judge (within caps)")
+    p.add_argument("--seed", type=int, default=0, help="spot-check sample seed (default 0)")
+    p.add_argument("--spot-frac", type=float, default=0.10, help="spot-check fraction (default 0.10)")
+    p.add_argument("--spot-min", type=int, default=5, help="spot-check minimum rows per run (default 5)")
     a = p.parse_args(argv)
+    if a.confirm_spend and not a.judge:
+        p.error("--confirm-spend only makes sense with --judge")
     if not a.exports_dir.is_dir():
         p.error(f"not a folder: {a.exports_dir}")
     glossary = a.glossary.read_text(encoding="utf-8") if a.glossary else ""
-    report = run(a.exports_dir, a.out, glossary, a.clips)
+    report = run(a.exports_dir, a.out, glossary, a.clips, judge=a.judge, confirm_spend=a.confirm_spend,
+                 seed=a.seed, spot_frac=a.spot_frac, spot_min=a.spot_min)
     return 0 if report["jobs"] else 1
 
 

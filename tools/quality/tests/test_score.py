@@ -213,7 +213,15 @@ def test_rating_sheet_is_unscored(scored):
     assert len(rows) == 5 * len(LINES)
     r = rows[0]
     assert r["source"] and r["translation"] and Path(r["audio_path"]).is_file()
-    assert r["meaning_1to5"] == "" and r["naturalness_1to5"] == ""
+    assert r["meaning_0to2"] == "" and r["naturalness_1to5"] == "" and r["register_1to5"] == ""
+
+
+def test_judge_off_by_default(scored):
+    rows = _read(scored["out"] / "segments.csv")
+    assert {r["judge_status"] for r in rows} == {"off"}
+    assert all(r["judge_meaning"] == "" for r in rows)
+    spot = _read(scored["out"] / "spot_check.csv")
+    assert len(spot) == 5  # 15 rows: 10% = 2 -> min 5
 
 
 def test_summary_files_written(scored):
