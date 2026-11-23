@@ -11,7 +11,7 @@ deploy: modal deploy modal_llm_35b.py   (Secret pakdee-llm-35b-key ต้อง�
 - Qwen3.6 เปิดโหมด thinking เป็นค่าเริ่มต้น แต่ translate.py ไม่ได้ส่ง chat_template_kwargs
   จึงปิด thinking ฝั่งเซิร์ฟเวอร์ด้วย --default-chat-template-kwargs (ผู้เรียกยัง override ได้)
 - --language-model-only ไม่โหลด vision encoder (ใช้แปลข้อความอย่างเดียว) ประหยัด VRAM
-- น้ำหนัก FP8 ~36 GB, สถาปัตยกรรม hybrid (linear attention 3:1) KV cache เล็ก จึงพอดี L40S 48GB
+- น้ำหนัก FP8 ~35 GiB บน GPU; ลอง L40S แล้ว OOM จึงใช้ A100-80GB (Ampere ไม่มี FP8 ในตัว vLLM ใช้ Marlin W8A16)
 """
 import subprocess
 
@@ -34,7 +34,7 @@ secret = modal.Secret.from_name("pakdee-llm-35b-key")  # LLM_API_KEY
 
 
 @app.function(
-    gpu="L40S",
+    gpu="A100-80GB",  # L40S (44 GiB ใช้ได้) OOM ตอน vLLM profile cudagraph: น้ำหนักกินไป ~35 GiB
     volumes={CACHE: cache},
     secrets=[secret],
     scaledown_window=300,  # เหมือน pakdee-llm: ค้าง 5 นาทีหลังคำขอล่าสุดแล้ว scale to zero
