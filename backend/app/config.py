@@ -140,7 +140,7 @@ class Settings:
     typhoon_base_url: str = _env("TYPHOON_BASE_URL", d.TYPHOON_BASE_URL)
     typhoon_model: str = _env("TYPHOON_MODEL", d.TYPHOON_MODEL)
     typhoon_reasoning_effort: str = _env("TYPHOON_REASONING_EFFORT", d.TYPHOON_REASONING_EFFORT)
-    # โมเดลแปล/ตรวจบท (OpenAI-compatible) ถ้าตั้งจะใช้แทน Typhoon เฉพาะงานแปล เช่น Qwen บน Modal (modal_llm.py)
+    # โมเดลแปล/ตรวจบท (OpenAI-compatible) ถ้าตั้งจะใช้แทน Typhoon เฉพาะงานแปล เช่น Qwen บน Modal (modal_llm_35b.py)
     # ว่าง = ใช้ค่า TYPHOON_* เดิม (OCR สลิปยังใช้ Typhoon เสมอ)
     llm_base_url: str = _env("LLM_BASE_URL")
     llm_api_key: str = _env("LLM_API_KEY")
