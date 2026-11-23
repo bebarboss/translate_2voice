@@ -1,4 +1,4 @@
-"""โมเดลแปลภาษา Qwen3.6 35B-A3B (FP8) รันเองบน Modal ด้วย vLLM แยกจาก pakdee-llm เดิม
+"""โมเดลแปลภาษา Qwen3.6 35B-A3B (FP8) รันเองบน Modal ด้วย vLLM (แทน pakdee-llm Qwen3-30B เดิมที่ลบแล้ว)
 
 เปิดเป็น API แบบ OpenAI ที่ <url>/v1 ใช้ได้โดยตั้ง env ฝั่ง API (ไม่ต้องแก้โค้ด):
     LLM_BASE_URL=<url>/v1
@@ -37,7 +37,7 @@ secret = modal.Secret.from_name("pakdee-llm-35b-key")  # LLM_API_KEY
     gpu="A100-80GB",  # L40S (44 GiB ใช้ได้) OOM ตอน vLLM profile cudagraph: น้ำหนักกินไป ~35 GiB
     volumes={CACHE: cache},
     secrets=[secret],
-    scaledown_window=300,  # เหมือน pakdee-llm: ค้าง 5 นาทีหลังคำขอล่าสุดแล้ว scale to zero
+    scaledown_window=300,  # ค้าง 5 นาทีหลังคำขอล่าสุดแล้ว scale to zero
     timeout=60 * 30,
     max_containers=1,
 )
