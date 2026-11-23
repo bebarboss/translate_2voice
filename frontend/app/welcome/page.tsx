@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import "@fontsource/anuphan/300.css";
 import { BrandLink, BRAND_NAME } from "@/components/Brand";
 import { MicIcon } from "@/components/Icons";
+import NetworkBg from "@/components/NetworkBg";
 import { useAuth } from "@/lib/useAuth";
 import { signInPath } from "@/lib/auth-routes";
 import { chooseLang, getLang, tx } from "@/lib/i18n";
@@ -116,6 +117,7 @@ export default function WelcomePage() {
 
   return (
     <div className="landing">
+      <NetworkBg />
       <div className="lp-glow" aria-hidden="true" />
       <header className="lp-nav">
         <BrandLink href="/welcome" className="lp-brand" markClassName="lp-brand-mark" markSize={28} />
