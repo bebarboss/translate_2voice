@@ -101,7 +101,7 @@ export default function Sidebar() {
       <div className="topbar">
         {brand}
         <div className="row" style={{ gap: 8 }}>
-          <NotificationBell enabled={!!config?.auth && !!user} />
+          <NotificationBell enabled={!!config?.auth && !!user} placement="topbar" />
           <button type="button" className="icon-only" aria-label={tx("เปิดเมนู")} aria-expanded={open} aria-controls="sidebar"
             onClick={() => setOpen(true)}><MenuIcon /></button>
         </div>
@@ -110,7 +110,7 @@ export default function Sidebar() {
       <aside id="sidebar" className={`sidebar${open ? " open" : ""}`}>
         <div className="sidebar-head">
           {brand}
-          <span className="bell-desktop"><NotificationBell enabled={!!config?.auth && !!user} /></span>
+          <span className="bell-desktop"><NotificationBell enabled={!!config?.auth && !!user} placement="sidebar" /></span>
           <button type="button" className="icon-only sidebar-close" aria-label={tx("ปิดเมนู")} onClick={() => setOpen(false)}>
             <XIcon size={18} />
           </button>
