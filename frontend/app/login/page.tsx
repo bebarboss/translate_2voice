@@ -6,6 +6,7 @@ import { api, type Plan } from "@/lib/api";
 import { useAuth } from "@/lib/useAuth";
 import { BrandLink } from "@/components/Brand";
 import { XIcon } from "@/components/Icons";
+import NetworkBg from "@/components/NetworkBg";
 import Prefs from "@/components/Prefs";
 import { getLang, tx } from "@/lib/i18n";
 /** Google Identity Services (https://accounts.google.com/gsi/client) ใช้แค่ส่วนที่เรียก */
@@ -55,6 +56,7 @@ function Showcase({ bonus }: { bonus: number }) {
   const cur = offers[i % offers.length];
   return (
     <section className="auth-show" aria-label={tx("สิ่งที่ได้จาก Pakdee")}>
+      <NetworkBg className="auth-net" />
       <div className="auth-stack" aria-hidden="true">
         <div className="auth-sheet back" />
         <div className="auth-sheet mid" />

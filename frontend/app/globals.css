@@ -584,7 +584,11 @@ th:last-child, td:last-child { padding-right: 18px; text-align: right; }
 
 /* ================= หน้าเข้าสู่ระบบ ================= */
 .auth-page { height: 100vh; min-height: 560px; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr); background: #08090b; }
-.auth-show { display: flex; flex-direction: column; justify-content: space-between; gap: 32px; padding: 40px 64px; overflow: hidden; }
+.auth-show { position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 32px; padding: 40px 64px; overflow: hidden; }
+.auth-show > :not(.auth-net) { position: relative; }
+/* พื้นหลังจุดโยงเส้น (components/NetworkBg) จางที่ขอบบนล่างให้กลืนกับพื้น */
+.auth-net { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .7;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent); mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent); }
 .auth-stack { position: relative; width: min(100%, 540px, (100vh - 330px) * 1.6); aspect-ratio: 16 / 10; margin: 16px auto 0; flex-shrink: 0; }
 .auth-sheet { position: absolute; inset: 0; border-radius: 18px; }
 .auth-sheet.back { background: #1b1f26; border: 1px solid #2a2f39; transform: translate(-6%, 12%) rotate(-7deg); }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
-/** พื้นหลังหน้า /welcome: จุดลอยช้า ๆ โยงเส้นหากันเมื่ออยู่ใกล้ ขอบล่างจางลงด้วย CSS (.lp-net)
+/** พื้นหลังขยับของ /welcome และ /login: จุดลอยช้า ๆ โยงเส้นหากันเมื่ออยู่ใกล้ ขนาดและการจางขอบกำหนดด้วย CSS ของ className
  *  หยุดวาดเมื่อเลื่อนพ้นจอหรือสลับแท็บ ผู้ใช้ที่ตั้งลดการเคลื่อนไหวได้ภาพนิ่งเฟรมเดียว */
 const LINK = 150; // ระยะ (px) ที่จุดสองจุดจะโยงเส้นหากัน
 const SPEED = 0.18; // px ต่อเฟรมที่ 60fps (คิดตามเวลาจริง จอ 120Hz จึงไม่เร็วขึ้น)
@@ -10,7 +10,7 @@ const RGB = "61, 214, 140"; // เขียวแบรนด์ธีมมื�
 
 type Dot = { x: number; y: number; vx: number; vy: number; r: number };
 
-export default function NetworkBg() {
+export default function NetworkBg({ className = "lp-net" }: { className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -98,5 +98,5 @@ export default function NetworkBg() {
       if (frame) cancelAnimationFrame(frame);
     };
   }, []);
-  return <canvas ref={ref} className="lp-net" aria-hidden="true" />;
+  return <canvas ref={ref} className={className} aria-hidden="true" />;
 }
