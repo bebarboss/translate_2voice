@@ -11,7 +11,7 @@ import { isSignedOut, useAuth } from "@/lib/useAuth";
 import AccountMenu from "./AccountMenu";
 import NotificationBell from "./NotificationBell";
 import { BrandLink } from "./Brand";
-import { FolderIcon, GearIcon, GridIcon, HelpIcon, HomeIcon, MenuIcon, MicIcon, PlusIcon, ShieldIcon, TimelineIcon, UserIcon, VideoIcon, WaveIcon, XIcon } from "./Icons";
+import { FolderIcon, GridIcon, HomeIcon, MenuIcon, MicIcon, PlusIcon, TimelineIcon, UserIcon, VideoIcon, WaveIcon, XIcon } from "./Icons";
 
 const LINKS = [
   { href: "/", label: "หน้าแรก", icon: <HomeIcon /> },
@@ -148,16 +148,6 @@ export default function Sidebar() {
           )}
         </div>
         <div className="side-bottom">
-          {(!config?.auth || user) && (
-            <nav className="side-nav side-links" aria-label={tx("บัญชีและการตั้งค่า")}>
-              <Link href="/account" aria-current={isActive("/account") ? "page" : undefined}><UserIcon size={16} />{tx("บัญชีและเครดิต")}</Link>
-              <Link href="/settings" aria-current={isActive("/settings") ? "page" : undefined}><GearIcon size={16} />{tx("ตั้งค่า")}</Link>
-              <Link href="/support" aria-current={isActive("/support") ? "page" : undefined}><HelpIcon size={16} />{tx("ช่วยเหลือ")}</Link>
-              {config?.auth && user?.admin && (
-                <Link href="/admin" aria-current={isActive("/admin") ? "page" : undefined}><ShieldIcon size={16} />{tx("ผู้ดูแลระบบ")}</Link>
-              )}
-            </nav>
-          )}
           {config?.billing && user && !user.admin && <CreditCard path={path} />}
           {signedOut ? (
             <div className="row" style={{ justifyContent: "space-between" }}>
