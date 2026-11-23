@@ -271,6 +271,20 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
     _free_vram("translate")
     store.save_transcript(job_id, utterances)
 
+    # ตรวจตัวเองก่อนย่อบท: เขียนใหม่เฉพาะบรรทัดที่ติดป้าย (โมเดล 1 รอบ) หรือกฎสำนวนติดป้ายอย่างเดียว
+    if job.target_lang == "th" and not translate_mod.same_lang(lang, job.target_lang):
+        from . import translate_quality
+        use_llm = settings.translate_self_check and not settings.mock_pipeline and bool(settings.llm_api_key or settings.typhoon_api_key)
+        if use_llm or settings.translate_rule_flags:
+            stage("verify_translation", lo + span * 0.78)  # ใช้ชื่อขั้นเดิม หน้าเว็บมีป้ายอยู่แล้ว
+            try:
+                translate_quality.self_check(utterances, hints, use_llm=use_llm, check_cancel=cancel)
+                store.save_transcript(job_id, utterances)
+            except Cancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001  ขั้นเสริม ล้มก็ใช้บทที่แปลไว้
+                log.warning("self-check failed for job %s: %s", job_id, exc)
+
     stage("fit_lengths", lo + span * 0.8)
     fit_lengths(utterances, job.target_lang, runtime_settings.get().max_speedup)
     store.save_transcript(job_id, utterances)
@@ -288,6 +302,21 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
             raise
         except Exception as exc:  # noqa: BLE001
             log.warning("naturalize failed for job %s: %s", job_id, exc)
+    if settings.translate_verify and not settings.mock_pipeline and (settings.llm_api_key or settings.typhoon_api_key):
+        stage("verify_translation", lo + span * 0.88)
+        try:  # ขั้นเสริม ล้ม/ยกเลิกไม่ได้ทำให้งานล้ม ใช้บทที่แปลไว้แล้ว
+            still = translate_mod.verify_translation(utterances, lang, job.target_lang, max_sp, title, hints, cancel)
+            from . import translate_quality
+            translate_quality.record_verify_flags(utterances, still)
+            for u in utterances:
+                if u.id in still:
+                    u.check_note = f"{u.check_note}; {still[u.id]}".strip("; ") if u.check_note else still[u.id]
+                    u.unclear_reason = u.unclear_reason or still[u.id]
+            store.save_transcript(job_id, utterances)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.warning("verify_translation failed for job %s: %s", job_id, exc)
     if settings.translate_review and not settings.mock_pipeline and settings.typhoon_api_key:
         stage("review_translation", lo + span * 0.9)
         try:  # ขั้นเสริม ล้มก็ใช้บทที่แปลไว้แล้ว (รอบแปลใหม่ที่แย่กว่าจะถูกทิ้งใน _retranslate)
@@ -306,6 +335,14 @@ def _translate_and_fit(store: JobStore, job_id: str, utterances: list[Utterance]
         fit_lengths(utterances, job.target_lang, max_sp)
         store.save_transcript(job_id, utterances)
         log.info("job %s: filled %d empty targets after translate (refit)", job_id, n_fill)
+    # ด่านสุดท้ายก่อนหน้าตรวจบท: กฎรายบรรทัดซ้ำหลังขั้นเรียบเรียง/ตรวจ/เติมบท (ก่อนแปลงละตินเป็นคำอ่าน ชื่อยังเทียบได้)
+    if job.target_lang == "th" and not translate_mod.same_lang(lang, job.target_lang) and settings.translate_line_checks:
+        from . import translate_quality
+        try:
+            if translate_quality.final_gate(utterances, hints):
+                store.save_transcript(job_id, utterances)
+        except Exception as exc:  # noqa: BLE001  ขั้นเสริม
+            log.warning("final translation gate failed for job %s: %s", job_id, exc)
     # พจนานุกรมคำอ่าน + AI เฉพาะชื่อ/ตัวย่อละตินที่เหลือ (ก่อนหน้าตรวจบท / พากย์)
     if job.target_lang == "th" and settings.ai_speak_latin and not settings.mock_pipeline:
         stage("speak_latin", lo + span * 0.95)
@@ -385,13 +422,25 @@ def _marked_sources(d: Path, utterances: list[Utterance]) -> dict[int, str]:
     return out
 
 
+def uncertain_lines(store: JobStore, job_id: str) -> list[int]:
+    """บรรทัดที่ระบบยังไม่แน่ใจ (TRANSLATE_UNCERTAIN_REVIEW เปิด) งานที่มีต้องหยุดรอตรวจบทก่อนพากย์เสมอ"""
+    if not settings.translate_uncertain_review:
+        return []
+    from . import translate_quality
+    try:
+        return translate_quality.uncertain_ids(store.load_transcript(job_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("uncertain-line check failed for job %s: %s", job_id, exc)
+        return []
+
+
 def run_translate(store: JobStore, job_id: str) -> None:
     """แปลบทใหม่ทั้งหมดจากบทถอดเสียงเดิม (ไม่ถอดเสียงใหม่) เช่น หลังตั้งชื่อตัวละครหรือแนวเรื่อง
     บทที่แก้เองไว้จะถูกแทนด้วยคำแปลใหม่ ตัวละคร เวลา และอารมณ์ของแต่ละประโยคคงเดิม"""
     job = store.get(job_id)
     utterances = hallucination.clean(store.load_transcript(job_id))
     for u in utterances:
-        u.target, u.check_note = "", ""
+        u.target, u.check_note, u.qa_flags = "", "", []
     _translate_and_fit(store, job_id, utterances, job.detected_lang or job.source_lang or "", 0.0, 1.0)
 
 
@@ -1115,15 +1164,19 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
             speech += known
         bed = mix.nonspeech(orig, orig_sr, speech, total, sr, is_speech) * settings.nonspeech_gain
         _free_vram("transcribe")
-    mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60)
-    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", rs.voice_gain, rs.bgm_gain)
+    mix.place_clips(clips, total, sr, d / "dub_voice.wav", bed, settings.room_reverb, settings.room_rt60,
+                    gain=rs.voice_gain, width=settings.room_width)
+    duck = mix.Duck(settings.duck_depth_db, settings.duck_below_db, settings.duck_ratio,
+                    settings.duck_attack_ms, settings.duck_release_ms) if settings.duck else None
+    mix.mix_tracks(d / "dub_voice.wav", d / "bgm.wav", d / "final_audio.wav", bgm_gain=rs.bgm_gain, duck=duck)
     if timeline is not None:  # ไม่มีวิดีโอ: เก็บเสียงพากย์แยกผู้พูดไว้ส่งออก (timeline/exporter.py)
         subs.write_srt(utterances, d / "subtitles.srt")
         dub = d / "timeline" / "dub"
         dub.mkdir(parents=True, exist_ok=True)
         for s in {_group_speaker(g) for g in groups}:
             mine = [c for c, g in zip(clips, groups) if _group_speaker(g) == s]
-            mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60)
+            mix.place_clips(mine, total, sr, dub / f"{s}.wav", None, settings.room_reverb, settings.room_rt60,
+                            width=settings.room_width)
         _record_voice_usage(job, groups, done, sr, library_refs, mood_of)
         _remember(store, job_id, utterances)
         return

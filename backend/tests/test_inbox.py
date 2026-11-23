@@ -90,7 +90,7 @@ def test_add_failure_does_not_raise(book, monkeypatch):
 
 
 @pytest.mark.parametrize("kind,key,expect", [
-    ("done", "job_done", "พร้อมดูผล"), ("review", "job_review", "รอคุณตรวจบท"), ("failed", "job_failed", "กดลองใหม่"),
+    ("done", "job_done", "พร้อมดูผล"), ("review", "job_review", "รอคุณตรวจบท"), ("failed", "job_failed", "ทำไม่สำเร็จ"),
 ])
 def test_job_events_create_inbox_rows_even_for_fast_or_email_off(book, kind, key, expect):
     job = SimpleNamespace(filename="clip.mp4", error="boom\nmore")
@@ -98,7 +98,11 @@ def test_job_events_create_inbox_rows_even_for_fast_or_email_off(book, kind, key
     item = inbox.list_for("u1")["items"][0]
     assert item["kind"] == key and expect in item["body"] and item["link"] == "/jobs/j9" and item["job_id"] == "j9"
     if kind == "failed":
-        assert "boom" in item["body"] and "more" not in item["body"]
+        assert item["body"] == (
+            "งาน “clip.mp4” ทำไม่สำเร็จ เครดิตของขั้นที่ไม่สำเร็จคืนให้อัตโนมัติ "
+            "กดเปิดงานเพื่อดูรายละเอียดและลองใหม่"
+        )
+        assert "boom" not in item["body"] and "more" not in item["body"]
 
 
 def test_api_routes_are_scoped_to_the_signed_in_user(book):

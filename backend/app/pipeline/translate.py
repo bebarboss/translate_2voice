@@ -39,7 +39,7 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ชื่อ ตัวเลข เวลา สถานที่ คำปฏิเสธ (ไม่/อย่า/ยัง) และคำถามต้องตรงกับต้นฉบับเสมอ
 2. แปลเป็นคำพูด ไม่ใช่ภาษาเขียน: เขียนแบบที่คนไทยพูดกันจริงในสถานการณ์นั้น ให้นักพากย์อ่านออกเสียงแล้วลื่นปาก
    ไม่แปลทีละคำ เรียงประโยคแบบไทย
-   ห้ามเติมคำลงท้าย (นะ ครับ ค่ะ สิ ล่ะ เลย เถอะ หรอก จ้ะ) ใช้ได้เฉพาะคำถามที่ต้องมีคำแสดงคำถาม (ไหม เหรอ หรือ)
+   ห้ามเติมคำลงท้าย (นะ ครับ ค่ะ สิ ล่ะ เลย เถอะ หรอก จ้ะ) ยกเว้นคลิปพูดสบาย ๆ ตามข้อ 13 ใช้ได้เฉพาะคำถามที่ต้องมีคำแสดงคำถาม (ไหม เหรอ หรือ)
    เลี่ยงคำภาษาเขียนหรือภาษาทางการ เช่น ซึ่ง ดังนั้น อย่างไรก็ตาม กระผม ดิฉัน ท่าน(เมื่อไม่ใช่ยศ) ทำการ มีความ… เว้นแต่ตัวละครพูดแบบนั้นจริง
    ประโยคต้องเต็มแบบที่คนพูด ไม่ห้วนเป็นวลีโทรเลข และห้ามใช้คำย่อหรือตัวย่อ (ชม. กม. กก. รพ. กทม. ฯลฯ) ให้เขียนเต็มตามที่อ่านออกเสียง เช่น "สองชั่วโมง" เพราะนักพากย์อ่านตามตัวอักษร
    ตัวอย่าง: "I don't think that's a good idea." → "ฉันว่าไม่ดีมั้ง" ไม่ใช่ "ฉันไม่คิดว่านั่นเป็นความคิดที่ดี"
@@ -52,6 +52,7 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ถ้าแปลแล้วสั้นกว่า min_chars ให้แปลส่วนที่ต้นฉบับพูดให้ครบทุกคำ หรือเลือกคำพูดที่ยาวขึ้นแต่ความหมายเท่าเดิม ห้ามเติมคำลงท้าย ห้ามแต่งเนื้อหาใหม่
    ถ้ายาวเกิน max_chars ให้ตัดคำเสริมและคำซ้ำก่อน ห้ามตัดชื่อเฉพาะ ตัวเลข คำปฏิเสธ หรือคำถาม
 6. ชื่อคนและสถานที่ ให้สะกดตามที่ใช้กันในฉบับภาษาไทยของเรื่องนั้น และเหมือนกันทุกครั้ง ถ้ามี glossary ให้ใช้คำแปลตาม glossary ทุกตัวอักษร
+   ชื่อแบรนด์/ผลิตภัณฑ์ (Siri → ซิริ, Alexa → อเล็กซา, TikTok → ติ๊กต็อก, ChatGPT → แชตจีพีที) ให้ทับศัพท์ตามที่คนไทยเรียกกัน ไม่แปลเป็นคำไทยอื่น (Siri ไม่ใช่ ซีรี่ย์)
 7. แต่ละ sentence ถูกตัดเป็นท่อนตามเวลา (parts) — แปลทีละ part ตาม text ของ part นั้นเท่านั้น
    จำนวนท่อนคำตอบต้องเท่ากับ parts พอดี และ parts[i] ในคำตอบต้องตรงความหมายของ parts[i].text ต้นฉบับเท่านั้น
    ห้ามย้ายตัวเลข ชื่อเฉพาะ คำสำคัญ หรือใจความจาก part อื่นมาใส่ (แม้ประโยคต้นฉบับจะขาดกลางคำ) เพราะเสียงพากย์แต่ละท่อนเล่นตรงเวลานั้น
@@ -63,8 +64,14 @@ SYSTEM_PROMPT_TH = """คุณคือนักแปลบทพากย์�
    ท่อนที่มี previous_translation คือต้นฉบับประโยคเดียวกันที่เคยพากย์ไปแล้ว ให้ใช้คำแปลนั้นถ้าเข้ากับบริบท ปรับความยาวได้ตาม min_chars–max_chars
 11. previous_lines และ next_lines คือบทก่อนหน้าและถัดไปของ sentences ไว้ดูบริบทให้ความหมาย สรรพนาม และน้ำเสียงต่อกันเท่านั้น ห้ามแปลซ้ำ ห้ามใส่ในคำตอบ และห้ามดึงเนื้อหาจากบทเหล่านั้นมาเติมใน sentences
    ถ้า content_type เป็น teaser บทข้างเคียงอาจเป็นคนละฉาก ห้ามตีความให้ต่อกัน
-12. sentence ที่มี continuity_issue คือบทที่ผู้ตรวจพบว่าคำแปลเดิมความหมายไม่ต่อกับบทข้างเคียง ให้แปลใหม่แก้จุดนั้น โดยยังตรงกับต้นฉบับ
-13. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
+12. sentence ที่มี continuity_issue คือบทที่ผู้ตรวจพบว่าคำแปลเดิมผิดความหมายหรือไม่ต่อกับบทข้างเคียง (ในนั้นบอกเหตุผล) ให้แปลใหม่แก้จุดนั้น โดยแปลจากต้นฉบับของท่อนนั้นให้ตรง
+13. ใช้ได้กับทุกเนื้อหาเสียง (ละคร สัมภาษณ์ รีวิว สอน เล่าเรื่อง สารคดี โฆษณา) ภาษาไทยต้องฟังเป็นคนพูดจริงตามแนวและผู้พูดของคลิปนั้น โดยไม่เสียความหมายของ text ท่อนนั้น
+    ทุกท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามเอาเนื้อหา คำตอบ หรือตัวเลขจากบทข้างเคียงมาใส่ แม้ท่อนนั้นจะสั้นหรือเป็นคำถามก็ต้องแปลคำถามนั้น
+    สำนวนและสแลงแปลตามความหมายที่ text ท่อนนั้นสื่อ ไม่แปลทีละคำ ถ้าแปลตรงตัวแล้วคนไทยฟังไม่เข้าใจให้เลือกคำไทยที่สื่อความเดิม (ไม่แน่ใจความหมายของคำไหนให้แปลตามตัวอักษรที่ได้ยินอย่างระวัง ห้ามเดาเนื้อหาใหม่)
+    ระดับภาษาและความแรงให้เท่าต้นฉบับ: คำหยาบ คำอุทาน คำเน้น แรงพอกัน คลิปทางการยังคงสุภาพ คลิปพูดสบาย ๆ ใช้คำเชื่อมและคำลงท้ายแบบพูดได้พอประมาณ
+    ศัพท์ที่ซ้ำให้ใช้คำไทยคำเดียวตลอด แต่ไม่เรียงวลีเดิมซ้ำแน่นจนฟังเป็นหุ่นยนต์ ห้ามใช้คำขยายซ้อนกัน (เช่น สูงสุดที่สุด)
+    ห้ามเปลี่ยนคำที่ผู้พูดใช้เรียกผู้ฟัง (ผู้ชม ลูกค้า ผู้ชาย ทุกคน) เป็นคำอื่นที่ต้นฉบับไม่ได้เรียก
+14. ตอบเป็น JSON อย่างเดียว ไม่มีคำอธิบาย"""
 
 SYSTEM_PROMPT_EN = """You are a professional dubbing translator. Translate each line of drama dialogue into natural spoken English for a voice actor to read.
 Rules:
@@ -182,14 +189,18 @@ DUB_JUDGE_PROMPT = """คุณเป็นผู้ตรวจคุณภา�
 กฎ: ถ้า heard ว่างหรือคนละเรื่องจาก target ชัด ๆ ใช้ retry; ถ้า target ยาวเกิน seconds ชัด ๆ ใช้ shorten; ไม่แน่ใจใช้ retry ก่อน accept
 ตอบ JSON เท่านั้น {"lines":[{"id":1,"action":"retry"}]} ครบทุก id"""
 
-NATURALIZE_PROMPT_TH = """คุณปรับบทพากย์ไทยให้ออกเสียงเป็นธรรมชาติเหมือนบทละคร/ซีรีส์
+NATURALIZE_PROMPT_TH = """คุณปรับบทพากย์ไทยให้ออกเสียงเป็นธรรมชาติเหมือนคนไทยพูดจริง และตรวจความหมายกับต้นฉบับไปพร้อมกัน
 แต่ละบรรทัดมี source (ต้นฉบับ), text (คำแปลปัจจุบัน), seconds (เวลาพูดที่มี), speaker
+before และ after คือบทข้างเคียง ไว้ดูบริบทเท่านั้น ห้ามแก้ ห้ามคืนใน lines
 กฎ:
-1. รักษาใจความ ชื่อคน และข้อเท็จจริงตาม source/text ห้ามแต่งเรื่องใหม่
-2. ใช้ภาษาพูดไทยที่ตัวละครพูดจริง (สรรพนาม คำลงท้าย ระดับภาษาตามสถานะ) ไม่ใช่แปลตรงตัวแข็ง ๆ
-3. ความยาวต้องพูดได้ใน seconds (ราว 11 ตัวอักษรไทย/วินาที ไม่นับวรรณยุกต์) ไม่ยาวเกิน text เดิมเกิน ~20%
-4. บรรทัดที่ฟังเป็นธรรมชาติอยู่แล้ว คืน text เดิม
-5. ตอบ JSON เท่านั้น {"lines":[{"id":1,"text":"..."}]} ครบทุก id"""
+1. ตรวจ text ทีละบรรทัดเทียบกับ source ถ้าความหมายผิดหรือหลุด (แปลศัพท์ผิด เช่น wanted→ถูกต้อง, ใจความขาด/เกิน) ให้แก้ให้ตรง source ก่อนเรื่องสำนวน
+   ชื่อคน ตัวเลข และข้อเท็จจริงต้องตรง source ห้ามแต่งเรื่องใหม่
+2. ใช้ภาษาพูดไทยที่คนพูดจริง (สรรพนาม คำลงท้ายพอประมาณ ระดับภาษาตามผู้พูด) ไม่ใช่แปลตรงตัวแข็ง ๆ หรือภาษาเขียน
+   อ่านออกเสียงในใจแล้วต้องลื่น ไม่ซ้ำคำเดิมแน่น ศัพท์เดียวกันใช้คำไทยเดียวกันทั้งบท สแลง/คำหยาบต้องแรงพอกับต้นฉบับ
+3. บรรทัดที่จบด้วยคำค้าง (และ ที่ เธอ ซึ่ง) ให้เกลาให้จบที่ขอบคำ โดยไม่เอาใจความของบรรทัดอื่นมาใส่
+4. ความยาวต้องพูดได้ใน seconds (ราว 11 ตัวอักษรไทย/วินาที ไม่นับวรรณยุกต์) ไม่ยาวเกิน text เดิมเกิน ~20%
+5. บรรทัดที่ถูกความหมายและฟังเป็นธรรมชาติอยู่แล้ว คืน text เดิมทุกตัวอักษร
+6. ตอบ JSON เท่านั้น {"lines":[{"id":1,"text":"..."}]} ครบทุก id ใน lines"""
 
 NATURALIZE_PROMPT_EN = """You rewrite dubbed English dialogue so it sounds like natural spoken drama.
 Each line has source, text (current translation), seconds, speaker.
@@ -215,12 +226,24 @@ CONTINUITY_PROMPT = """คุณคือผู้ตรวจบทพากย
 2. ไม่นับเรื่องสำนวน ความไพเราะ หรือความยาว ไม่แน่ใจไม่ต้องใส่
 ตอบเป็น JSON รูปแบบ {"breaks":[{"id":1,"note":"เหตุผลสั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"breaks":[]}"""
 
+ACCURACY_PROMPT_TH = """คุณคือบรรณาธิการตรวจบทพากย์ไทยที่แปลจากต้นฉบับ lines คือบทที่ต้องตรวจตามลำดับเวลา (source = ต้นฉบับ, text = คำแปลไทย) previous_lines และ next_lines คือบทข้างเคียง ไว้ดูบริบท ไม่ต้องตรวจ
+หาบรรทัดที่ "ต้องแก้จริง" เพียง 3 แบบ:
+1. ความหมายผิดจากต้นฉบับ (แปลศัพท์ ตัวเลข ปฏิเสธ คน/ผู้กระทำ ผิด) หรือใจความหาย/เกินมา หรือเอาเนื้อหาของบรรทัดอื่นมาใส่
+2. ไทยฟังไม่เป็นธรรมชาติจนคนไทยอ่านแล้วไม่เข้าใจหรือฟังเป็นเครื่องแปล (แปลตรงตัวผิดความหมาย คำซ้อน ประโยคขาด)
+3. จบด้วยคำค้าง (และ ที่ เธอ ซึ่ง) ทั้งที่ source ท่อนนั้นจบสมบูรณ์
+กฎ:
+- เทียบกับ source เสมอ ต้นฉบับถูกตัดกลางประโยค (ไม่จบความ) ไม่นับเป็นความผิด
+- ไม่นับเรื่องสำนวนที่ถูกอยู่แล้วแต่ไม่ถูกใจ ความไพเราะ หรือความยาว ไม่แน่ใจไม่ต้องใส่ ใส่เฉพาะที่ผิดชัดเจน
+- note บอกสิ่งที่ผิดและที่ถูกควรเป็นอะไร สั้น ๆ ภาษาไทย
+ตอบเป็น JSON รูปแบบ {"bad":[{"id":1,"note":"..."}]} ไม่มีให้ตอบ {"bad":[]}"""
+
 TERMS_PROMPT = """คุณคือผู้ตรวจบทพากย์ของคลิปทีเซอร์หรือคลิปรวมฉาก บทแต่ละช่วงอาจเป็นคนละฉาก ไม่ต้องตรวจว่าเรื่องต่อกันไหม
 ตรวจอย่างเดียวว่าชื่อคนและศัพท์เฉพาะในคำแปล (text) ตรงกันทุกบรรทัด และตรงกับ glossary และ names (ถ้ามี) เช่น ชื่อเดียวกันแต่สะกดต่างกัน หรือต้นฉบับ (source) มีชื่อแต่คำแปลใช้ชื่ออื่น
 ไม่นับสำนวน สรรพนาม หรือความยาว ไม่แน่ใจไม่ต้องใส่ ห้ามเสนอคำแปลใหม่ทั้งบรรทัด
 ตอบเป็น JSON รูปแบบ {"issues":[{"id":1,"note":"ชื่อหรือศัพท์ที่ไม่ตรงกัน สั้น ๆ ภาษาไทย"}]} ไม่มีให้ตอบ {"issues":[]}"""
 
 CONTEXT_BEFORE, CONTEXT_AFTER = 3, 2  # จำนวนประโยคข้างเคียงที่ส่งไปดูบริบทตอนแปล
+VERIFY_ROUNDS = 2  # ตรวจความถูกต้องแล้วแปลใหม่เฉพาะบรรทัดที่ผิดได้ไม่เกินกี่รอบ
 REVIEW_ROUNDS = 2  # แปลใหม่ได้ไม่เกินกี่รอบในขั้นตรวจความต่อเนื่อง
 TERMS_BATCH_SIZE = 60  # ตรวจชื่อต้องเห็นหลายบรรทัดพร้อมกันถึงจะเทียบตัวสะกดได้
 
@@ -260,6 +283,14 @@ def _speaker_label(speaker: str, hints: dict) -> str:
 
 def _glossary(hints: dict) -> list[str]:
     return [line.strip() for line in (hints.get("glossary") or "").splitlines() if line.strip()][:60]
+
+
+GLOSS_NOTE = re.compile(r"\s+#(?:\s.*)?$")
+
+
+def gloss_target(dst: str) -> str:
+    """ส่วนคำแปลของบรรทัด glossary "ต้นฉบับ = คำแปล # หมายเหตุ" (หมายเหตุไม่บังคับ ตัดออกก่อนเทียบ)"""
+    return GLOSS_NOTE.sub("", dst or "").strip()
 
 
 def _parse_json(text: str) -> dict:
@@ -581,12 +612,16 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
     else:
         around = {"previous_lines": [{"speaker": _speaker_label(u.speaker, hints), "text": u.target} for u in context]}
     issues = hints.get("issues") or {}
+    from . import translate_quality as Q  # วนกันถ้า import ที่หัวไฟล์
+    idioms = Q.idiom_hints([u.source for g in groups for u in g]) if target == "th" else []
+    syllables = target == "th" and settings.translate_syllable_budget
     payload = {
         "title": title,
         **({"content_type": hints["content_type"]} if hints.get("content_type") else {}),
         **({"examples": examples} if examples else {}),
         **({"genre": hints["genre"]} if hints.get("genre") else {}),
         **({"glossary": glossary} if glossary else {}),
+        **({"idioms": idioms} if idioms else {}),
         **({"register": hints["register"]} if hints.get("register") else {}),
         **({"characters": {_speaker_label(sp, hints): info for sp, info in hints["characters"].items()
                            if any(sp == g[0].speaker for g in groups)}} if hints.get("characters") else {}),
@@ -599,6 +634,7 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
                                   # ขั้นต่ำ 80% ของเวลาที่ตัวละครพูดจริง (ไม่นับช่วงเงียบท้ายประโยค) ให้เสียงพากย์จบพร้อมปาก
                                   lo_key: max(1, int(max_length(u.duration, target) * 0.8)) if u.duration >= 1.0 else 1,
                                   limit_key: max_length(budget.get(u.id, u.duration), target),
+                                  **(Q.syllable_budget(budget.get(u.id, u.duration)) if syllables else {}),
                                   "text": (hints.get("marked") or {}).get(u.id, u.source),
                                   **({"likely_said": hints["asr_fixes"][u.id]} if u.id in (hints.get("asr_fixes") or {}) else {}),
                                   **({"previous_translation": fixed[u.id]} if u.id in fixed else {})}
@@ -613,7 +649,8 @@ def _groups_prompt(groups: list[list[Utterance]], lang: str, target: str,
             "One translated string per source part, in order — each part only from that part's text; never move numbers/names across parts.\n"
             'Reply as {"sentences":[{"id":1,"parts":["part 1","part 2"]}]}\n\n'
             + json.dumps(payload, ensure_ascii=False))
-    return SYSTEM_PROMPT_TH + (SAME_LANG_RULE_TH if same else ""), (
+    extra = (Q.LENGTH_RULE_TH if syllables else "") + (Q.IDIOM_RULE_TH if idioms else "")
+    return SYSTEM_PROMPT_TH + (SAME_LANG_RULE_TH if same else "") + extra, (
         "แปล sentences เป็นภาษาไทย (title คือชื่อคลิป previous_lines และ next_lines คือบทก่อนหน้าและถัดไป ไว้ดูบริบท ห้ามแปลซ้ำหรือใส่ในคำตอบ) "
         "ตอบ parts ให้ครบหนึ่งต่อหนึ่งตามลำดับ — แต่ละท่อนแปลจาก text ของท่อนนั้นเท่านั้น ห้ามย้ายตัวเลข/ชื่อ/ใจความข้ามท่อน\n"
         'ตอบรูปแบบ {"sentences":[{"id":1,"parts":["ท่อนที่ 1","ท่อนที่ 2"]}]}\n\n'
@@ -1059,6 +1096,11 @@ def translate_utterances(utts: list[Utterance], lang: str, target: str = "th",
                 on_progress((i + 1) / len(utts))
         return
 
+    if settings.translate_scene_mode and target == "th" and not same_lang(lang, target):
+        from . import translate_quality as Q
+        Q.translate_scenes(hints["sentences"], lang, title, hints, on_progress, check_cancel)
+        return
+
     done = 0
     for batch in _group_batches(hints["sentences"], settings.translate_batch_size):
         if check_cancel:
@@ -1325,8 +1367,13 @@ def naturalize_dialogue(utts: list[Utterance], target: str = "th",
     for batch in _chunks(lines, min(16, settings.translate_batch_size)):
         if check_cancel:
             check_cancel()
-        payload = {"lines": [{"id": u.id, "speaker": u.speaker, "seconds": round(u.duration, 1),
-                              "source": u.source, "text": u.target} for u in batch]}
+        pos = {id(x): k for k, x in enumerate(lines)}
+        lo, hi = pos[id(batch[0])], pos[id(batch[-1])]
+        brief = lambda u: {"speaker": u.speaker, "source": u.source, "text": u.target}  # noqa: E731
+        payload = {"before": [brief(u) for u in lines[max(0, lo - 3):lo]],
+                   "lines": [{"id": u.id, "speaker": u.speaker, "seconds": round(u.duration, 1),
+                              "source": u.source, "text": u.target} for u in batch],
+                   "after": [brief(u) for u in lines[hi + 1:hi + 3]]}
         try:
             result = _parse_json(_chat(prompt, json.dumps(payload, ensure_ascii=False), temperature=0.3,
                                        max_tokens=min(4096, 300 + 120 * len(batch))))
@@ -1588,6 +1635,84 @@ def _continuity_breaks(order: list[Utterance], ids: Optional[set[int]] = None,
     return out
 
 
+def _accuracy_issues(order: list[Utterance], ids: Optional[set[int]] = None,
+                     check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """id → เหตุผล ของบรรทัดที่คำแปลผิดความหมายหรือไม่เป็นภาษาพูด ids: ตรวจเฉพาะบรรทัดเหล่านี้ (ดูบริบทข้างเคียงด้วย)
+    เรียกไม่สำเร็จถือว่าไม่พบ ขั้นตรวจไม่ควรทำให้งานล้ม"""
+    out: dict[int, str] = {}
+    window = 8
+    for lo in range(0, len(order), window):
+        chunk = order[lo:lo + window]
+        if ids is not None and not any(u.id in ids for u in chunk):
+            continue
+        if check_cancel:
+            check_cancel()
+        brief = lambda u: {"speaker": u.speaker, "source": u.source, "text": u.target}  # noqa: E731
+        payload = {"previous_lines": [brief(u) for u in order[max(0, lo - 2):lo]],
+                   "lines": [{"id": u.id, "speaker": u.speaker, "source": u.source, "text": u.target}
+                             for u in chunk if (u.target or "").strip()],
+                   "next_lines": [brief(u) for u in order[lo + window:lo + window + 1]]}
+        try:
+            result = _parse_json(_chat(ACCURACY_PROMPT_TH, json.dumps(payload, ensure_ascii=False), temperature=0.1,
+                                       max_tokens=min(2048, 300 + 120 * len(chunk))))
+            found = _notes(result.get("bad"), {u.id for u in chunk} if ids is None else {u.id for u in chunk} & ids)
+            out.update({k: v or "คำแปลอาจผิดความหมาย" for k, v in found.items()})
+        except Exception as exc:  # noqa: BLE001
+            log.warning("accuracy check failed: %s", exc)
+    return out
+
+
+def verify_translation(utts: list[Utterance], lang: str, target: str = "th", max_speedup: float = 1.10,
+                       title: str = "", hints: Optional[dict] = None,
+                       check_cancel: Optional[Callable[[], None]] = None) -> dict[int, str]:
+    """ผู้ตรวจอ่านบทแปลเทียบต้นฉบับ → แปลใหม่เฉพาะประโยคที่ผิด (ส่งเหตุผลให้ผู้แปล) วนไม่เกิน VERIFY_ROUNDS รอบ
+    คืน id → เหตุผลของบรรทัดที่ยังไม่ผ่านหลังแก้ (ให้ผู้เรียกติดป้ายให้คนดู) ล้มเหลวคงบทเดิม ไม่ทำให้งานล้ม"""
+    if target != "th" or not settings.translate_verify or settings.mock_pipeline or not utts:
+        return {}
+    hints = _with_order(utts, hints)
+    order = [u for g in hints["sentences"] for u in g]
+    cap = max(2, int(len(order) * 0.4))  # แก้ไม่เกิน 40% ของบรรทัด ถ้ามากกว่านี้แปลว่าผู้ตรวจเกินเหตุ
+    bad = _accuracy_issues(order, check_cancel=check_cancel)
+    log.info("verify: %d/%d lines flagged", len(bad), len(order))
+    if not bad:
+        return {}
+    bad = dict(list(bad.items())[:cap])
+    if not settings.translate_verify_fix:
+        return bad  # ติดป้ายให้คนฟังอย่างเดียว ไม่แก้บทเอง (ผลทดสอบแปลใหม่ด้วย Qwen ยังไม่สม่ำเสมอ)
+    backup = {u.id: u.target for u in order}
+    changed: set[int] = set()
+    for rnd in range(VERIFY_ROUNDS):
+        if check_cancel:
+            check_cancel()
+        try:
+            tried = _retranslate(bad, lang, target, title, hints)
+        except RuntimeError as exc:
+            log.warning("verify retranslate failed: %s", exc)
+            break
+        changed |= tried
+        fit_lengths(utts, target, max_speedup, only=tried)
+        # ใช้บทใหม่เฉพาะเมื่อผ่านตรวจซ้ำ ที่ไม่ผ่านย้อนกลับบทเดิม (กันแปลใหม่แล้วเติมเนื้อหาที่ต้นฉบับไม่มี)
+        still = _accuracy_issues(order, tried, check_cancel)
+        log.info("verify round %d: %d lines still flagged", rnd + 1, len(still))
+        bad = {k: v for k, v in still.items() if k in bad or k in tried}
+        if not bad:
+            break
+    # ย้อนกลับ: บรรทัดที่ยังไม่ผ่าน และบรรทัดที่ยาวผิดปกติเทียบกับของเดิม (มักเป็นการแต่งเติม)
+    reverted = 0
+    for u in order:
+        if u.id not in changed:
+            continue
+        old, new = (backup.get(u.id) or "").strip(), (u.target or "").strip()
+        runaway = bool(old) and len(new) > max(12, len(old) * 1.35)
+        if u.id in bad or runaway or not new:
+            u.target = backup[u.id]
+            reverted += 1
+    if reverted:
+        log.info("verify: reverted %d lines to the original translation", reverted)
+        fit_lengths(utts, target, max_speedup, only=changed)
+    return bad
+
+
 def _keep_better_target(old: str, new: str, target: str) -> str:
     """ถ้ารอบแปลใหม่ว่าง / มีอักษรต้นฉบับ / หดสั้นผิดปกติ → คงบทเดิม"""
     old, new = (old or "").strip(), (new or "").strip()
@@ -1627,7 +1752,7 @@ def _glossary_misses(hints: dict) -> dict[int, str]:
     out: dict[int, str] = {}
     for line in _glossary(hints):
         src, _, dst = line.partition("=")
-        src, dst = src.strip().lower(), dst.strip().lower()
+        src, dst = src.strip().lower(), gloss_target(dst).lower()
         if len(src) < 2 or not dst:
             continue
         for g in hints["sentences"]:

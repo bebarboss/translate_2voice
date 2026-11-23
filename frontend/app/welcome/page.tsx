@@ -8,6 +8,7 @@ import { MicIcon } from "@/components/Icons";
 import { useAuth } from "@/lib/useAuth";
 import { signInPath } from "@/lib/auth-routes";
 import { chooseLang, getLang, tx } from "@/lib/i18n";
+import { pickLang, visibleDemoClips } from "@/lib/demo-clips";
 /** หน้าแรกก่อนเข้าสู่ระบบ: บอกว่าระบบทำอะไร แล้วพาไปสมัครหรือเข้าสู่ระบบ */
 
 const LANES = [
@@ -66,6 +67,39 @@ function Demo() {
   );
 }
 
+/** "ฟังตัวอย่าง": เสียงก่อน/หลังพากย์ จาก lib/demo-clips.ts ไม่มีคลิป = ไม่แสดงส่วนนี้เลย */
+function Samples() {
+  const clips = visibleDemoClips();
+  if (!clips.length) return null;
+  const lang = getLang();
+  return (
+    <section id="listen" className="lp-section">
+      <h2>{tx("ฟังตัวอย่างงานพากย์")}</h2>
+      <p className="lp-section-lead">{tx("เทียบเสียงต้นฉบับกับเสียงที่พากย์ไทยแล้ว")}</p>
+      <div className="lp-samples">
+        {clips.map((c) => {
+          const title = pickLang(c.title, lang);
+          const caption = pickLang(c.caption, lang);
+          return (
+            <article key={c.after} className="lp-card lp-sample">
+              <h3>{title}</h3>
+              {caption && <p>{caption}</p>}
+              <div className="lp-sample-row">
+                <span>{tx("ก่อนพากย์")}</span>
+                <audio controls preload="none" src={c.before} aria-label={`${title} · ${tx("ก่อนพากย์")}`} />
+              </div>
+              <div className="lp-sample-row">
+                <span className="lp-sample-after">{tx("หลังพากย์")}</span>
+                <audio controls preload="none" src={c.after} aria-label={`${title} · ${tx("หลังพากย์")}`} />
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function WelcomePage() {
   const { config, user } = useAuth();
   const [next, setNext] = useState("/dashboard");
@@ -100,7 +134,6 @@ export default function WelcomePage() {
       <main>
         <section className="lp-hero">
           <div className="lp-hero-copy">
-            <p className="lp-kicker">{BRAND_NAME}</p>
             <h1>
               <span className="lp-h-bold">{tx("พากย์ดี")}</span>
               <span className="lp-h-thin">{tx("ด้วย AI")}</span>
@@ -126,6 +159,8 @@ export default function WelcomePage() {
           />
           <Demo />
         </section>
+
+        <Samples />
 
         <section id="features" className="lp-section">
           <h2>{tx("ทุกขั้นของงานพากย์ ในที่เดียว")}</h2>
@@ -186,7 +221,13 @@ export default function WelcomePage() {
         </section>
       </main>
 
-      <footer className="lp-footer">© {new Date().getFullYear()}  {tx("Pakdee · ใช้กับคลิปที่คุณมีสิทธิ์และเสียงที่ได้รับอนุญาตเท่านั้น")}</footer>
+      <footer className="lp-footer">
+        <span>© {new Date().getFullYear()}  {tx("Pakdee · ใช้กับคลิปที่คุณมีสิทธิ์และเสียงที่ได้รับอนุญาตเท่านั้น")}</span>
+        <nav className="lp-footer-links" aria-label={tx("เอกสารทางกฎหมาย")}>
+          <Link href="/terms">{tx("ข้อกำหนดการใช้งาน")}</Link>
+          <Link href="/privacy">{tx("นโยบายความเป็นส่วนตัว")}</Link>
+        </nav>
+      </footer>
     </div>
   );
 }

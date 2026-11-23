@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, fileUrl, type Job, type Utterance } from "@/lib/api";
+import { api, fileUrl, unsureFlags, type Job, type Utterance } from "@/lib/api";
 import { TARGET_LABEL, estimateSeconds, fmtDuration, fmtTime, langName, speakerColor, stripPauseMarks } from "@/lib/format";
 import { isChanged, useTranscript } from "@/lib/useTranscript";
 import LineCard from "./LineCard";
@@ -159,6 +159,10 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
   };
 
   const onDub = async () => {
+    if (unsureLines.length && !window.confirm(tx("ยังมี {0} ประโยคที่ระบบไม่แน่ใจและยังไม่ได้แก้ พากย์ตามบทเดิมเลยไหม?", { 0: unsureLines.length }))) {
+      setFilter("check");
+      return;
+    }
     const empty = sorted.filter((u) => !tr.draftOf(u).target.trim()).length;
     setBusy("dub");
     setMessage(null);
@@ -197,7 +201,10 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
     return !!text.trim() && estimateSeconds(text, job.target_lang) > dur * maxSpeedup;
   };
   const longCount = sorted.filter(tooLong).length;
-  const checkOf = (u: Utterance) => !tr.draftOf(u).target.trim() || !!u.unclear || !!(u.check_note || "").trim() || !!(u.unclear_reason || "").trim();
+  const checkOf = (u: Utterance) => !tr.draftOf(u).target.trim() || !!u.unclear || !!(u.check_note || "").trim() || !!(u.unclear_reason || "").trim()
+    || unsureFlags(u).length > 0;
+  // บรรทัดที่ระบบไม่แน่ใจและยังไม่ได้แก้บท: ต้องให้เจ้าของงานเห็นก่อนพากย์ ไม่ปล่อยผ่านเงียบ ๆ
+  const unsureLines = sorted.filter((u) => unsureFlags(u).length > 0 && !isChanged(u, tr.draftOf(u)));
   const matches: Record<LineFilter, (u: Utterance) => boolean> = {
     all: () => true,
     check: checkOf,
@@ -254,6 +261,14 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
         </div>
       )}
       {message && <div className={`alert ${message.kind}`} role={message.kind === "error" ? "alert" : "status"}>{message.text}</div>}
+      {unsureLines.length > 0 && (
+        <div className="alert warn" role="status">
+          {tx("ระบบไม่แน่ใจ {0} ประโยค (ตัวเลข ชื่อ คำเกิน หรือต้นฉบับถอดเสียงไม่ชัด) ฟังต้นฉบับแล้วแก้บทก่อนพากย์", { 0: unsureLines.length })}{" "}
+          <button type="button" className="btn small" onClick={() => { setFilter("check"); const u = unsureLines[0]; setPicked(u.id); seek(u.start); }}>
+            {tx("ไปที่ประโยคแรก")}
+          </button>
+        </div>
+      )}
 
       <ProjectPanel job={job} label={tr.label} onChanged={onChanged} />
       <RetranslatePanel job={job} names={tr.names} onStarted={onChanged}
@@ -319,7 +334,7 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                 const d = tr.draftOf(u);
                 return (
                   <button key={u.id} type="button" ref={(el) => { lineRefs.current[u.id] = el as unknown as HTMLDivElement | null; }}
-                    className={`line-row${selected?.id === u.id ? " selected" : ""}${speaking?.id === u.id ? " speaking" : ""}`}
+                    className={`line-row${selected?.id === u.id ? " selected" : ""}${speaking?.id === u.id ? " speaking" : ""}${unsureFlags(u).length && !isChanged(u, d) ? " uncertain" : ""}`}
                     aria-pressed={selected?.id === u.id}
                     onClick={() => { setPicked(u.id); seek(u.start); }}>
                     <span className="lr-top">
@@ -330,7 +345,9 @@ export default function ReviewView({ job, onChanged, onCancelEdit }: {
                         {isChanged(u, d) && <span className="badge ok">{tx("แก้แล้ว")}</span>}
                         {tr.overlaps.ids.has(u.id) && <span className="badge info">{tx("พูดซ้อน")}</span>}
                         {tooLong(u) && <span className="badge warn">{tx("ยาวเกินเวลา")}</span>}
-                        {checkOf(u) && <span className="badge warn">{tx("ควรตรวจ")}</span>}
+                        {unsureFlags(u).length > 0 && !isChanged(u, d)
+                          ? <span className="badge warn" title={unsureFlags(u).map((f) => f.reason).join("\n")}>{tx("ระบบไม่แน่ใจ")}</span>
+                          : checkOf(u) && <span className="badge warn">{tx("ควรตรวจ")}</span>}
                         {!!(u.heard || "").trim() && <span className="badge warn">{tx("ควรฟัง")}</span>}
                       </span>
                     </span>

@@ -1,5 +1,7 @@
 import { redirectToSignIn } from "@/lib/auth-routes";
 import { tx } from "@/lib/i18n";
+import type { EmailPrefPatch, EmailPrefs } from "@/lib/notify-prefs";
+import { UNSUBSCRIBE_PATH } from "@/lib/unsubscribe";
 // ชนิดข้อมูลและฟังก์ชันเรียก Dubbing API (ผ่าน proxy /api ของ Next.js)
 
 export type JobStatus = "queued" | "running" | "awaiting_review" | "done" | "failed" | "cancelled";
@@ -328,10 +330,25 @@ export interface Utterance {
   unclear_reason?: string;
   /** ตรวจหลังแปลแล้วควรให้คนดู: เหตุผล */
   check_note?: string;
+  /** ป้ายตรวจคำแปลทุกแหล่ง fixed = ระบบแก้ให้แล้ว (before = บทเดิม) ที่ยังไม่ fixed = ระบบไม่แน่ใจ ต้องให้คนตรวจ */
+  qa_flags?: QaFlag[];
   ref_reading: string;
 }
 
 export type LineMood = Mood | "" | "normal";
+
+export type QaFlagKind = "meaning" | "naturalness" | "number" | "name" | "added_word" | "unclear_source";
+
+export interface QaFlag {
+  origin: "rule" | "self_check" | "verify";
+  kind: QaFlagKind | string;
+  reason: string;
+  fixed: boolean;
+  before?: string;
+}
+
+/** ป้ายที่ระบบยังไม่ได้แก้ = บรรทัดที่ไม่แน่ใจ */
+export const unsureFlags = (u: Pick<Utterance, "qa_flags">): QaFlag[] => (u.qa_flags ?? []).filter((f) => !f.fixed);
 
 export interface UtteranceEdit {
   id: number;
@@ -419,7 +436,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       redirectToSignIn();
     }
     // ล็อกอินแล้วแต่ยังไม่ได้กรอกข้อมูลเบื้องต้น → หน้ากรอกข้อมูล แล้วกลับมาหน้านี้
-    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy|actor-consent)/.test(window.location.pathname)) {
+    if (res.status === 428 && typeof window !== "undefined" && !/^\/(onboarding|login|welcome|terms|privacy|actor-consent|unsubscribe)/.test(window.location.pathname)) {
       window.location.href = `/onboarding?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
     throw new ApiError(errorMessage(res.status, body), res.status);
@@ -438,6 +455,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
 }
+
+/** ร่าง GET/PUT /auth/notify-prefs */
+export type NotifyPrefsBody = { email: EmailPrefs; always_on: string[] };
+/** 200 ของ GET /notifications/unsubscribe ไม่เปลี่ยนการตั้งค่า */
+export type UnsubscribePreview = { category: string };
+/** 200 ของ POST /notifications/unsubscribe */
+export type UnsubscribeResult = { ok: true; category: string };
 
 /** แจ้งเตือนในแอป (กระดิ่ง) title/body มาจากเซิร์ฟเวอร์เป็นภาษาไทย ไม่แปล */
 export type AppNotification = {
@@ -461,6 +485,15 @@ export const api = {
   acceptConsent: (body: ConsentChoice) => request<User>("/auth/consent", json("POST", body)),
   setMarketing: (on: boolean) => request<User>("/auth/marketing", json("PUT", { on })),
   setNotify: (on: boolean) => request<User>("/auth/notify", json("PUT", { on })),
+  /** สวิตช์อีเมลแยกชนิด ยังไม่มีบนเซิร์ฟเวอร์ = 404 หน้าบัญชีจะถอยไปใช้ setNotify */
+  notifyPrefs: () => request<NotifyPrefsBody>("/auth/notify-prefs"),
+  setNotifyPrefs: (partial: EmailPrefPatch) => request<NotifyPrefsBody>("/auth/notify-prefs", json("PUT", partial)),
+  /** อ่านชนิดอีเมลจากลิงก์ ไม่เปลี่ยนการตั้งค่า เรียกตอนเปิดหน้าเท่านั้น */
+  previewUnsubscribe: (token: string) =>
+    request<UnsubscribePreview>(`${UNSUBSCRIBE_PATH}?token=${encodeURIComponent(token)}`),
+  /** ยกเลิกรับอีเมลจากลิงก์ในจดหมาย ไม่ต้องล็อกอิน เรียกเมื่อผู้ใช้กดยืนยันเท่านั้น */
+  unsubscribeNotifications: (token: string) =>
+    request<UnsubscribeResult>(UNSUBSCRIBE_PATH, json("POST", { token })),
   notifications: (limit = 30) => request<{ items: AppNotification[]; unread: number }>(`/notifications?limit=${limit}`),
   notificationsUnread: () => request<{ unread: number }>("/notifications/unread"),
   readNotification: (id: string) => request<{ unread: number }>(`/notifications/${encodeURIComponent(id)}/read`, { method: "POST" }),

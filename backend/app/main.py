@@ -61,12 +61,16 @@ async def lifespan(_: FastAPI):
     worker.start()
     backup.start()
     daily_metrics.start()  # ทุก 23:59 Asia/Bangkok ประเมินงาน done ในวันนั้น เก็บลง DB
+    notify.start_mailer()
     try:  # อุ่นแคชนักพากย์ตั้งแต่สตาร์ท หน้าคลังเสียงโหลดครั้งแรกไม่ต้องรอ JOIN ไกล
         actors.voice_actors()
         actors.mood_reviews()
     except Exception:
         logging.getLogger("dubbing.actors").exception("อุ่นแคชเสียงนักพากย์ไม่สำเร็จ")
-    yield
+    try:
+        yield
+    finally:
+        notify.stop_mailer()
 
 
 app = FastAPI(
@@ -141,11 +145,16 @@ def access_guard(request: Request, x_user_token: Optional[str] = Header(default=
     """เปิด AUTH_ENABLED แล้ว: หาผู้ใช้จาก token ทุกคำขอ ต้องล็อกอิน และเข้าถึงได้เฉพาะงานของตัวเอง
     ปิดอยู่: ไม่ทำอะไร ระบบทำงานเหมือนเดิม"""
     request.state.user = None
+    path = request.url.path
+    # ต้องออกก่อนเช็ค session และก่อน 401/403 ทุกกรณี
+    # proxy ของหน้าเว็บลบคุกกี้ dub_session เมื่อ API ตอบ 401 แม้โทเคนยกเลิกจะเสีย
+    if notify.is_unsubscribe_path(path):
+        return
     if not accounts.auth_enabled():
         return
-    path = request.url.path
     # /auth/config ไม่ต้องมี session — ตอบจาก settings อย่างเดียว ไม่แย่ง Postgres ตอนโหลดหน้า
-    if path == "/auth/config" or path == "/health" or path.startswith(("/docs", "/redoc", "/openapi.json", "/billing/webhooks/")):
+    if path == "/auth/config" or path == "/health" or path.startswith(
+            ("/docs", "/redoc", "/openapi.json", "/billing/webhooks/")):
         return
     user = accounts.user_by_token(x_user_token)
     if user is None and x_upload_token:
@@ -290,6 +299,7 @@ def video_for_download(job: Job, with_subs: bool) -> Path:
 
 
 app.include_router(account_router, dependencies=[Depends(require_key)])
+app.include_router(notify.public_router)
 
 
 @app.post("/billing/webhooks/stripe")
@@ -625,6 +635,7 @@ def edit_transcript(job_id: str, edits: list[UtteranceEdit]):
         if edit.target is not None:
             if edit.target.strip() != u.target:
                 u.check_note = ""  # ผู้ใช้แก้บทแล้ว ป้ายควรตรวจหมดความหมาย
+                u.qa_flags = []
             u.target = edit.target.strip()
         if edit.speaker is not None:
             if edit.speaker not in job.speakers:

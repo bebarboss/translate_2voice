@@ -29,7 +29,7 @@ USER_MAX_QUEUED = 10
 # ---------- โมเดล ----------
 SEPARATOR = "roformer"
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"
-SEPARATOR_OVERLAP = 2
+SEPARATOR_OVERLAP = 4  # เดิม 2: แต่ละจุดผ่านโมเดล overlap รอบ (4 = ราว 2 เท่าของ 2) แยกสะอาดขึ้น รอยต่อ segment น้อยลง
 DENOISE_MODEL = "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
 DEMUCS_MODEL = "htdemucs"
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
@@ -63,7 +63,22 @@ STORY_ANALYSIS = True
 STORY_CONTENT_TYPE = True
 TRANSLATE_NEIGHBORS = True
 FIT_NEIGHBORS = True
+TRANSLATE_VERIFY = True  # ผู้ตรวจอ่านคำแปลเทียบต้นฉบับ แล้วแปลใหม่เฉพาะบรรทัดที่ผิดความหมาย (เรียกโมเดลเพิ่มราว 1 รอบต่อ 8 บรรทัด)
+TRANSLATE_VERIFY_FIX = False  # True = แปลใหม่เฉพาะบรรทัดที่ผู้ตรวจติดป้าย (ย้อนกลับถ้าตรวจซ้ำไม่ผ่านหรือยาวผิดปกติ) ค่าเริ่มต้นติดป้ายเฉย ๆ
 TRANSLATE_REVIEW = False  # ปิดไว้: ขั้นตรวจหลังแปลเรียกโมเดลเพิ่ม เสียค่า API เพิ่ม เปิดเมื่อพร้อมใช้
+# คุณภาพคำแปลไทย ระยะที่ 1 (translate_quality.py) — โมเดลเดิม ค่าเริ่มต้นปลอดภัย: ไม่เปลี่ยนคำขอทุกบรรทัดจนกว่าจะเทียบผลกับ key จริง
+TRANSLATE_SCENE_MODE = False  # True = แปลทั้งฉากในคำขอเดียว (เวลา ผู้พูด บทข้างเคียง) ตอบ JSON ตาม id บรรทัด บรรทัดที่ตอบไม่ผ่านแปลแบบเดิม
+TRANSLATE_SCENE_MAX_LINES = 24  # บรรทัดต่อฉากมากสุด (ไม่ตัดกลางประโยค)
+TRANSLATE_SCENE_GAP_SEC = 4.0  # เงียบนานกว่านี้ = ขึ้นฉากใหม่
+TRANSLATE_SCENE_OVERLAP = 2  # บรรทัดจากฉากก่อน/หลังที่ส่งไปเป็นบริบท (ไม่แปลซ้ำ)
+TRANSLATE_SELF_CHECK = False  # True = หลังแปลให้โมเดลตรวจเทียบต้นฉบับ แล้วเขียนใหม่เฉพาะบรรทัดที่ติดป้าย 1 รอบ (เรียกเพิ่มราว 2 ครั้งต่อ 24 บรรทัด)
+TRANSLATE_RULE_FLAGS = True  # ตรวจสำนวนที่รู้ว่าแปลผิดบ่อยด้วยกฎ (ไม่เรียกโมเดล) ติดป้ายอย่างเดียวเมื่อปิด TRANSLATE_SELF_CHECK
+# คุณภาพคำแปลไทย ระยะที่ 2 (translate_quality.line_flags) — ปิดไว้ก่อนจนกว่าจะเทียบกับงานจริง
+TRANSLATE_LINE_CHECKS = False  # True = กฎรายบรรทัด: ตัวเลขต้องคงไว้ ชื่อแบรนด์/glossary คำลงท้าย (นะ/ครับ) ที่เติมเอง ต้นฉบับที่ถอดไม่ชัด
+TRANSLATE_UNCERTAIN_REVIEW = False  # True = งานที่ยังมีบรรทัดไม่แน่ใจ (ป้ายที่ยังไม่ได้แก้) หยุดรอตรวจบทก่อนพากย์ แม้ผู้ใช้ปิดการตรวจบท
+TRANSLATE_IDIOM_HINTS = True  # ส่งคำอธิบายสำนวน/สแลงที่มักแปลผิดไปกับคำขอ เฉพาะบรรทัดที่ต้นฉบับมีสำนวนนั้น
+TRANSLATE_SYLLABLE_BUDGET = False  # True = ส่ง target_syllables/max_syllables ต่อท่อนในเส้นทางแปลเดิมด้วย (โหมดฉากส่งเสมอ)
+THAI_CHARS_PER_SYLLABLE = 2.5  # ตัวอักษรฐานต่อพยางค์ไทยโดยเฉลี่ย → พยางค์/วินาที = THAI_CHARS_PER_SEC / ค่านี้ (12 / 2.5 = 4.8)
 LIP_SYNC_SAME_LANG = False  # ปิด: ไทยเป็นไทยใช้เสียงจากคลัง/อารมณ์เหมือนภาษาอื่น (เปิด = โคลนเสียงต้นฉบับ)
 SAME_LANG_REWRITE = True  # ต้นฉบับภาษาเดียวกับปลายทาง: เรียบเรียงเป็นบทพูดแทนแก้คำผิดอย่างเดียว
 TRANSCRIPT_GATE = True

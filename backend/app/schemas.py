@@ -55,6 +55,8 @@ class Utterance(BaseModel):
     # เหตุผลที่ AI ไม่มั่นใจ เช่น ฟังเสียงไม่ชัด / น่าจะเป็นเนื้อเพลง / ชื่อเฉพาะอาจผิด / บทยาวเกินเวลา
     unclear_reason: str = ""
     check_note: str = ""  # ตรวจหลังแปล (translate.review_translation): เหตุผลที่ควรให้คนตรวจบรรทัดนี้ ("" = ไม่มีป้าย)
+    # ป้ายตรวจคำแปลทุกแหล่ง (translate_quality): {origin: rule|self_check|verify, kind: meaning|naturalness, reason, fixed, before?}
+    qa_flags: list[dict] = Field(default_factory=list)
     ref_reading: str = ""  # เลิกใช้แล้ว (ตอนนี้ tts.romanize สร้างคำอ่านเอง) เก็บไว้ให้อ่านไฟล์งานเก่าได้
 
     @property

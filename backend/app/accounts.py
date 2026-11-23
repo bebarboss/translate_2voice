@@ -96,6 +96,18 @@ PLANS = _load_plans()
 CREDIT_PRICE = settings.credit_price_satang
 CREDIT_PACKS = settings.credit_packs
 UNIT = 100  # หน่วยย่อยต่อ 1 เครดิต (คิดละเอียด 0.01 เครดิต)
+# อีเมลที่ผู้ใช้ปิดรายข้อได้ ส่วน actor_* / voice_* / actor_paid ส่งเสมอ (notify.py)
+EMAIL_PREF_KEYS = ("job_review", "job_done", "job_failed", "credits_low")
+ALWAYS_ON_EMAIL = (
+    "actor_applied",
+    "actor_voice_submitted",
+    "actor_reviewed",
+    "voice_reviewed",
+    "actor_paid",
+)
+# เกณฑ์เครดิตใกล้หมด: ยอดที่ใช้ได้ (เติม + แพ็ก) หน่วยย่อย เทียบกับที่แถบข้างแสดง
+LOW_CREDIT_UNITS = UNIT  # <= 1.00 จึงแจ้งครั้งเดียว
+REARM_CREDIT_UNITS = 2 * UNIT  # >= 2.00 จึงติดอาวุธให้แจ้งรอบถัดไปได้
 CARD_BONUS = 0  # เลิกโบนัสผูกบัตร — ใช้แพ็กทดลองแทน
 VOICE_APPROVE_BONUS = 5  # เครดิตเติมเมื่อเสียงนักพากย์ถูกอนุมัติขึ้นคลัง (ครั้งแรกต่อเสียง)
 # แพ็กเกจเก่าที่ยังมีใน subscriptions → ใช้สิทธิ์เทียบเท่าแพ็กใหม่
@@ -287,6 +299,7 @@ def _db():
         from . import pgstore
         db = pgstore.connect()
         _ensure_trial_identity_schema(db)
+        _ensure_notify_schema(db)
         return db
     global _conn
     if _conn is None:
@@ -308,6 +321,7 @@ def _migrate(db: sqlite3.Connection) -> None:
         # schema studio สร้างจาก init/migration — ที่นี่เพิ่มดัชนีแพ็กทดลองและแฮชตัวตน
         _ensure_trial_identity_schema(db)
         _ensure_trial_once_index(db)
+        _ensure_notify_schema(db)
         return
     cols = lambda t: {r["name"] for r in db.execute(f"PRAGMA table_info({t})")}
     if "credits" not in cols("users"):
@@ -366,6 +380,25 @@ def _migrate(db: sqlite3.Connection) -> None:
     db.execute("CREATE TABLE IF NOT EXISTS trial_claims ("
                "id_hash TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at REAL NOT NULL)")
     _ensure_trial_once_index(db)
+    _ensure_notify_schema(db)
+
+
+_notify_schema_ready = False
+
+
+def _ensure_notify_schema(db) -> None:
+    """คอลัมน์การตั้งค่าอีเมลรายข้อและธงเครดิตใกล้หมด Idempotent ทั้ง SQLite และ Postgres"""
+    global _notify_schema_ready
+    from .pgstore import is_pg
+    if is_pg(db) and _notify_schema_ready:
+        return
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
+    if "notify_prefs" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN notify_prefs TEXT NOT NULL DEFAULT '{}'")
+    if "credits_low_armed" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN credits_low_armed INTEGER NOT NULL DEFAULT 1")
+    if is_pg(db):
+        _notify_schema_ready = True
 
 
 _TRIAL_ONCE_INDEX = (
@@ -792,12 +825,122 @@ def set_admin(uid: str, admin: bool, by: sqlite3.Row) -> None:
 
 
 # ---------------------------------------------------------------- เครดิตและแพ็กเกจ
-def set_notify(uid: str, on: bool) -> dict:
-    """เปิดหรือปิดอีเมลแจ้งเตือนงาน คืนข้อมูลผู้ใช้ล่าสุด"""
+def _prefs_map(row) -> dict:
+    """ค่าที่เก็บรายข้อ ค่าที่ยังไม่เคยตั้งเป็นเปิด สวิตช์ notify_email ไม่ได้เขียนทับค่านี้"""
+    raw = ""
+    try:
+        keys = row.keys()
+    except AttributeError:
+        keys = ()
+    if row is not None and "notify_prefs" in keys and row["notify_prefs"]:
+        raw = row["notify_prefs"]
+    stored: dict = {}
+    if raw:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            stored = data
+    out = {}
+    for key in EMAIL_PREF_KEYS:
+        value = stored.get(key, True)
+        if isinstance(value, bool):
+            out[key] = value
+        elif isinstance(value, (int, float)):
+            out[key] = bool(value)
+        else:
+            out[key] = True
+    return out
+
+
+def _dump_prefs(prefs: dict) -> str:
+    return json.dumps({k: bool(prefs[k]) for k in EMAIL_PREF_KEYS}, separators=(",", ":"))
+
+
+def email_pref_on(row, kind: str) -> bool:
+    """ส่งอีเมลข้อนี้หรือไม่ อีเมลนักพากย์/เงินส่งเสมอ notify_email ปิด = ปิดทั้งงานและเครดิตโดยไม่ลบค่าที่เก็บ"""
+    if kind not in EMAIL_PREF_KEYS:
+        return True
+    try:
+        master = bool(row["notify_email"])
+    except (KeyError, IndexError, TypeError):
+        master = True
+    if not master:
+        return False
+    return _prefs_map(row)[kind]
+
+
+def notify_prefs_public(uid: str) -> dict:
+    row = user_by_id(uid)
+    if row is None:
+        raise AccountError(404, "ไม่พบผู้ใช้นี้")
+    return {"email": _prefs_map(row), "always_on": list(ALWAYS_ON_EMAIL)}
+
+
+def update_notify_prefs(uid: str, patch: dict) -> dict:
+    """แก้บางข้อ คีย์ที่ไม่รู้จักโยน 422 ไม่ไปแตะสวิตช์ notify_email"""
+    unknown = [k for k in patch if k not in EMAIL_PREF_KEYS]
+    if unknown:
+        raise AccountError(422, "ไม่รู้จักการตั้งค่าอีเมล")
+    for value in patch.values():
+        if not isinstance(value, bool):
+            raise AccountError(422, "ค่าการตั้งค่าต้องเป็นจริงหรือเท็จ")
     with _tx() as db:
-        db.execute("UPDATE users SET notify_email = ? WHERE id = ?", (int(on), uid))
+        _ensure_notify_schema(db)
         row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        prefs = _prefs_map(row)
+        prefs.update(patch)
+        db.execute("UPDATE users SET notify_prefs = ? WHERE id = ?", (_dump_prefs(prefs), uid))
+    _drop_session_cache(user_id=uid)
+    return notify_prefs_public(uid)
+
+
+def disable_email_pref(uid: str, category: str) -> None:
+    """ยกเลิกอีเมลหนึ่งข้อ เรียกซ้ำได้ ค่าอื่นและสวิตช์หลักไม่เปลี่ยน"""
+    update_notify_prefs(uid, {category: False})
+
+
+def set_notify(uid: str, on: bool) -> dict:
+    """เปิดหรือปิดสวิตช์อีเมลทั้งกลุ่ม ค่าที่เก็บรายข้อไม่ถูกเขียนทับ
+    ปิด = ไม่ส่งอีเมลงานและเครดิต เปิด = ส่งตามค่าที่เก็บไว้เดิม"""
+    with _tx() as db:
+        _ensure_notify_schema(db)
+        row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+        if row is None:
+            raise AccountError(404, "ไม่พบผู้ใช้นี้")
+        db.execute("UPDATE users SET notify_email = ? WHERE id = ?", (int(bool(on)), uid))
+        row = db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    _drop_session_cache(user_id=uid)
     return public_user(row)
+
+
+def _mark_credits_low(db, uid: str, before: int, after: int) -> bool:
+    """หลังตัดเครดิต คืน True เมื่อควรแจ้งครั้งเดียว ไม่เปลี่ยนยอด"""
+    _ensure_notify_schema(db)
+    row = db.execute("SELECT credits_low_armed FROM users WHERE id = ?", (uid,)).fetchone()
+    armed = True if row is None else bool(row["credits_low_armed"])
+    if before >= REARM_CREDIT_UNITS:
+        armed = True
+    fire = bool(armed and after <= LOW_CREDIT_UNITS)
+    if after >= REARM_CREDIT_UNITS:
+        armed = True
+    elif fire:
+        armed = False
+    db.execute("UPDATE users SET credits_low_armed = ? WHERE id = ?", (1 if armed else 0, uid))
+    return fire
+
+
+def _after_charge_notify(uid: str, fire: bool, units: int) -> None:
+    if not fire:
+        return
+    try:
+        from . import notify
+        notify.credits_low(uid, units)
+    except Exception as exc:  # noqa: BLE001 การแจ้งเตือนพังต้องไม่ทำให้การตัดเครดิตพัง
+        log.error("credits_low notify failed: %s", type(exc).__name__)
 
 
 def export_data(uid: str) -> dict:
@@ -864,15 +1007,30 @@ def _subscription(db, uid: str) -> Optional[sqlite3.Row]:
     return row if row and row["expires_at"] > time.time() else None
 
 
+def _credit_buckets(db, uid: str) -> tuple[int, int, Optional[sqlite3.Row]]:
+    """เครดิตเติม และเครดิตแพ็กที่ยังไม่หมดอายุ (หน่วยย่อย) คู่เดียวกับที่ wallet() ส่งออก
+    แถบข้างบวกสองค่านี้เป็นยอดที่ใช้ได้"""
+    u = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()
+    sub = _subscription(db, uid)
+    topup = int(u["credits"]) if u else 0
+    plan = int(sub["minutes_left"]) if sub else 0
+    return topup, plan, sub
+
+
+def spendable_units(db, uid: str) -> int:
+    """ยอดที่ใช้ได้หน่วยย่อย = wallet.credits + wallet.subscription.minutes_left"""
+    topup, plan, _sub = _credit_buckets(db, uid)
+    return topup + plan
+
+
 def wallet(uid: str) -> dict:
     with _lock:
         db = _db()
-        u = db.execute("SELECT credits FROM users WHERE id = ?", (uid,)).fetchone()
-        sub = _subscription(db, uid)
+        topup, _plan, sub = _credit_buckets(db, uid)
         ledger = db.execute("SELECT kind, credits, minutes, amount, ref, note, created_at FROM ledger "
                             "WHERE user_id = ? ORDER BY id DESC LIMIT 50", (uid,)).fetchall()
     return {
-        "credits": credits_out(u["credits"]) if u else 0,
+        "credits": credits_out(topup),
         "subscription": _sub_out(sub),
         "credit_price": CREDIT_PRICE,
         "entitlements": entitlements(uid),
@@ -1016,6 +1174,7 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
     check_clip_duration(uid, seconds)
     need = job_credits(seconds)
     length = f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+    low_fire, low_units = False, 0
     with _tx() as db:
         if _exempt(db, uid) or db.execute("SELECT 1 FROM ledger WHERE user_id = ? AND kind = 'charge' AND ref = ?",
                                           (uid, job_id)).fetchone():
@@ -1027,11 +1186,15 @@ def charge_job(uid: str, job_id: str, seconds: float) -> None:
         if rest > have:
             raise AccountError(402, f"คลิปนี้ยาว {length} นาที ใช้ {fmt_credits(need)} เครดิต แต่มีเพียง "
                                     f"{fmt_credits(from_plan + have)} เครดิต (ขาด {fmt_credits(rest - have)} เครดิต)")
+        before_units = spendable_units(db, uid)
         if from_plan:
             db.execute("UPDATE subscriptions SET minutes_left = minutes_left - ? WHERE user_id = ?", (from_plan, uid))
         if rest:
             db.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (rest, uid))
         _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=job_id, note=f"งานพากย์ {length} นาที")
+        low_units = spendable_units(db, uid)
+        low_fire = _mark_credits_low(db, uid, before_units, low_units)
+    _after_charge_notify(uid, low_fire, low_units)
 
 
 def refund_job(uid: str, ref: str) -> None:
@@ -1109,6 +1272,7 @@ def charge_redub(uid: str, job_id: str, edit_seconds: float, clip_seconds: float
     need = int(q["credits_units"])
     if not billing_enabled() or need <= 0:
         return q
+    low_fire, low_units = False, 0
     with _tx() as db:
         if _exempt(db, uid):
             return {**q, "charged": False, "exempt": True}
@@ -1128,6 +1292,7 @@ def charge_redub(uid: str, job_id: str, edit_seconds: float, clip_seconds: float
                 f"พากย์ซ้ำครั้งนี้ใช้ {fmt_credits(need)} เครดิต แต่มีเพียง "
                 f"{fmt_credits(from_plan + have)} เครดิต (ขาด {fmt_credits(rest - have)} เครดิต)",
             )
+        before_units = spendable_units(db, uid)
         if from_plan:
             db.execute("UPDATE subscriptions SET minutes_left = minutes_left - ? WHERE user_id = ?",
                        (from_plan, uid))
@@ -1135,6 +1300,9 @@ def charge_redub(uid: str, job_id: str, edit_seconds: float, clip_seconds: float
             db.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (rest, uid))
         _log(db, uid, "charge", credits=-rest, minutes=-from_plan, ref=ref,
              note=f"พากย์ซ้ำ {q['charged_seconds']:.1f} วินาที")
+        low_units = spendable_units(db, uid)
+        low_fire = _mark_credits_low(db, uid, before_units, low_units)
+    _after_charge_notify(uid, low_fire, low_units)
     return {**q, "charged": True, "ref": ref}
 
 

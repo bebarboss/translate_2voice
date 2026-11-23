@@ -160,7 +160,7 @@ def repair_transcript(utterances: list[Utterance], words: Optional[list[Word]],
             u = u.model_copy(update={
                 "target": prev.target, "mood": prev.mood, "mood_auto": prev.mood_auto,
                 "mood_auto_text": prev.mood_auto_text, "take": prev.take,
-                "check_note": prev.check_note, "unclear": prev.unclear,
+                "check_note": prev.check_note, "unclear": prev.unclear, "qa_flags": prev.qa_flags,
             })
         kept.append(u)
     n = 0 if _fingerprint(utterances) == _fingerprint(kept) else max(1, abs(len(kept) - len(utterances)) + changed_words)

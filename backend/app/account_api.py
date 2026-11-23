@@ -7,7 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import accounts, consent
 from .accounts import AccountError
@@ -68,6 +68,15 @@ class ConsentAccept(BaseModel):
 
 class Marketing(BaseModel):
     on: bool
+
+
+class NotifyPrefsIn(BaseModel):
+    """แก้การตั้งค่าอีเมลรายข้อ ส่งมาเฉพาะข้อที่เปลี่ยน"""
+    model_config = ConfigDict(extra="forbid")
+    job_review: Optional[bool] = None
+    job_done: Optional[bool] = None
+    job_failed: Optional[bool] = None
+    credits_low: Optional[bool] = None
 
 
 class Subscribe(BaseModel):
@@ -182,8 +191,29 @@ def accept_consent(body: ConsentAccept, request: Request, user=Depends(require_u
 
 @router.put("/auth/notify")
 def set_notify(body: Marketing, user=Depends(require_user)):
-    """เปิดหรือปิดอีเมลแจ้งเตือนเมื่องานรอตรวจบท พากย์เสร็จ หรือล้มเหลว"""
+    """เปิดหรือปิดสวิตช์อีเมลทั้งกลุ่ม (งานและเครดิต) ไม่เขียนทับค่าที่เก็บรายข้อ"""
     return accounts.set_notify(user["id"], body.on)
+
+
+@router.get("/auth/notify-prefs")
+def get_notify_prefs(user=Depends(require_user)):
+    """ค่าที่เก็บรายข้อ และรายการที่ส่งเสมอ สวิตช์ทั้งกลุ่มอยู่ที่ user.notify_email"""
+    try:
+        return accounts.notify_prefs_public(user["id"])
+    except AccountError as e:
+        raise _fail(e)
+
+
+@router.put("/auth/notify-prefs")
+def put_notify_prefs(body: NotifyPrefsIn, user=Depends(require_user)):
+    """แก้บางข้อ คีย์ที่ไม่รู้จักหรือค่าที่ไม่ใช่บูลีนได้ 422"""
+    patch = body.model_dump(exclude_unset=True)
+    if any(v is None for v in patch.values()):
+        raise HTTPException(422, "ค่าการตั้งค่าต้องเป็นจริงหรือเท็จ")
+    try:
+        return accounts.update_notify_prefs(user["id"], patch)
+    except AccountError as e:
+        raise _fail(e)
 
 
 @router.get("/notifications")
