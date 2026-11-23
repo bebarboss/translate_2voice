@@ -1157,6 +1157,8 @@ b.fit-warn { color: var(--warn); }
 b.fit-bad { color: var(--danger); }
 .insp-note { margin: 0; font-size: 12.5px; line-height: 1.5; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
 .inspector .line { border: none; background: transparent; padding: 0; }
+/* เส้นส้มของบรรทัดที่ระบบไม่แน่ใจวาดด้วย inset shadow ทับขอบซ้าย เว้นระยะไม่ให้ทับตัวหนังสือ */
+.inspector .line.uncertain { padding-left: 14px; }
 @media (max-width: 1200px) {
   .editor-grid { grid-template-columns: minmax(0, 1fr); height: auto; }
   .lines-col .lines { max-height: 420px; }
