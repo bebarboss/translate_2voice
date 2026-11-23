@@ -7,6 +7,7 @@ import "@fontsource/anuphan/700.css";
 import "@fontsource/jetbrains-mono/400.css";
 import "@fontsource/jetbrains-mono/500.css";
 import "./globals.css";
+import CursorGlow from "@/components/CursorGlow";
 import LangInit from "@/components/LangInit";
 import ProfileGate from "@/components/ProfileGate";
 import Sidebar from "@/components/Sidebar";
@@ -54,6 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang={isLang(lang) ? lang : "th"} data-theme={isTheme(theme) && theme !== "system" ? theme : undefined}>
       <body>
         <LangInit lang={isLang(lang) ? lang : "th"} />
+        <CursorGlow />
         <AuthProvider>
           <div className="shell">
             <ProfileGate />
