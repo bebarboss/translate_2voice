@@ -146,6 +146,68 @@ def room(track: np.ndarray, sr: int, wet: float = ac.ROOM_REVERB, rt60: float = 
     return out.astype(np.float32)
 
 
+def _clip_span(start: float, audio: np.ndarray, sr: int) -> tuple[float, float]:
+    return start, start + len(audio) / sr
+
+
+def duck_overlaps(clips: list[tuple[float, np.ndarray]], spans: list[tuple[float, float]], sr: int,
+                  orig: np.ndarray, orig_sr: int, depth_db: float = 4.0, min_overlap: float = 0.3,
+                  fade: float = 0.05) -> list[tuple[float, np.ndarray]]:
+    """ช่วงที่เสียงพากย์สองประโยคเล่นซ้อนกัน: ลดเสียงของฝั่งที่ต้นฉบับพูดเบากว่า depth_db เฉพาะช่วงซ้อน
+    ให้เสียงหลักยังฟังรู้เรื่อง (เหมือนต้นฉบับที่คนพูดทับเสียงเบากว่าจะเป็นเสียงรอง)
+    ดังเท่ากัน (ต่างไม่ถึง 1 dB) = ลดคนที่เริ่มพูดทีหลัง (คนแทรก) ปิดได้ด้วย depth_db = 0"""
+    if depth_db <= 0 or len(clips) < 2:
+        return clips
+    from .emotion import active_db
+
+    src = [active_db(orig[int(a * orig_sr): int(b * orig_sr)], orig_sr) for a, b in spans]
+    gains = [None] * len(clips)  # type: list[Optional[np.ndarray]]
+    cut = 10 ** (-depth_db / 20)
+    for i in range(len(clips)):
+        a0, a1 = _clip_span(clips[i][0], clips[i][1], sr)
+        for j in range(i + 1, len(clips)):
+            b0, b1 = _clip_span(clips[j][0], clips[j][1], sr)
+            lo, hi = max(a0, b0), min(a1, b1)
+            if hi - lo < min_overlap:
+                continue
+            di, dj = src[i], src[j]
+            if di is not None and dj is not None and abs(di - dj) >= 1.0:
+                quiet = i if di < dj else j
+            else:
+                quiet = i if a0 > b0 else j  # เริ่มทีหลัง = คนแทรก
+            q0 = clips[quiet][0]
+            n = len(clips[quiet][1])
+            if gains[quiet] is None:
+                gains[quiet] = np.ones(n, dtype=np.float32)
+            lo_i, hi_i = max(0, int((lo - q0) * sr)), min(n, int((hi - q0) * sr))
+            env = np.full(hi_i - lo_i, cut, dtype=np.float32)
+            f = min(int(fade * sr), len(env) // 2)
+            if f > 0:  # ค่อย ๆ ลดและกลับ ไม่ให้เสียงสะดุด
+                ramp = np.linspace(1.0, cut, f, dtype=np.float32)
+                env[:f], env[-f:] = ramp, ramp[::-1]
+            gains[quiet][lo_i:hi_i] = np.minimum(gains[quiet][lo_i:hi_i], env)
+    return [(t, (v * gains[k]).astype(np.float32)) if gains[k] is not None else (t, v)
+            for k, (t, v) in enumerate(clips)]
+
+
+def overlap_clashes(clips: list[tuple[float, np.ndarray]], spans: list[tuple[float, float]], sr: int,
+                    slack: float = 1.0, min_dub: float = 1.5) -> list[tuple[int, int, float, float]]:
+    """คู่ประโยคที่เสียงพากย์ซ้อนกันนานกว่าต้นฉบับเกิน slack วินาที (และซ้อนอย่างน้อย min_dub วินาที) → ฟังไม่ออกว่าใครพูดอะไร
+    คืน [(i, j, วินาทีที่พากย์ซ้อน, วินาทีที่ต้นฉบับซ้อน)]"""
+    out = []
+    for i in range(len(clips)):
+        a0, a1 = _clip_span(clips[i][0], clips[i][1], sr)
+        for j in range(i + 1, len(clips)):
+            b0, b1 = _clip_span(clips[j][0], clips[j][1], sr)
+            dub = min(a1, b1) - max(a0, b0)
+            if dub < min_dub:
+                continue
+            src = max(0.0, min(spans[i][1], spans[j][1]) - max(spans[i][0], spans[j][0]))
+            if dub - src > slack:
+                out.append((i, j, round(dub, 2), round(src, 2)))
+    return out
+
+
 def place_clips(clips: list[tuple[float, np.ndarray]], total_sec: float, sr: int, out_wav: Path,
                 bed: Optional[np.ndarray] = None, reverb: float = 0.0, rt60: float = ac.ROOM_RT60,
                 gain: float = 1.0, width: float = ac.ROOM_WIDTH) -> Path:

@@ -1148,6 +1148,16 @@ def run_synthesize(store: JobStore, job_id: str, voice_store=None) -> None:
     if not settings.mock_pipeline:
         clips = mix.match_loudness(clips, spans, sr, orig, orig_sr, settings.loudness_match,
                                    settings.loudness_max_boost, settings.loudness_max_cut)
+        clashes = mix.overlap_clashes(clips, spans, sr, settings.overlap_clash_slack_sec)
+        if clashes:
+            for i, j, dub, src in clashes:
+                note = f"เสียงพากย์ซ้อนกัน {dub} วินาที (ต้นฉบับซ้อน {src}) อาจฟังไม่รู้เรื่อง ลองย่อบทหรือเลื่อนเวลา"
+                for g in (groups[i], groups[j]):
+                    if "เสียงพากย์ซ้อนกัน" not in (g[0].check_note or ""):
+                        g[0].check_note = (g[0].check_note + " · " if g[0].check_note else "") + note
+            log.info("job %s: %d dub overlaps longer than the source: %s", job_id, len(clashes), clashes)
+            store.save_transcript(job_id, utterances)
+        clips = mix.duck_overlaps(clips, spans, sr, orig, orig_sr, settings.overlap_duck_db)
     bed = None
     if settings.nonspeech_gain > 0:
         # ช่วงที่มีบท (แม้ไม่ได้แปล) และช่วงที่เสียงพากย์ล้นออกไป ไม่ใส่เสียงเดิม กันเสียงภาษาต้นฉบับโผล่

@@ -207,6 +207,8 @@ def analyze_core(mixed: Path, work: Path, source_lang: Optional[str], num_speake
         from .overlap import map_speakers
         hidden = map_speakers(hidden, raw_turns, utterances)
         log.info("recovered %d overlapping lines", len(hidden))
+        for h in hidden:  # ถอดจากเสียงที่แยกออกจากคนที่พูดทับ คุณภาพต่ำกว่าปกติ ให้ผู้ใช้เห็นป้ายและฟังต้นฉบับเทียบ
+            h.unclear_reason = "กู้จากเสียงที่พูดซ้อนกัน ถอดจากเสียงที่แยกแล้ว ควรฟังต้นฉบับเทียบ"
         utterances = sorted(utterances + hidden, key=lambda u: (u.start, u.end))
         for i, u in enumerate(utterances, 1):
             u.id = i

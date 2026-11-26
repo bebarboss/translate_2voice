@@ -93,6 +93,8 @@ DIAR_REFINE = True
 DIAR_EXCLUSIVE = True
 DIAR_MERGE_SIM = 0.75  # รวมกลุ่มผู้พูดเมื่อลายนิ้วมือเหมือนกันประมาณ 75% ขึ้นไป
 OVERLAP_RECOVER = True
+OVERLAP_DUCK_DB = 4.0  # ช่วงที่เสียงพากย์สองคนซ้อนกัน ลดเสียงฝั่งที่ต้นฉบับเบากว่า (dB, 0 = ปิด)
+OVERLAP_CLASH_SLACK_SEC = 1.0  # เสียงพากย์ซ้อนกันนานกว่าต้นฉบับเกินกี่วินาที = ติดป้ายให้ตรวจ
 RETRANSCRIBE_NOISY = False  # ปิดไว้: ไม่ถอดเสียงรอบสองในท่อนที่เพลงทับ
 MIN_COVERAGE_SYNTHESIZE = 0.70
 TURN_SPLIT = True

@@ -262,6 +262,8 @@ class Settings:
     diar_refine: bool = d.DIAR_REFINE
     diar_exclusive: bool = d.DIAR_EXCLUSIVE
     overlap_recover: bool = d.OVERLAP_RECOVER
+    overlap_duck_db: float = d.OVERLAP_DUCK_DB
+    overlap_clash_slack_sec: float = d.OVERLAP_CLASH_SLACK_SEC
     retranscribe_noisy: bool = d.RETRANSCRIBE_NOISY
     min_coverage_synthesize: float = d.MIN_COVERAGE_SYNTHESIZE
     turn_split: bool = d.TURN_SPLIT
