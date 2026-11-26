@@ -1252,3 +1252,7 @@ a.bell-item, a.bell-item:hover { color: var(--text); text-decoration: none; }
 .bell-skel .l3 { width: 40%; height: 8px; margin-top: 8px; }
 /* จอใหญ่: กระดิ่งอยู่ในหัวเมนูซ้าย จอเล็ก: อยู่ในแถบบน ห้ามโชว์สองจุดพร้อมกัน */
 @media (max-width: 900px) { .bell-desktop { display: none; } }
+
+/* รูปคลื่นเสียงต้นฉบับหลังบล็อกประโยคในเลเยอร์ */
+.lane .lane-wave { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .55; pointer-events: none; border-radius: 8px; }
+.lane .snap-guide { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 2px solid var(--brand); pointer-events: none; z-index: 3; }

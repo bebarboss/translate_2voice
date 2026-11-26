@@ -609,6 +609,8 @@ export const api = {
     request<Job>(`/jobs/${id}/options`, json("PATCH", patch)),
   render: (id: string) => request<{ id: string }>(`/jobs/${id}/render`, { method: "POST" }),
 
+  stemPeaks: (id: string, name: string, buckets = 1500) =>
+    request<{ duration: number; peaks: number[] }>(`/jobs/${id}/stems/${name}/peaks?buckets=${buckets}`),
   getTranscript: (id: string) => request<Utterance[]>(`/jobs/${id}/transcript`),
   saveTranscript: (id: string, edits: UtteranceEdit[]) =>
     request<Utterance[]>(`/jobs/${id}/transcript`, json("PUT", edits)),

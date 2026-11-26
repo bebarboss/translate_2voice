@@ -2512,6 +2512,23 @@ def list_stems(job_id: str):
     return sorted(names)
 
 
+@app.get("/jobs/{job_id}/stems/{name}/peaks", dependencies=[Depends(require_key)])
+def get_stem_peaks(job_id: str, name: str, buckets: int = 1500):
+    """ยอดคลื่นเสียงของเลเยอร์ ใช้วาด waveform บนเส้นเวลา (ไม่ต้องให้เบราว์เซอร์โหลดไฟล์ wav ทั้งไฟล์)"""
+    get_job_or_404(job_id)
+    if not STEM_NAME.match(name):
+        raise HTTPException(400, "ชื่อเลเยอร์ไม่ถูกต้อง")
+    d = store.dir(job_id)
+    path = ensure_job_file(job_id, d / "stems" / f"{name}.wav" if name.startswith("speaker_") else d / f"{name}.wav")
+    if not path.exists():
+        raise HTTPException(404, "ไม่พบเลเยอร์เสียงนี้")
+    from .pipeline.peaks import peaks_for
+    try:
+        return peaks_for(path, buckets)
+    except Exception as e:  # noqa: BLE001 — ไฟล์เสียหาย/อ่านไม่ได้ ให้หน้าเว็บข้าม waveform
+        raise HTTPException(422, "อ่านไฟล์เสียงไม่ได้") from e
+
+
 @app.get("/jobs/{job_id}/stems/{name}", dependencies=[Depends(require_key)])
 def get_stem(job_id: str, name: str, download: bool = False):
     """เลเยอร์เสียง เล่นใน <audio> เป็น inline; ปุ่มดาวน์โหลดส่ง download=1"""

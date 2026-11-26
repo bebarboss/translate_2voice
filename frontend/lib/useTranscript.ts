@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Job, type LibraryVoice, type LineMood, type Mood, type Utterance, type UtteranceEdit } from "./api";
 import { speakerLabel } from "./format";
+import { History } from "./timeline-edit";
 
 import { tx } from "@/lib/i18n";
 export type Draft = { target: string; speaker: string; start: number; end: number; take: number; mood: LineMood };
@@ -35,7 +36,14 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   useEffect(() => { setNames(job.speaker_names ?? {}); }, [job.speaker_names]);
   const label = (s: string) => speakerLabel(s, names);
 
+  // ย้อนกลับ/ทำซ้ำ เฉพาะร่างที่ยังไม่บันทึก (เวลา ตัวละคร บท) แยก/รวม/ลบประโยคทำบนเซิร์ฟเวอร์แล้ว จึงล้างประวัติ
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const history = useRef(new History<Record<number, Draft>>()).current;
+  const [, bump] = useState(0);
+
   const applyLines = (u: Utterance[]) => {
+    history.clear();
     setLines(u);
     setDrafts(Object.fromEntries(u.map((x) => [x.id, draftFrom(x)])));
   };
@@ -81,8 +89,20 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
 
   const draftOf = (u: Utterance): Draft => drafts[u.id] ?? draftFrom(u);
 
-  const setDraft = (id: number, patch: Partial<Draft>) =>
+  const setDraft = (id: number, patch: Partial<Draft>) => {
+    history.record(draftsRef.current, `d${id}`, Date.now());
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }));
+    bump((n) => n + 1);
+  };
+
+  const undo = () => {
+    const prev = history.undo(draftsRef.current);
+    if (prev) { setDrafts(prev); bump((n) => n + 1); }
+  };
+  const redo = () => {
+    const next = history.redo(draftsRef.current);
+    if (next) { setDrafts(next); bump((n) => n + 1); }
+  };
 
   const saveLines = async () => {
     if (!dirty.length) return;
@@ -200,7 +220,7 @@ export function useTranscript(job: Job, onChanged: () => void, now: () => number
   return {
     lines, sorted, drafts, draftOf, setDraft, speakers, dirty, busy, setBusy, message, setMessage, saved, cursors,
     saveLines, split, splitAt, merge, duplicate, addBlank, removeLine, changeSpeaker, removeSpeaker, moodsOf, names, label, renameSpeaker,
-    overlaps,
+    overlaps, undo, redo, canUndo: history.canUndo, canRedo: history.canRedo,
   };
 }
 

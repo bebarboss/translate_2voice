@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fileUrl, type Job, type Utterance } from "@/lib/api";
 import { fmtTime, speakerColor } from "@/lib/format";
+import { snapMove, snapSec } from "@/lib/timeline-edit";
+import LaneWave from "./LaneWave";
 import type { Transcript } from "@/lib/useTranscript";
 import { CopyIcon, PasteIcon, PlusIcon, ScissorsIcon, XIcon } from "./Icons";
 
@@ -29,6 +31,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   const [removing, setRemoving] = useState<{ speaker: string; into: string } | null>(null);
   const [naming, setNaming] = useState<{ speaker: string; name: string } | null>(null);
   const [tool, setTool] = useState<"move" | "cut">("move");
+  const [snapLine, setSnapLine] = useState<number | null>(null); // เส้นบอกจุดที่ปัดเข้าหา (ถือ Alt ระหว่างลากเพื่อปิดการปัด)
   const [guide, setGuide] = useState<{ speaker: string; sec: number } | null>(null); // เส้นบอกจุดตัด
   const [dropLane, setDropLane] = useState<string | null>(null); // เลเยอร์ที่กำลังลากบล็อกไปวาง
   const dragged = useRef(false); // เพิ่งลากบล็อกเสร็จ ไม่นับเป็นคลิกเลือก
@@ -149,6 +152,14 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
   const laneAt = (x: number, y: number) =>
     (document.elementFromPoint(x, y)?.closest("[data-speaker]") as HTMLElement | null)?.dataset.speaker ?? null;
 
+  /** จุดที่ลากแล้วปัดเข้าหา: ขอบของประโยคอื่นทุกเลเยอร์ หัวอ่าน ต้นและท้ายคลิป */
+  const snapPoints = (exceptId: number) => {
+    const pts = [0, limit, t];
+    for (const x of sorted) if (x.id !== exceptId) { const d = tr.draftOf(x); pts.push(d.start, d.end); }
+    return pts;
+  };
+  const SNAP_PX = 8;
+
   // ลากทั้งบล็อก: เลื่อนเวลาทั้งประโยค (ความยาวเท่าเดิม) และย้ายไปเลเยอร์ตัวละครอื่นได้ ขยับไม่ถึง 4 px นับเป็นคลิก
   const press = (u: Utterance, speaker: string) => (e: React.PointerEvent<HTMLButtonElement>) => {
     if (tool !== "move" || e.button !== 0) return;
@@ -157,6 +168,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const x0 = e.clientX;
     const d0 = tr.draftOf(u);
     const len = d0.end - d0.start;
+    const points = snapPoints(u.id);
     let moved = false;
     let start = d0.start;
     let lane = speaker;
@@ -166,6 +178,11 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
       moved = true;
       const shift = Math.round(((ev.clientX - x0) / rect.width) * span * 20) / 20;
       start = Math.round(Math.min(Math.max(0, d0.start + shift), limit - len) * 100) / 100;
+      if (!ev.altKey) {
+        const sn = snapMove(start, len, points, (SNAP_PX / rect.width) * span);
+        if (sn.hit !== null) start = Math.round(Math.min(Math.max(0, sn.start), limit - len) * 100) / 100;
+        setSnapLine(sn.hit);
+      } else setSnapLine(null);
       tr.setDraft(u.id, { start, end: Math.round((start + len) * 100) / 100 });
       lane = laneAt(ev.clientX, ev.clientY) ?? lane;
       setDropLane(lane !== speaker ? lane : null);
@@ -175,6 +192,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       setDropLane(null);
+      setSnapLine(null);
       if (!moved) return;
       dragged.current = true;
       if (lane !== speaker) tr.setDraft(u.id, { speaker: lane });
@@ -238,7 +256,10 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const el = e.target as HTMLElement;
     if (el.closest("input, textarea, select, [contenteditable=true]") || String(window.getSelection())) return;
     const k = e.key.toLowerCase();
-    if (k === "c" && highlight != null) {
+    if (k === "z" || k === "y") {
+      e.preventDefault();
+      if (k === "y" || e.shiftKey) tr.redo(); else tr.undo();
+    } else if (k === "c" && highlight != null) {
       e.preventDefault();
       copy();
     } else if (k === "v" && clip != null && !busy) {
@@ -269,9 +290,15 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
     const rect = handle.parentElement!.getBoundingClientRect();
     handle.setPointerCapture(e.pointerId);
     let last = tr.draftOf(u)[edge];
+    const points = snapPoints(u.id);
     const move = (ev: PointerEvent) => {
       const d = tr.draftOf(u);
       let sec = Math.round((view + ((ev.clientX - rect.left) / rect.width) * span) * 20) / 20;
+      if (!ev.altKey) {
+        const sn = snapSec(view + ((ev.clientX - rect.left) / rect.width) * span, points, (SNAP_PX / rect.width) * span);
+        if (sn.hit !== null) sec = Math.round(sn.sec * 1000) / 1000;
+        setSnapLine(sn.hit);
+      } else setSnapLine(null);
       // ปัดทีละ 0.05 แล้วกันไม่ให้สั้นกว่า 0.2 (บวกกันทศนิยมคลาดนิดหน่อย)
       sec = edge === "start" ? Math.min(Math.max(0, sec), Math.round((d.end - 0.2) * 1000 - 1) / 1000)
         : Math.max(Math.min(limit, sec), Math.round((d.start + 0.2) * 1000 + 1) / 1000);
@@ -282,6 +309,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
+      setSnapLine(null);
       onRetimed?.(last);
     };
     handle.addEventListener("pointermove", move);
@@ -309,6 +337,10 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
             <button type="button" aria-pressed={tool === "cut"} onClick={() => setTool("cut")} title={tx("คลิกบนบล็อกตรงที่จะตัดแบ่งประโยค")}>
               <ScissorsIcon />  {tx("ตัด")}
             </button>
+          </div>
+          <div className="seg small" role="group" aria-label={tx("ย้อนกลับและทำซ้ำ")}>
+            <button type="button" onClick={tr.undo} disabled={!tr.canUndo || !!busy} title={tx("ย้อนกลับการแก้ที่ยังไม่บันทึก (Ctrl+Z)")}>↶ {tx("ย้อนกลับ")}</button>
+            <button type="button" onClick={tr.redo} disabled={!tr.canRedo || !!busy} title={tx("ทำซ้ำ (Ctrl+Shift+Z)")}>↷ {tx("ทำซ้ำ")}</button>
           </div>
           <button type="button" className="btn small" disabled={!!busy || !cutTarget}
             onClick={() => cutTarget && tr.splitAt(cutTarget, t)} title={tx("ตัดประโยคตรงตำแหน่งที่วิดีโอเล่นอยู่")}>
@@ -377,6 +409,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                 <div className="track" onPointerDown={pan}
                   onPointerMove={(e) => tool === "cut" && setGuide({ speaker: s, sec: secAt(e.clientX, e.currentTarget) })}
                   onPointerLeave={() => setGuide(null)}>
+                  <LaneWave jobId={job.id} name={s} color={color} view={view} span={span} total={total} />
                   {own.map((u) => {
                     const d = tr.draftOf(u);
                     return (
@@ -401,6 +434,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
                         title={tx("ลากเพื่อเลื่อนเวลาจบ")} aria-hidden="true" />,
                     ];
                   })}
+                  {snapLine !== null && <div className="snap-guide" style={{ left: pct(snapLine) }} />}
                   {tool === "cut" && guide?.speaker === s && <div className="cut-guide" style={{ left: pct(guide.sec) }} />}
                   <div className="playhead" style={{ left: playheadPct }} />
                 </div>
@@ -442,7 +476,7 @@ export default function SpeakerLanes({ job, tr, total, t, highlight, onPick, onR
           <span className="icon-btn lane-spacer"><XIcon /></span>
         </div>
       )}
-      <span className="dim">{tx("ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ · ลากบล็อกเพื่อเลื่อนเวลา หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · เสียงถอดหลุด: เลื่อนหัวอ่านไปช่วงนั้น ชี้เลเยอร์ตัวละคร แล้วกด “เพิ่มกล่อง” พิมพ์บทพากย์ · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ")}</span>
+      <span className="dim">{tx("ซูม: ปุ่ม +/− หรือ Ctrl + ล้อเมาส์ · เลื่อนช่วงเวลา: แถบเลื่อน, Shift + ล้อเมาส์ หรือลากที่ว่างบนแถบ · ลากบล็อกหรือขอบเพื่อเลื่อนเวลา (ปัดเข้าขอบประโยคอื่นและหัวอ่านอัตโนมัติ ถือ Alt เพื่อปิด) หรือลากไปเลเยอร์อื่นเพื่อเปลี่ยนตัวละคร (วางซ้อนเวลากับตัวละครอื่นได้ เสียงจะพูดทับกัน) · เครื่องมือ “ตัด” คลิกตรงที่จะแบ่งประโยค · เสียงถอดหลุด: เลื่อนหัวอ่านไปช่วงนั้น ชี้เลเยอร์ตัวละคร แล้วกด “เพิ่มกล่อง” พิมพ์บทพากย์ · สองคนพูดพร้อมกัน: เลือกประโยคแล้วกด Ctrl+C ชี้เมาส์ที่เลเยอร์ตัวละครอีกคนแล้วกด Ctrl+V จะได้สำเนาซ้อนเวลาเดิม แล้วแก้บท · คนเดียวถูกแยกเป็นสองตัวละคร กด ✕ เพื่อรวม · คลิกชื่อตัวละครเพื่อตั้งชื่อ")}</span>
     </div>
   );
 }
