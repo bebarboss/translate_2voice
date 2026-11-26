@@ -530,7 +530,9 @@ timecode รองรับ NTSC แบบเศษส่วนจริงแ�
 #### 6.1 ผู้พูด
 
 - แยกผู้พูดด้วย pyannote แล้วปรับด้วยลายเสียง (`DIAR_REFINE`, `DIAR_EXCLUSIVE`, `DIAR_MERGE_SIM`)
-- กู้ประโยคที่พูดซ้อนกัน (`OVERLAP_RECOVER`) และตัดท่อนที่สองคนพูดต่อกัน (`TURN_SPLIT`)
+- กู้ประโยคที่พูดซ้อนกัน (`OVERLAP_RECOVER`) และตัดท่อนที่สองคนพูดต่อกัน (`TURN_SPLIT`) ประโยคที่กู้มาถอดจากเสียงที่แยกแล้ว จึงติดป้าย "ควรตรวจ" ให้ฟังต้นฉบับเทียบ
+- ช่วงที่เสียงพากย์สองประโยคเล่นซ้อนกัน (`mix.duck_overlaps`) ลดเสียงฝั่งที่ต้นฉบับพูดเบากว่า `OVERLAP_DUCK_DB` (4 dB, 0 = ปิด) เฉพาะช่วงซ้อน ถ้าดังเท่ากันลดคนที่เริ่มพูดทีหลัง
+- ถ้าเสียงพากย์ซ้อนกันนานกว่าต้นฉบับเกิน `OVERLAP_CLASH_SLACK_SEC` (1 วินาที) และซ้อนอย่างน้อย 1.5 วินาที (`mix.overlap_clashes`) ทั้งสองบรรทัดติดป้าย "ควรตรวจ" พร้อมข้อความให้ย่อบทหรือเลื่อนเวลา ค่า 4 dB และ 1 วินาทีเป็นค่าตั้งต้นที่ต้องปรับจากงานจริง
 - ในโปรเจกต์ ตอนใหม่จับคู่ผู้พูดกับตัวละครด้วยลายเสียงเอง เฉพาะที่มั่นใจ (`VOICE_MATCH`, `VOICE_MIN_SIM`)
 
 #### 6.2 เลือกเสียงพากย์
@@ -670,7 +672,7 @@ Postgres รันเป็น StatefulSet ใน k3s (`db:5432` ภายใน
 | โมเดล | `SEPARATOR`, `DIARIZATION_MODEL`, `WHISPER_MODEL`, `WHISPER_COMPUTE_TYPE`, `HF_TOKEN` |
 | แปล | `TYPHOON_API_KEY`, `TYPHOON_BASE_URL`, `TYPHOON_MODEL`, `TYPHOON_TEMPERATURE`, `TRANSLATE_*`, `STORY_*`, `FIT_*` |
 | ความยาวบท | `THAI_CHARS_PER_SEC`, `THAI_SYLLABLES_PER_SEC`, `EN_WORDS_PER_SEC`, `MAX_LINE_SEC`, `MAX_SPEEDUP`, `MAX_SLOWDOWN` |
-| ผู้พูด | `VOICE_MATCH`, `VOICE_MIN_SIM`, `DIAR_*`, `TURN_SPLIT`, `OVERLAP_RECOVER` |
+| ผู้พูด | `VOICE_MATCH`, `VOICE_MIN_SIM`, `DIAR_*`, `TURN_SPLIT`, `OVERLAP_RECOVER`, `OVERLAP_DUCK_DB`, `OVERLAP_CLASH_SLACK_SEC` |
 | ถอดเสียงซ้ำ | `RETRANSCRIBE_NOISY` (ปิดเป็นค่าเริ่มต้น) |
 | ตรวจเสียงพากย์ | `DUB_CHECK`, `DUB_CHECK_MIN`, `DUB_CHECK_RETRIES`, `MIN_COVERAGE_SYNTHESIZE` |
 | แก้เสียงเงียบ (ประโยคสั้น) | `TTS_MIN_SEC` (0.6), `TTS_RETRY_STRETCH` (1.25), `SILENCE_RMS_MIN` (−45 dB), `SILENCE_ACTIVE_MIN` (0.15) ค่าตั้งต้น ปรับจาก log `tts-ladder` |
