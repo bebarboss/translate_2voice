@@ -623,7 +623,7 @@ Postgres รันเป็น StatefulSet ใน k3s (`db:5432` ภายใน
 | งาน | `GET/POST /jobs`, `GET/DELETE /jobs/{id}`, `POST /jobs/{id}/cancel`, `/retry`, `/synthesize`, `/render`, `/retranslate` |
 | บท | `GET/PUT /jobs/{id}/transcript`, `POST /jobs/{id}/transcript/lines`, `/{line_id}/split`, `/merge`, `/duplicate` |
 | ผู้พูด/เสียง | `/jobs/{id}/speakers`, `GET/PUT /jobs/{id}/voices`, `/speakers/{s}/library` |
-| ผลงาน | `GET /jobs/{id}/result`, `/subtitles`, `/stems`, `/export`, `/thumb`, `POST/DELETE /jobs/{id}/share`, `GET /share/{token}` |
+| ผลงาน | `GET /jobs/{id}/result`, `/subtitles`, `/stems`, `/stems/{name}/peaks`, `/export`, `/thumb`, `POST/DELETE /jobs/{id}/share`, `GET /share/{token}` |
 | ไทม์ไลน์ | `POST /timeline`, `/jobs/{id}/timeline`, `/timeline/start`, `/timeline/export` |
 | โปรเจกต์ | `/projects`, `/projects/{id}`, `/characters/{id}`, `/memory` |
 | คลังเสียง | `/voices`, `/voices/{id}/moods`, `/audio`, `/report` |
@@ -641,6 +641,9 @@ Postgres รันเป็น StatefulSet ใน k3s (`db:5432` ภายใน
 คอมโพเนนต์สำคัญ:
 - **ReviewView / LineCard:** หน้าตรวจบท แก้ แยก รวม ประโยค มีป้าย "ควรตรวจ" (`check_note`) และ "ควรฟัง"
 - **SpeakerLanes:** เส้นเวลาแยกตามตัวละคร
+  - รูปคลื่นเสียงต้นฉบับของแต่ละตัวละครวาดหลังบล็อก (`LaneWave`) ข้อมูลมาจาก `GET /jobs/{id}/stems/{name}/peaks` ที่ส่งเฉพาะยอดคลื่น เบราว์เซอร์ไม่โหลดไฟล์ wav
+  - ย้อนกลับ/ทำซ้ำ (Ctrl+Z, Ctrl+Shift+Z หรือ Ctrl+Y) เฉพาะการแก้ที่ยังไม่บันทึก ตัด รวม ลบประโยคทำบนเซิร์ฟเวอร์จึงล้างประวัติ ตรรกะอยู่ที่ [timeline-edit.ts](../frontend/lib/timeline-edit.ts)
+  - ลากบล็อกหรือขอบแล้วปัดเข้าขอบประโยคอื่น หัวอ่าน ต้นและท้ายคลิป (ระยะ 8 พิกเซล) ถือ Alt เพื่อปิด
 - **RetranslatePanel:** แสดงสรุปเรื่อง ชนิดคลิป ประโยคที่ผู้พูดน่าจะผิด และปุ่มแปลใหม่
 - **VoiceCast / VoicePicker:** เลือกเสียงต่อตัวละคร
 - **LoadState:** สถานะกำลังโหลดและข้อผิดพลาดพร้อมปุ่มลองใหม่
